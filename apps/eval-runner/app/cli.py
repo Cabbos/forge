@@ -7,7 +7,7 @@ from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.execution import EvaluationExecution, ExecutionOptions, execute_evaluation
 from app.experiments import experiment_artifact_metadata
-from app.models import AgentTrace, BacktestReport, EvalProvider, TrustStatus
+from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
 from app.red_team import is_red_team_task
 from app.trace_import import promote_failed_traces
 
@@ -108,7 +108,7 @@ def load_backtest_tasks(
     mutations_only: bool = False,
     include_red_team: bool = False,
     red_team_only: bool = False,
-):
+) -> list[EvaluationTask]:
     tasks = load_cases(cases_path)
     tasks = filter_red_team_tasks(
         tasks,
@@ -123,11 +123,11 @@ def load_backtest_tasks(
 
 
 def filter_red_team_tasks(
-    tasks,
+    tasks: list[EvaluationTask],
     *,
     include_red_team: bool = False,
     red_team_only: bool = False,
-):
+) -> list[EvaluationTask]:
     if red_team_only:
         return [task for task in tasks if is_red_team_task(task)]
     if include_red_team:

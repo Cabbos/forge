@@ -4,6 +4,7 @@ import sqlite3
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 from app.config import get_settings
@@ -218,7 +219,7 @@ class EvalWorker:
         self,
         run: EvaluationRun,
         traces: list[AgentTrace],
-        started_at,
+        started_at: datetime,
         status: RunStatus,
         trust_result: TrustGateResult,
         failure_reason: str | None = None,

@@ -19,6 +19,12 @@ forge-eval-runner 用结构化数据回答这些问题。
 
 ## 2 分钟演示脚本
 
+以鉴权模式启动服务后，先在演示终端设置同一 token：
+
+```bash
+export FORGE_EVAL_API_TOKEN=test-secret
+```
+
 ### 0:00 - 0:20 开场
 
 > 这是 forge-eval-runner，一个独立的 Agent 评测服务。它不是 Forge 的附属品，而是一个独立项目，专门解决 Agent 评测和可观测性问题。
@@ -26,7 +32,8 @@ forge-eval-runner 用结构化数据回答这些问题。
 ### 0:20 - 0:50 展示任务定义
 
 ```bash
-curl http://localhost:8000/tasks | python3 -m json.tool
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/tasks | python3 -m json.tool
 ```
 
 > 每个评测任务定义了 prompt、context files、verification command 和 expected success。这不是抽象的 golden set，而是具体的 coding agent 任务。
@@ -35,6 +42,7 @@ curl http://localhost:8000/tasks | python3 -m json.tool
 
 ```bash
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"provider": "mock", "model": "deterministic-agent-v1"}' \
   | python3 -m json.tool
@@ -45,7 +53,8 @@ curl -X POST http://localhost:8000/runs \
 ### 1:20 - 1:50 展示 Metrics
 
 ```bash
-curl http://localhost:8000/runs/{run_id}/metrics | python3 -m json.tool
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/metrics | python3 -m json.tool
 ```
 
 > Metrics 包含 success rate、verification coverage、per-task pass/fail 和 failure categories 聚合。这样就能回答"这次 run 有多少任务是因为 verification_failed 失败的"。

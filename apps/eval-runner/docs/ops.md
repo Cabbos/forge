@@ -7,11 +7,13 @@
 ```bash
 cd apps/eval-runner
 
+FORGE_EVAL_API_BIND_HOST=0.0.0.0 \
+FORGE_EVAL_API_TOKEN=test-secret \
 FORGE_EVAL_STORAGE_BACKEND=sqlite \
 FORGE_EVAL_DB_PATH=./forge_eval.db \
 FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
 FORGE_EVAL_RUN_EXECUTION_MODE=queued \
-uv run uvicorn app.main:app --port 8000
+uv run uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
 环境变量说明：
@@ -23,9 +25,18 @@ uv run uvicorn app.main:app --port 8000
 | `FORGE_EVAL_ARTIFACTS_PATH` | `./artifacts` | trace/report 文件落盘路径 |
 | `FORGE_EVAL_TASKS_PATH` | `./tasks/sample_tasks.json` | 评测任务定义路径 |
 | `FORGE_EVAL_RUN_EXECUTION_MODE` | `sync` | `sync` 或 `queued` |
+| `FORGE_EVAL_API_BIND_HOST` | `127.0.0.1` | 用于暴露检查的 API bind host；非回环值必须配置 token |
+| `FORGE_EVAL_API_TOKEN` | 空 | 除 `/health` 外所有产品端点的 Bearer token |
 | `FORGE_EVAL_WORKER_ID` | `local-worker` | Worker 身份标识 |
 | `FORGE_EVAL_HEARTBEAT_INTERVAL_SECONDS` | `30` | 心跳间隔 |
 | `FORGE_EVAL_POLL_INTERVAL_SECONDS` | `5` | Worker 轮询间隔 |
+| `FORGE_EVAL_COMMAND_TIMEOUT_SECONDS` | `900` | 外部 agent 命令上限 |
+| `FORGE_EVAL_SETUP_TIMEOUT_SECONDS` | `300` | setup 命令上限 |
+| `FORGE_EVAL_VALIDATION_TIMEOUT_SECONDS` | `300` | validation 命令上限 |
+| `FORGE_EVAL_LEASE_DURATION_SECONDS` | `300` | Worker claim 租约时长 |
+
+`FORGE_EVAL_API_BIND_HOST` 必须与 Uvicorn 的 `--host` 保持一致。非回环
+bind 没有 token 时服务会拒绝启动，不会降级成无鉴权模式。
 
 ### 2. 启动 Worker（持续消费 queued runs）
 
@@ -44,14 +55,16 @@ uv run python -m app.worker
 uv run python -m app.worker --once
 ```
 
-Worker 支持 `SIGTERM`/`SIGINT` 优雅停止。
+Worker 支持 `SIGTERM`/`SIGINT` 优雅停止，并会中断当前外部进程组、将该
+attempt 收口为 cancelled，而不是等待未受控的子进程自行结束。
 
 ### 队列状态
 
 服务启动后可用 `/queue/status` 查看当前队列概览：
 
 ```bash
-curl http://localhost:8000/queue/status
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/queue/status
 ```
 
 响应包含各 run status 计数，以及最早的 pending/running run ID，便于判断
@@ -66,11 +79,31 @@ worker 是否积压或卡住：
 ```
 
 如果 `oldest_running_run_id` 长时间不变，优先查看对应 run 的
-`failure_reason`、worker 心跳、artifact 目录和 worker stderr 摘要；如果用户
-取消 run，worker 会保留取消前已经写出的 trace/report/trajectory artifact，方便
-继续排障。当前实现使用 claim/heartbeat 元数据避免多个 worker 重复消费同一个
-run；stale lease 的第一信号也是 `/queue/status` 中 running 计数和 oldest running
-run 持续不变。
+`failure_reason`、`heartbeat_at`、`lease_expires_at`、attempt artifact 和 worker
+stderr 摘要。每次 claim/reclaim 都会旋转 `lease_token`；过期 running run 可由下一个
+worker 重新 claim，旧 token 的 heartbeat、task save、retry、fail 和 complete 全部
+fail closed。取消的同 attempt 部分证据保存在
+`artifacts/{run_id}/attempts/{lease_token}/`；失租 worker 不能覆盖 canonical
+artifact。
+
+### API 鉴权、token 轮换与存储边界
+
+- `/health` 无需鉴权；配置 token 后，其他产品端点统一使用
+  `Authorization: Bearer <token>`。
+- token 应通过环境或 secret manager 注入，不得写入仓库、artifact 或运行日志。
+  轮换时先更新调用方，再用新 token 重启 API，并验证旧 token 返回
+  `401`。
+- SQLite 和 artifact 目录必须由 API/worker 共享同一本地文件系统或 Docker
+  named volume。该模式是单主机部署；不支持网络文件系统或多主机共享
+  SQLite。
+- Docker Compose 要求启动前设置 `FORGE_EVAL_API_TOKEN`，同时将主机端口限制在
+  `127.0.0.1:8000`。
+
+鉴权请求基线：
+
+```bash
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" http://127.0.0.1:8000/tasks
+```
 
 ### 可信回测操作路径
 
@@ -346,35 +379,44 @@ rm -rf .pytest_cache/
 curl http://localhost:8000/health
 
 # 列出任务
-curl http://localhost:8000/tasks
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/tasks
 
 # 创建 queued run
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"task_ids": ["task-pass"], "provider": "mock"}'
 
 # 列出 runs（支持状态过滤）
-curl "http://localhost:8000/runs?status=completed"
-curl "http://localhost:8000/runs?status=pending"
-curl "http://localhost:8000/runs?status=failed"
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" "http://localhost:8000/runs?status=completed"
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" "http://localhost:8000/runs?status=pending"
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" "http://localhost:8000/runs?status=failed"
 
 # 查看 run 详情（含 failure_reason、worker_id、retry_count）
-curl http://localhost:8000/runs/{run_id}
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}
 
 # 查看 trace
-curl http://localhost:8000/runs/{run_id}/trace
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/trace
 
 # 查看 metrics
-curl http://localhost:8000/runs/{run_id}/metrics
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/metrics
 
 # 查看 report
-curl http://localhost:8000/runs/{run_id}/report
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/report
 
 # 查看 artifacts 列表
-curl http://localhost:8000/runs/{run_id}/artifacts
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/artifacts
 
 # 取消 run
-curl -X POST http://localhost:8000/runs/{run_id}/cancel
+curl -X POST \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/cancel
 ```
 
 ## 测试
@@ -392,6 +434,9 @@ uv run pytest -m slow
 # Lint
 uv run ruff check .
 uv run ruff format --check .
+
+# 类型检查
+uv run mypy app
 ```
 
 ## 目录结构
@@ -399,4 +444,5 @@ uv run ruff format --check .
 ```
 forge_eval.db          # SQLite 元数据
 artifacts/{run_id}/    # trace.json, report.json, *.trajectory.json
+artifacts/{run_id}/attempts/{lease_token}/  # cancelled attempt 诊断证据
 ```

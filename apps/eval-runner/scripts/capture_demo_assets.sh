@@ -6,12 +6,17 @@
 #   bash scripts/capture_demo_assets.sh
 #
 # 前置条件：
-#   服务已在 localhost:8000 运行（uv run uvicorn app.main:app --port 8000）
+#   服务已在 localhost:8000 运行，如果启用鉴权，请设置
+#   FORGE_EVAL_API_TOKEN 为同一 token。
 
 set -euo pipefail
 
 BASE_URL="${FORGE_EVAL_BASE_URL:-http://localhost:8000}"
 EXAMPLES_DIR="$(cd "$(dirname "$0")/.." && pwd)/examples"
+AUTH_ARGS=()
+if [[ -n "${FORGE_EVAL_API_TOKEN:-}" ]]; then
+  AUTH_ARGS=(-H "Authorization: Bearer $FORGE_EVAL_API_TOKEN")
+fi
 
 echo "=== forge-eval-runner: capture demo assets ==="
 echo "Base URL: $BASE_URL"
@@ -25,13 +30,15 @@ echo "  $HEALTH"
 
 # 2. 保存任务列表
 echo "[2/6] Fetching tasks..."
-curl -sf "$BASE_URL/tasks" | python3 -m json.tool > "$EXAMPLES_DIR/sample-tasks.json"
+curl -sf "${AUTH_ARGS[@]}" "$BASE_URL/tasks" \
+  | python3 -m json.tool > "$EXAMPLES_DIR/sample-tasks.json"
 echo "  -> sample-tasks.json"
 
 # 3. 创建 run（2 个任务）
 echo "[3/6] Creating run (2 tasks)..."
 RUN_RESPONSE_TMP="$(mktemp)"
 curl -sf -X POST "$BASE_URL/runs" \
+  "${AUTH_ARGS[@]}" \
   -H "Content-Type: application/json" \
   -d '{
     "task_ids": ["python-cli-dry-run", "parser-regression-failure"],
@@ -58,13 +65,13 @@ echo "  -> sample-run-request.json"
 
 # 5. 获取 trace
 echo "[5/6] Fetching trace..."
-curl -sf "$BASE_URL/runs/$RUN_ID/trace" \
+curl -sf "${AUTH_ARGS[@]}" "$BASE_URL/runs/$RUN_ID/trace" \
   | python3 -m json.tool > "$EXAMPLES_DIR/sample-trace-response.json"
 echo "  -> sample-trace-response.json"
 
 # 6. 获取 metrics
 echo "[6/6] Fetching metrics..."
-curl -sf "$BASE_URL/runs/$RUN_ID/metrics" \
+curl -sf "${AUTH_ARGS[@]}" "$BASE_URL/runs/$RUN_ID/metrics" \
   | python3 -m json.tool > "$EXAMPLES_DIR/sample-metrics-response.json"
 echo "  -> sample-metrics-response.json"
 

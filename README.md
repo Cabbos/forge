@@ -23,6 +23,27 @@ npm run build:website
 npm run test:eval
 ```
 
+The public-beta eval release slice has four stable acceptance labels:
+
+```text
+eval execution identity baseline
+eval independent workspace evidence baseline
+eval trusted execution baseline
+eval authenticated fenced worker baseline
+```
+
+Run any one with `scripts/acceptance.sh --only "<label>"`. The fixed eval quality
+commands used by the matrix are:
+
+```bash
+cd apps/eval-runner
+uv sync --frozen --dev
+uv run pytest -q
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy app
+```
+
 For the current desktop acceptance sweep, run:
 
 ```bash

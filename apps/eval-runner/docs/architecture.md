@@ -19,7 +19,7 @@ flowchart TD
         BR[build_report()<br/>回测报告聚合]
         S[EvalStorage<br/>InMemory / SQLite]
         DB[(SQLite<br/>eval_runs / eval_run_tasks /<br/>eval_artifacts / eval_experiments)]
-        FS[artifacts/{run_id}<br/>trace.json / report.json]
+        FS[artifacts/{run_id}<br/>canonical + attempts/{lease_token}]
     end
 
     subgraph Output
@@ -155,6 +155,12 @@ Runs track execution and trust as separate decisions:
 
 Trust gates fail closed. A run with completed task execution can still be untrusted when the harness is untrusted, the dataset has no fingerprint, a model-graded scorer is uncalibrated, or red-team checks fail.
 
+Score value and evidence completeness are also separate authorities. Reports keep
+the mean for observed values beside `score_coverage.observed`, `expected`, and
+`coverage`. Universal and case-required scores retain their expected denominator
+even when a trace omits the evidence, so a sparse score cannot masquerade as a
+fully evaluated release signal.
+
 The optimized backtest path evaluates gates in order:
 
 1. Harness trust: golden mock self-checks, workspace cleanliness,
@@ -170,6 +176,37 @@ The optimized backtest path evaluates gates in order:
 6. Operational trust: queue status, cancellation, lease visibility, artifacts,
    report comparison, and production-trace promotion make failed runs
    debuggable.
+
+## Common Execution And Fenced Publication
+
+CLI, synchronous API, and queued-worker entry points converge on the same
+`execute_evaluation` orchestration boundary. It validates provider/model/case
+identity before creating a runner, applies the same harness and trust gates, and
+returns traces plus one `TrustGateResult`. Unknown providers fail closed instead
+of falling back to mock execution.
+
+For Forge execution, the agent-reported changed-file list is evidence but not
+authority. A filesystem observer snapshots the isolated fixture before and after
+the agent window, excludes setup and validation effects, derives changed files
+and scope violations independently, and replays the emitted patch in a fresh
+fixture. Setup, agent, and validation subprocesses run in bounded process groups
+so timeout, API cancellation, worker shutdown, or lease loss can interrupt the
+entire child tree.
+
+Queued storage adds a publication fence:
+
+1. A claim assigns `worker_id`, a random `lease_token`, and
+   `lease_expires_at`; every reclaim rotates the token.
+2. Heartbeat, task save, retry, failure, and completion writes require the active
+   worker/token pair and an unexpired running lease.
+3. A stale attempt therefore cannot mutate run authority after a reclaim.
+4. The active terminal attempt may publish canonical artifacts. A cancelled
+   same-token attempt may publish partial diagnostic evidence only under
+   `artifacts/{run_id}/attempts/{lease_token}/`.
+
+SQLite enables foreign keys, a busy timeout, WAL, and transactional terminal
+publication. API and worker must share one local database/artifact volume; the
+architecture does not claim network-filesystem or multi-host SQLite safety.
 
 ## Sandbox And Leakage Firewall
 
@@ -391,8 +428,9 @@ Queued operation adds two operator surfaces:
 - `GET /queue/status` returns counts by run status plus oldest pending/running
   run IDs, which is the fastest stale-lease or backlog check.
 - `POST /runs/{id}/cancel` marks queued/running work for cancellation; the
-  worker stops cleanly, records the cancellation outcome, and preserves any
-  trace/report/trajectory artifacts already written.
+  worker stops the bounded process group, records the cancellation outcome, and
+  preserves same-attempt partial evidence below `attempts/{lease_token}` without
+  publishing it as canonical output.
 
 ## 三种运行方式
 
@@ -411,6 +449,8 @@ Queued operation adds two operator surfaces:
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | 模型 ID。默认 `deepseek-v4-flash`。 |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | 对应 provider 的 API key，Forge 从 `~/.forge/config.json` 读取。 |
 | `FORGE_EVAL_RUNNER_PATH` | 可选 | 覆盖 eval-runner 目录。默认与 `apps/desktop/` 同级的 `eval-runner`。 |
+| `FORGE_EVAL_API_BIND_HOST` | API 服务 | 声明 API bind host；非回环值没有 token 时拒绝启动。 |
+| `FORGE_EVAL_API_TOKEN` | API 服务 | 除 `/health` 外所有产品端点的 Bearer token。 |
 
 ## 技术栈
 

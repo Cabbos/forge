@@ -3,7 +3,7 @@ import sqlite3
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 from uuid import uuid4
 
 from pydantic import TypeAdapter
@@ -444,7 +444,7 @@ class SQLiteStorage:
         if row is None:
             return None
 
-        def _row_val(key: str, default=None):
+        def _row_val(key: str, default: Any = None) -> Any:
             try:
                 return row[key]
             except IndexError:

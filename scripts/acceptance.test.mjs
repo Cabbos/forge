@@ -90,7 +90,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "eval execution identity baseline",
       command:
-        'cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py tests/test_smoke.py -q -k "execution_identity or unknown_provider or queued_forge"',
+        'cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py -k "execution_identity or unknown_provider or queued_sqlite_forge" -q',
     },
     {
       label: "eval independent workspace evidence baseline",
@@ -100,12 +100,12 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "eval trusted execution baseline",
       command:
-        'cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_cli.py tests/test_api.py tests/test_worker.py -q -k "trust"',
+        "cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_reporting.py tests/test_cli.py -q",
     },
     {
       label: "eval authenticated fenced worker baseline",
       command:
-        'cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py -q -k "auth or lease or stale"',
+        'cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py tests/test_docker_contract.py -k "auth or token or lease or stale or fence or docker" -q',
     },
     {
       label: "release manifest contract validation",

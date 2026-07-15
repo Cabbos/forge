@@ -1,6 +1,7 @@
 import ipaddress
 import secrets
 from collections.abc import Callable
+from typing import cast
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, Header, HTTPException, status
@@ -86,7 +87,7 @@ def create_app(
     app.state.storage = storage or build_storage(settings)
 
     def get_storage() -> EvalStorage:
-        return app.state.storage
+        return cast(EvalStorage, app.state.storage)
 
     def require_run(run_id: str) -> EvaluationRun:
         run = get_storage().get_run(run_id)

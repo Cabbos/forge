@@ -7,6 +7,7 @@
 ```bash
 cd apps/eval-runner
 uv sync
+export FORGE_EVAL_API_TOKEN=test-secret
 uv run uvicorn app.main:app --port 8000
 ```
 
@@ -36,7 +37,8 @@ curl http://localhost:8000/health
 ## 2. 列出评测任务
 
 ```bash
-curl http://localhost:8000/tasks
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/tasks
 ```
 
 响应（截取一个任务）：
@@ -76,6 +78,7 @@ curl http://localhost:8000/tasks
 
 ```bash
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "task_ids": ["python-cli-dry-run", "parser-regression-failure"],
@@ -105,7 +108,8 @@ curl -X POST http://localhost:8000/runs \
 ## 4. 获取 Trace
 
 ```bash
-curl http://localhost:8000/runs/{run_id}/trace
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/trace
 ```
 
 响应是一个 `AgentTrace[]` 数组。每个 trace 包含：
@@ -193,7 +197,8 @@ curl http://localhost:8000/runs/{run_id}/trace
 ## 5. 获取 Metrics
 
 ```bash
-curl http://localhost:8000/runs/{run_id}/metrics
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/metrics
 ```
 
 响应：
@@ -249,22 +254,27 @@ curl http://localhost:8000/runs/{run_id}/metrics
 
 ```bash
 # 1. 启动服务
+export FORGE_EVAL_API_TOKEN=test-secret
 uv run uvicorn app.main:app --port 8000
 
 # 2. 查看可用任务
-curl http://localhost:8000/tasks | python3 -m json.tool
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/tasks | python3 -m json.tool
 
 # 3. 创建 eval run
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"provider": "mock", "model": "deterministic-agent-v1"}' \
   | python3 -m json.tool
 
 # 4. 从响应中提取 run_id，查看 trace
-curl http://localhost:8000/runs/{run_id}/trace | python3 -m json.tool
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/trace | python3 -m json.tool
 
 # 5. 查看 metrics
-curl http://localhost:8000/runs/{run_id}/metrics | python3 -m json.tool
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/{run_id}/metrics | python3 -m json.tool
 
 # 6. 打开浏览器查看 OpenAPI 文档
 open http://localhost:8000/docs

@@ -89,6 +89,36 @@ forge-eval-runner/
 - `POST /runs/{run_id}/cancel`
 - `GET /queue/status`
 
+`GET /health` is always unauthenticated. When `FORGE_EVAL_API_TOKEN` is set,
+every product endpoint above requires `Authorization: Bearer <token>`. The
+service refuses to start when `FORGE_EVAL_API_BIND_HOST` is non-loopback and no
+token is configured; keep the application setting aligned with the host passed
+to Uvicorn.
+
+## Public-Beta Trust Contract
+
+- `mock` and `forge` are the supported providers. Unknown providers are rejected;
+  there is no silent fallback to the deterministic mock runner.
+- `execution_status` records whether work completed, failed, timed out, or was
+  cancelled. `trust_status` independently records whether the resulting evidence
+  is decision-worthy. A completed run can still be untrusted.
+- Reports publish score means separately from `score_coverage`. Universal and
+  case-required scores keep their full expected denominator, so missing evidence
+  cannot look like complete coverage.
+- CLI release runs exit `0` only when execution is trusted and thresholds pass,
+  exit `1` for trust or threshold failures, and exit `2` for argument/input
+  errors. Use `--report-only` to inspect incomplete evidence without treating it
+  as a passing release gate.
+- API sync mode, queued workers, and the CLI share the same execution and trust
+  orchestrator. Forge runs observe workspace changes independently, bound and
+  cancel subprocess groups, scrub future repository state, and replay emitted
+  patches in a fresh fixture.
+- Every queued claim receives a rotating lease token. Heartbeats, task writes,
+  retries, and terminal publication are fenced by worker id plus that token.
+  Stale attempts cannot overwrite the active attempt. Cancelled partial evidence
+  is retained under `artifacts/{run_id}/attempts/{lease_token}/`; only the active
+  terminal attempt may publish canonical `trace.json` and `report.json`.
+
 ## Run Locally
 
 ```bash
@@ -126,6 +156,10 @@ artifacts/
   {run_id}/
     trace.json
     report.json
+    attempts/
+      {lease_token}/
+        trace.json
+        report.json
 ```
 
 This preserves the current synchronous API contract while making completed runs, trace/report artifacts, and run lists queryable after the storage object or process restarts.
@@ -160,7 +194,16 @@ FORGE_EVAL_ARTIFACTS_PATH=./artifacts \
 uv run python -m app.worker
 ```
 
-The worker claims the oldest `pending` run, marks it `running`, executes each task through the existing runner boundary, writes per-task summaries, stores trace/report artifacts, and marks the run `completed`. Cancellation requests preserve the trace/report artifacts produced before cancellation, and the worker records stderr previews plus `failure_reason` for failed tasks so operators can diagnose a bad run without rerunning it blindly. `GET /queue/status` reports counts by run status plus the oldest pending/running run IDs, which is the first check for stuck workers or stale leases.
+The worker claims the oldest `pending` run, marks it `running`, executes through
+the same trust boundary as sync/API runs, heartbeats its lease, writes fenced
+per-task summaries, and publishes terminal artifacts. Cancellation and worker
+shutdown interrupt in-flight process groups within bounded time. Same-attempt
+partial cancellation evidence is retained in the attempt directory, while a
+stale or lease-lost worker cannot publish tasks, retry state, or canonical
+artifacts. Failed tasks keep bounded stderr previews plus `failure_reason` so
+operators can diagnose them without rerunning blindly. `GET /queue/status`
+reports counts by run status plus the oldest pending/running run IDs, which is
+the first check for stuck workers or stale leases.
 
 ## Run Eval Cases With CLI
 
@@ -447,19 +490,27 @@ uv run python -m app.worker --once
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | Model ID for the headless agent. Defaults to `deepseek-v4-flash`. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key for the chosen provider. Stored in `~/.forge/config.json` via Forge settings. |
 | `FORGE_EVAL_RUNNER_PATH` | Optional | Override the default eval-runner directory. Defaults to the sibling `eval-runner` of `apps/desktop/`. |
+| `FORGE_EVAL_API_BIND_HOST` | Exposed API | Declared API bind host. Defaults to `127.0.0.1`; a non-loopback value requires `FORGE_EVAL_API_TOKEN`. |
+| `FORGE_EVAL_API_TOKEN` | Authenticated API | Bearer token for every product endpoint except `/health`. Required for non-loopback binds and Docker Compose. |
+| `FORGE_EVAL_COMMAND_TIMEOUT_SECONDS` | Worker/Forge run | Maximum external agent command duration. Defaults to `900`. |
+| `FORGE_EVAL_SETUP_TIMEOUT_SECONDS` | Worker/Forge run | Maximum setup-command duration. Defaults to `300`. |
+| `FORGE_EVAL_VALIDATION_TIMEOUT_SECONDS` | Worker/Forge run | Maximum validation-command duration. Defaults to `300`. |
+| `FORGE_EVAL_LEASE_DURATION_SECONDS` | Queued worker | Claim lease duration before another worker may reclaim it. Defaults to `300`. |
 
 ## Example Requests
 
 List tasks:
 
 ```bash
-curl http://localhost:8000/tasks
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/tasks
 ```
 
 Create an eval run:
 
 ```bash
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "task_ids": ["python-cli-dry-run", "parser-regression-failure"],
@@ -471,31 +522,36 @@ curl -X POST http://localhost:8000/runs \
 Fetch trace:
 
 ```bash
-curl http://localhost:8000/runs/<run_id>/trace
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/<run_id>/trace
 ```
 
 List runs:
 
 ```bash
-curl http://localhost:8000/runs
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs
 ```
 
 Fetch metrics:
 
 ```bash
-curl http://localhost:8000/runs/<run_id>/metrics
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/<run_id>/metrics
 ```
 
 Fetch the backtest report:
 
 ```bash
-curl http://localhost:8000/runs/<run_id>/report
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/<run_id>/report
 ```
 
 Fetch artifact metadata:
 
 ```bash
-curl http://localhost:8000/runs/<run_id>/artifacts
+curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
+  http://localhost:8000/runs/<run_id>/artifacts
 ```
 
 ## Eval Case Format
@@ -545,6 +601,7 @@ Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a
 export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
 
 curl -X POST http://localhost:8000/runs \
+  -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{
     "task_ids": ["python-cli-dry-run"],
@@ -608,10 +665,15 @@ and `bugfix_ok`.
 
 ```bash
 cd apps/eval-runner
+export FORGE_EVAL_API_TOKEN="replace-with-a-random-secret"
 docker compose up --build
 ```
 
-The service listens on `http://localhost:8000`.
+Compose starts an authenticated queued API plus a worker. They share named
+SQLite and artifact volumes, while the host port remains bound to
+`127.0.0.1:8000`. Use the Bearer token for product endpoints; `/health` remains
+available for health checks. This SQLite deployment is intended for one local
+host/volume, not a network filesystem or multi-host database service.
 
 ## Test And Lint
 
@@ -619,6 +681,7 @@ The service listens on `http://localhost:8000`.
 uv run pytest
 uv run ruff check .
 uv run ruff format --check .
+uv run mypy app
 ```
 
 ## Portfolio Value
@@ -657,7 +720,7 @@ This project maps directly to real agent-platform work:
 
 ```bash
 # 1. 启动服务
-uv run uvicorn app.main:app --port 8000
+FORGE_EVAL_API_TOKEN=test-secret uv run uvicorn app.main:app --port 8000
 
 # 2. 运行采集脚本
 bash scripts/capture_demo_assets.sh
@@ -666,7 +729,7 @@ bash scripts/capture_demo_assets.sh
 ### 截图顺序建议
 
 1. 浏览器访问 `http://localhost:8000/docs` — OpenAPI 文档页
-2. 终端 `curl http://localhost:8000/tasks` — 任务列表
-3. 终端 `curl -X POST http://localhost:8000/runs ...` — 创建 run
-4. 终端 `curl http://localhost:8000/runs/{id}/metrics` — metrics 汇总
-5. 终端 `curl http://localhost:8000/runs/{id}/trace | python3 -m json.tool` — trace 详情
+2. 终端 `curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" http://localhost:8000/tasks` — 任务列表
+3. 终端用同一 Bearer header `POST /runs` — 创建 run
+4. 终端用同一 Bearer header `GET /runs/{id}/metrics` — metrics 汇总
+5. 终端用同一 Bearer header `GET /runs/{id}/trace` — trace 详情
