@@ -153,12 +153,22 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_runtime_status_returns_queue_and_run_summary --lib",
     },
     {
+      label: "gateway parity and degraded fallback smoke",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway_local_parity_fixture_projects_backend_facts_without_taking_ownership --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway_ownership_eligibility_dry_run_denies_without_side_effects --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway_patch_proposal_owner_gate_is_proposal_only_and_read_only --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway_patch_proposal_owner_eligibility_contract_roundtrips --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway_read_only_owner_diagnostics --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger ownership_eligibility && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger patch_proposal && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger read_only_owner_diagnostics && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger render_runtime_status_lines_include_degraded_recovery_command && node --test apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml session_input_completion_waits_for_successful_local_acceptance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml runtime_status_reflects_background_task_state --lib && rg -q "gateway eligibility dry-run" CHANGELOG.md && rg -q "patch proposal owner gate" CHANGELOG.md && rg -q "read-only diagnostics owner" CHANGELOG.md && rg -q "forge service restart" CHANGELOG.md',
+    },
+    {
       label: "gateway session-host run evidence",
       command: "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml gateway::runner --lib",
     },
     {
       label: "backend gateway restart smoke dry-run",
       command: "npm --prefix apps/desktop run smoke:gateway:restart -- --json --dry-run",
+    },
+    {
+      label: "runtime journal authority and recovery smoke",
+      command:
+        'cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_marks_running_task_interrupted_and_recoverable --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_export_evidence_is_read_only --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_abandon_orphan_records_orphan_recovery --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_retry_waiting_task_requeues_to_pending_idempotently --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml task_requeued_projects_waiting_task_back_to_pending --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml recover_loop_task_params_accept_retry_waiting_task_action --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml session_input_store_clears_stale_input_with_recovery_evidence --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml clear_stale_session_input_params_and_result_roundtrip --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml dispatch_clear_stale_session_input_removes_record_with_recovery_evidence --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger render_runtime_status_lines_include_recent_session_inputs && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --bin forge_trigger clear_stale_session_input && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml trace_payload_includes_projected_loop_task_authority --lib && node --test apps/desktop/src/lib/loopRuntime.test.ts apps/desktop/src/components/settings/diagnosticsRuntimeView.test.ts && rg -q "clear stale gateway input" CHANGELOG.md && rg -q "clear-stale-session-input" README.md && rg -q "clear-stale-session-input" apps/desktop/README.md',
     },
     {
       label: "desktop eval promotion evidence smoke",

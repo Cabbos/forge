@@ -45,6 +45,7 @@ import {
   buildGatewayTriggerInput,
   buildGatewayTriggerRunRows,
   buildGatewayTriggerRows,
+  formatGatewayOwnershipSummary,
   formatGatewayTriggerRunDetail,
 } from "./diagnosticsRuntimeView";
 import {
