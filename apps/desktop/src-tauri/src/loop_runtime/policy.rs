@@ -155,10 +155,7 @@ impl LoopPolicy {
                 "destructive_filesystem_requires_human_approval",
                 HumanGateType::PolicyOverride,
             ),
-            LoopActionIntent::ServiceLifecycle {
-                update_repair_allowlisted: _,
-                ..
-            } => {
+            LoopActionIntent::ServiceLifecycle { .. } => {
                 if self.allow_service_lifecycle {
                     LoopPolicyDecision::allowed("allowed_by_service_lifecycle_allowlist")
                 } else {
