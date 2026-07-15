@@ -747,7 +747,8 @@ def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
         "(workspace/'src'/'app.py').write_text('after\\n')\n"
         "json.dump({'final_answer':'done','changed_files':['src/app.py'],'file_diffs':["
         "{'path':'src/app.py','change_type':'modified','diff':"
-        "\"diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n+++ b/src/app.py\\n@@ -1 +1 @@\\n-before\\n+after\\n\"}]},sys.stdout)\n",
+        '"diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n'
+        '+++ b/src/app.py\\n@@ -1 +1 @@\\n-before\\n+after\\n"}]},sys.stdout)\n',
         encoding="utf-8",
     )
     task = EvaluationTask(
