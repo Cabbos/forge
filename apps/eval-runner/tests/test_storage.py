@@ -20,7 +20,12 @@ from app.models import (
     TrustStatus,
     VerificationResult,
 )
-from app.storage import InMemoryStorage, RunAlreadyTerminalError, SQLiteStorage
+from app.storage import (
+    InMemoryStorage,
+    LeaseLostError,
+    RunAlreadyTerminalError,
+    SQLiteStorage,
+)
 
 StorageFactory = Callable[[Path, Path, Path], object]
 
@@ -189,6 +194,184 @@ def storage_factories() -> list[tuple[str, StorageFactory]]:
     ]
 
 
+def make_storage(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+):
+    tasks_path = tmp_path / f"{storage_name}-tasks.json"
+    write_tasks(tasks_path)
+    return storage_factory(
+        tasks_path,
+        tmp_path / f"{storage_name}.db",
+        tmp_path / f"{storage_name}-artifacts",
+    )
+
+
+def claim(storage, run_id: str, worker_id: str) -> EvaluationRun:
+    claimed = storage.claim_pending_run(worker_id=worker_id)
+    assert claimed is not None
+    assert claimed.run_id == run_id
+    assert claimed.lease_token is not None
+    return claimed
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_reclaim_rotates_lease_token(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    storage = make_storage(tmp_path, storage_name, storage_factory)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    first = claim(storage, "run-1", "worker-a")
+    storage.force_lease_expiry_for_test("run-1", datetime(2000, 1, 1, tzinfo=UTC))
+    second = claim(storage, "run-1", "worker-b")
+    assert second.lease_token != first.lease_token
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_stale_worker_cannot_heartbeat_save_or_complete(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    storage = make_storage(tmp_path, storage_name, storage_factory)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    first = claim(storage, "run-1", "worker-a")
+    storage.force_lease_expiry_for_test("run-1", datetime(2000, 1, 1, tzinfo=UTC))
+    second = claim(storage, "run-1", "worker-b")
+    with pytest.raises(LeaseLostError):
+        storage.heartbeat_run(
+            "run-1",
+            worker_id="worker-a",
+            lease_token=first.lease_token,
+            lease_expires_at=datetime(2099, 1, 1, tzinfo=UTC),
+        )
+    with pytest.raises(LeaseLostError):
+        storage.save_task(
+            "run-1",
+            make_trace("task-pass", raw_marker="stale"),
+            worker_id="worker-a",
+            lease_token=first.lease_token,
+        )
+    with pytest.raises(LeaseLostError):
+        storage.complete_run(
+            first.model_copy(update={"traces": [make_trace("task-pass")]}),
+            worker_id="worker-a",
+            lease_token=first.lease_token,
+        )
+    with pytest.raises(LeaseLostError):
+        storage.fail_run(
+            first,
+            worker_id="worker-a",
+            lease_token=first.lease_token,
+        )
+    with pytest.raises(LeaseLostError):
+        storage.retry_run(
+            first,
+            worker_id="worker-a",
+            lease_token=first.lease_token,
+        )
+    current = storage.get_run("run-1")
+    assert current is not None
+    assert current.worker_id == "worker-b"
+    assert current.lease_token == second.lease_token
+    assert current.status == RunStatus.RUNNING
+
+
+def test_stale_attempt_artifacts_never_replace_canonical_artifacts(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    write_tasks(tasks_path)
+    storage = SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=tmp_path / "forge_eval.db",
+        artifacts_path=tmp_path / "artifacts",
+    )
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    first = claim(storage, "run-1", "worker-a")
+    storage.save_task(
+        "run-1",
+        make_trace("task-pass", raw_marker="loser"),
+        worker_id="worker-a",
+        lease_token=first.lease_token,
+    )
+    storage.force_lease_expiry_for_test("run-1", datetime(2000, 1, 1, tzinfo=UTC))
+    second = claim(storage, "run-1", "worker-b")
+    storage.save_task(
+        "run-1",
+        make_trace("task-pass", raw_marker="winner"),
+        worker_id="worker-b",
+        lease_token=second.lease_token,
+    )
+    completed = storage.complete_run(
+        second.model_copy(update={"traces": [make_trace("task-pass", raw_marker="winner")]}),
+        worker_id="worker-b",
+        lease_token=second.lease_token,
+    )
+    assert completed.status == RunStatus.COMPLETED
+    trace_artifact = next(
+        artifact for artifact in storage.list_artifacts("run-1") if artifact.kind == "trace"
+    )
+    assert "winner" in Path(trace_artifact.path).read_text(encoding="utf-8")
+    assert first.lease_token not in {
+        artifact.attempt_token for artifact in storage.list_artifacts("run-1")
+    }
+    assert {artifact.attempt_token for artifact in storage.list_artifacts("run-1")} == {
+        second.lease_token
+    }
+    attempts = storage.list_artifacts("run-1", include_attempts=True)
+    assert {first.lease_token, second.lease_token} <= {
+        artifact.attempt_token for artifact in attempts
+    }
+
+
+@pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
+def test_retry_clears_attempt_ownership(
+    tmp_path: Path,
+    storage_name: str,
+    storage_factory: StorageFactory,
+) -> None:
+    storage = make_storage(tmp_path, storage_name, storage_factory)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-a")
+
+    retried = storage.retry_run(
+        claimed,
+        worker_id="worker-a",
+        lease_token=claimed.lease_token,
+    )
+
+    assert retried.status == RunStatus.PENDING
+    assert retried.worker_id is None
+    assert retried.lease_token is None
+    assert retried.claimed_at is None
+    assert retried.heartbeat_at is None
+    assert retried.lease_expires_at is None
+
+
+def test_sqlite_storage_migrates_legacy_artifact_attempt_token(tmp_path: Path) -> None:
+    tasks_path = tmp_path / "tasks.json"
+    db_path = tmp_path / "legacy-artifacts.db"
+    write_tasks(tasks_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            "CREATE TABLE eval_artifacts (id TEXT PRIMARY KEY, run_id TEXT NOT NULL, "
+            "kind TEXT NOT NULL, path TEXT NOT NULL, size_bytes INTEGER NOT NULL, "
+            "created_at TEXT NOT NULL)"
+        )
+
+    SQLiteStorage(
+        tasks_path=tasks_path,
+        db_path=db_path,
+        artifacts_path=tmp_path / "artifacts",
+    )
+
+    with sqlite3.connect(db_path) as connection:
+        columns = {row[1] for row in connection.execute("PRAGMA table_info(eval_artifacts)")}
+    assert "attempt_token" in columns
+
+
 @pytest.mark.parametrize(("storage_name", "storage_factory"), storage_factories())
 def test_storage_contract_round_trips_execution_identity(
     tmp_path: Path,
@@ -290,10 +473,23 @@ def test_storage_contract_saves_runs_tasks_and_artifact_metadata(
     artifacts_path = tmp_path / f"{storage_name}-artifacts"
     storage = storage_factory(tasks_path, tmp_path / f"{storage_name}.db", artifacts_path)
 
-    storage.create_run(make_run("run-1"))
-    storage.save_task("run-1", make_trace("task-pass"))
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-1")
+    trace = make_trace("task-pass")
+    storage.save_task(
+        "run-1",
+        trace,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
     storage.save_artifact(make_artifact(artifacts_path, "run-1"))
-    storage.update_run_status("run-1", RunStatus.COMPLETED)
+    running = storage.get_run("run-1")
+    assert running is not None
+    storage.complete_run(
+        running,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
 
     fetched = storage.get_run("run-1")
     assert fetched is not None
@@ -483,10 +679,16 @@ def test_storage_contract_heartbeat_extends_lease(
         tmp_path / f"{storage_name}.db",
         tmp_path / f"{storage_name}-artifacts",
     )
-    storage.create_run(make_run("running-run").model_copy(update={"status": RunStatus.RUNNING}))
+    storage.create_run(make_run("running-run").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "running-run", "worker-1")
     future = datetime(2099, 1, 1, 0, 0, 0, tzinfo=UTC)
 
-    storage.heartbeat_run("running-run", worker_id="worker-1", lease_expires_at=future)
+    storage.heartbeat_run(
+        "running-run",
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+        lease_expires_at=future,
+    )
 
     fetched = storage.get_run("running-run")
     assert fetched.heartbeat_at is not None
@@ -558,11 +760,16 @@ def test_storage_contract_complete_run_does_not_overwrite_cancelled(
         tmp_path / f"{storage_name}.db",
         tmp_path / f"{storage_name}-artifacts",
     )
-    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
-    storage.create_run(run)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-1")
+    storage.cancel_run("run-1")
 
-    completed = make_run("run-1").model_copy(update={"status": RunStatus.COMPLETED})
-    result = storage.complete_run(completed)
+    completed = claimed.model_copy(update={"status": RunStatus.COMPLETED})
+    result = storage.complete_run(
+        completed,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
 
     assert result.status == RunStatus.CANCELLED
     assert storage.get_run("run-1").status == RunStatus.CANCELLED
@@ -581,11 +788,16 @@ def test_storage_contract_fail_run_does_not_overwrite_cancelled(
         tmp_path / f"{storage_name}.db",
         tmp_path / f"{storage_name}-artifacts",
     )
-    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
-    storage.create_run(run)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-1")
+    storage.cancel_run("run-1")
 
-    failed = make_run("run-1").model_copy(update={"status": RunStatus.FAILED})
-    result = storage.fail_run(failed)
+    failed = claimed.model_copy(update={"status": RunStatus.FAILED})
+    result = storage.fail_run(
+        failed,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
 
     assert result.status == RunStatus.CANCELLED
     assert storage.get_run("run-1").status == RunStatus.CANCELLED
@@ -604,11 +816,16 @@ def test_storage_contract_retry_run_does_not_overwrite_cancelled(
         tmp_path / f"{storage_name}.db",
         tmp_path / f"{storage_name}-artifacts",
     )
-    run = make_run("run-1").model_copy(update={"status": RunStatus.CANCELLED})
-    storage.create_run(run)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-1")
+    storage.cancel_run("run-1")
 
-    retry = make_run("run-1").model_copy(update={"status": RunStatus.PENDING})
-    result = storage.retry_run(retry)
+    retry = claimed.model_copy(update={"status": RunStatus.PENDING})
+    result = storage.retry_run(
+        retry,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
 
     assert result.status == RunStatus.CANCELLED
     assert storage.get_run("run-1").status == RunStatus.CANCELLED
@@ -627,11 +844,22 @@ def test_storage_contract_finalize_run_saves_when_running(
         tmp_path / f"{storage_name}.db",
         tmp_path / f"{storage_name}-artifacts",
     )
-    run = make_run("run-1", [make_trace("task-pass")])
-    storage.create_run(run)
+    storage.create_run(make_run("run-1").model_copy(update={"status": RunStatus.PENDING}))
+    claimed = claim(storage, "run-1", "worker-1")
+    trace = make_trace("task-pass")
 
-    completed = run.model_copy(update={"status": RunStatus.COMPLETED})
-    result = storage.complete_run(completed)
+    completed = claimed.model_copy(
+        update={
+            "status": RunStatus.COMPLETED,
+            "traces": [trace],
+            "metrics": calculate_metrics([trace]),
+        }
+    )
+    result = storage.complete_run(
+        completed,
+        worker_id="worker-1",
+        lease_token=claimed.lease_token,
+    )
 
     assert result.status == RunStatus.COMPLETED
     assert storage.get_run("run-1").status == RunStatus.COMPLETED
