@@ -4,6 +4,7 @@ import shutil
 import sqlite3
 import tempfile
 from collections.abc import Sequence
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -449,7 +450,7 @@ class ForgeAgentRunner:
         self,
         task: EvaluationTask,
         payload: dict[str, Any],
-        started_at,
+        started_at: datetime,
         setup_outputs: list[ShellOutput],
         workspace: Path,
         workspace_observation: WorkspaceObservation,
@@ -676,7 +677,7 @@ class ForgeAgentRunner:
         self,
         *,
         task: EvaluationTask,
-        started_at,
+        started_at: datetime,
         error: str,
         failure_reason: str,
         failure_category: FailureCategory,
