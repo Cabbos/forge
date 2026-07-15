@@ -1,0 +1,147 @@
+{
+  "schema_version": 1,
+  "release_state": "R2",
+  "profile_id": "public-beta-r3-v1",
+  "producer_commit": "0a3d758d64c50b485b357c16d8eb221ffe193a31",
+  "result_artifacts": [
+    {
+      "id": "r2-gate-results",
+      "schema_version": 2,
+      "generated_at": "2026-07-15T02:47:51.022Z",
+      "source_path": "/tmp/forge-r2-gates-v2.json",
+      "sha256": "312e5aea7a37e4ed8ad500b4c5bec81c667ed3ca3cf32c33fb36e563e37d9202",
+      "status": "passed",
+      "selected_gate_count": 4,
+      "executed_gate_count": 4,
+      "failed_gate_count": 0,
+      "failed_execution_count": 0,
+      "failed_condition_count": 0,
+      "unknown_condition_count": 0,
+      "gate_labels": [
+        "eval trusted execution baseline",
+        "eval execution identity baseline",
+        "eval independent workspace evidence baseline",
+        "eval authenticated fenced worker baseline"
+      ]
+    },
+    {
+      "id": "r2-eval-quality-results",
+      "schema_version": 2,
+      "generated_at": "2026-07-15T02:47:55.111Z",
+      "source_path": "/tmp/forge-r2-quality-v2.json",
+      "sha256": "528452fab22f97866f21d151b4c298ec1a2cc2b9c02370aed030974f4fad7191",
+      "status": "passed",
+      "selected_gate_count": 1,
+      "executed_gate_count": 1,
+      "failed_gate_count": 0,
+      "failed_execution_count": 0,
+      "failed_condition_count": 0,
+      "unknown_condition_count": 0,
+      "gate_labels": ["eval quality suite"]
+    }
+  ],
+  "gates": [
+    {
+      "id": "eval-trust",
+      "label": "eval trusted execution baseline",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_execution.py tests/test_reporting.py tests/test_cli.py -q",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 2597,
+      "started_at": "2026-07-15T02:47:42.264Z",
+      "finished_at": "2026-07-15T02:47:44.861Z",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "eval-identity",
+      "label": "eval execution identity baseline",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py -k \"execution_identity or unknown_provider or queued_sqlite_forge\" -q",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 633,
+      "started_at": "2026-07-15T02:47:44.917Z",
+      "finished_at": "2026-07-15T02:47:45.550Z",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "eval-workspace",
+      "label": "eval independent workspace evidence baseline",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_workspace_observer.py tests/test_runner.py -k \"workspace or scope or timeout or cancellation or sandbox or patch\" -q",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 4135,
+      "started_at": "2026-07-15T02:47:45.610Z",
+      "finished_at": "2026-07-15T02:47:49.745Z",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "eval-worker",
+      "label": "eval authenticated fenced worker baseline",
+      "command": "cd apps/eval-runner && uv run pytest tests/test_api.py tests/test_storage.py tests/test_worker.py tests/test_docker_contract.py -k \"auth or token or lease or stale or fence or docker\" -q",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 1141,
+      "started_at": "2026-07-15T02:47:49.812Z",
+      "finished_at": "2026-07-15T02:47:50.953Z",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "eval-quality",
+      "label": "eval quality suite",
+      "command": "cd apps/eval-runner && uv sync --frozen --dev && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 12972,
+      "started_at": "2026-07-15T02:47:42.103Z",
+      "finished_at": "2026-07-15T02:47:55.075Z",
+      "result_artifact_id": "r2-eval-quality-results"
+    }
+  ],
+  "owned_evidence": [
+    {
+      "id": "strict-provider-identity",
+      "gate_label": "eval execution identity baseline",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "independent-workspace-observation",
+      "gate_label": "eval independent workspace evidence baseline",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "trusted-orchestration",
+      "gate_label": "eval trusted execution baseline",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "authenticated-fenced-worker",
+      "gate_label": "eval authenticated fenced worker baseline",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r2-gate-results"
+    },
+    {
+      "id": "full-eval-quality-suite",
+      "gate_label": "eval quality suite",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r2-eval-quality-results"
+    }
+  ]
+}

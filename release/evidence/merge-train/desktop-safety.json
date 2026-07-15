@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "release_state": "R1",
+  "profile_id": "public-beta-r3-v1",
+  "producer_commit": "0a3d758d64c50b485b357c16d8eb221ffe193a31",
+  "result_artifacts": [
+    {
+      "id": "r1-gate-results",
+      "schema_version": 2,
+      "generated_at": "2026-07-15T02:51:44.144Z",
+      "source_path": "/tmp/forge-r1-gates-v2.json",
+      "sha256": "d603e9cbe6d6ddfb02f2dfabf564d2ce9bbc795a381df53303a439aeefe6e8bb",
+      "status": "passed",
+      "selected_gate_count": 5,
+      "executed_gate_count": 5,
+      "failed_gate_count": 0,
+      "failed_execution_count": 0,
+      "failed_condition_count": 0,
+      "unknown_condition_count": 0,
+      "gate_labels": [
+        "desktop command execution safety baseline",
+        "desktop deterministic signal cleanup",
+        "desktop credential and redaction safety baseline",
+        "desktop checkpoint restore safety baseline",
+        "desktop CSP and capability safety baseline"
+      ]
+    }
+  ],
+  "gates": [
+    {
+      "id": "desktop-safety",
+      "label": "desktop command execution safety baseline",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::shell_policy --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml harness::permissions --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml --test harness_test project_defined -- --nocapture && npm --prefix apps/desktop run check:backend",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 16097,
+      "started_at": "2026-07-15T02:47:42.256Z",
+      "finished_at": "2026-07-15T02:47:58.353Z",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "desktop-deterministic",
+      "label": "desktop deterministic signal cleanup",
+      "command": "npm --prefix apps/desktop run check:deterministic-signals && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::handlers::tests::forgotten_memory_not_injected_via_select_context --lib && npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts --grep \"continuity query stays console-clean\"",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 18010,
+      "started_at": "2026-07-15T02:47:58.395Z",
+      "finished_at": "2026-07-15T02:48:16.405Z",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "desktop-credentials",
+      "label": "desktop credential and redaction safety baseline",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_store --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml credential_migration --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml redaction --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml settings --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml profile --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml log_store --lib && npm --prefix apps/desktop run check:backend",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 44915,
+      "started_at": "2026-07-15T02:48:16.440Z",
+      "finished_at": "2026-07-15T02:49:01.355Z",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "desktop-checkpoint",
+      "label": "desktop checkpoint restore safety baseline",
+      "command": "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::checkpoint_snapshot --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml ipc::project_checkpoint --lib && npm --prefix apps/desktop run check:backend",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 25317,
+      "started_at": "2026-07-15T02:49:01.399Z",
+      "finished_at": "2026-07-15T02:49:26.716Z",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "desktop-csp",
+      "label": "desktop CSP and capability safety baseline",
+      "command": "npm --prefix apps/desktop run check:security-config && npm --prefix apps/desktop run build && npm --prefix apps/desktop run tauri -- build --no-bundle && npm --prefix apps/desktop run check:backend",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "status": "passed",
+      "exit_code": 0,
+      "duration_ms": 137337,
+      "started_at": "2026-07-15T02:49:26.760Z",
+      "finished_at": "2026-07-15T02:51:44.097Z",
+      "result_artifact_id": "r1-gate-results"
+    }
+  ],
+  "owned_evidence": [
+    {
+      "id": "unified-memory-id-assertion",
+      "gate_label": "desktop deterministic signal cleanup",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "tailwind-4-warning-free-build",
+      "gate_label": "desktop deterministic signal cleanup",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r1-gate-results"
+    },
+    {
+      "id": "continuity-console-clean-fixture",
+      "gate_label": "desktop deterministic signal cleanup",
+      "execution_status": "completed",
+      "condition_status": "passed",
+      "result_artifact_id": "r1-gate-results"
+    }
+  ]
+}
