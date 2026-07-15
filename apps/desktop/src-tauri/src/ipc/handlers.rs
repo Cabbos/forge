@@ -8,9 +8,10 @@ use crate::agent::snapshot::save_session_snapshot;
 use crate::ipc::mcp_context::McpContextSelection;
 use crate::ipc::permission_handlers::sync_app_permission_mode_to_session;
 use crate::ipc::send_input_context::{
-    build_prepared_send_input_turn, record_send_input_user_turn, resolve_send_input_session,
-    run_reserved_send_input_turn, select_send_input_contexts, BuildPreparedSendInputTurnRequest,
-    RunReservedSendInputTurnRequest, SelectSendInputContextsRequest,
+    build_prepared_send_input_turn, emit_prepared_send_input_turn, record_send_input_user_turn,
+    resolve_send_input_session, run_reserved_send_input_turn, select_send_input_contexts,
+    BuildPreparedSendInputTurnRequest, RunReservedSendInputTurnRequest,
+    SelectSendInputContextsRequest,
 };
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
@@ -127,7 +128,7 @@ pub async fn send_input(
     }
 
     let (s, project_path) = resolve_send_input_session(&app_handle, &state, &session_id).await?;
-    sync_app_permission_mode_to_session(
+    let permission_mode = sync_app_permission_mode_to_session(
         &state,
         &s,
         &session_id,
@@ -157,8 +158,14 @@ pub async fn send_input(
         wiki_context: contexts.project_records.context,
         continuity_context: contexts.continuity_context,
         connector_context: contexts.mcp_result.context,
+        selected_memories: contexts.memory_selection.selected.clone(),
+        selected_memory_audit: contexts.memory_selection.audit.clone(),
+        memory_recall_plan: contexts.memory_selection.recall_plan.clone(),
+        selected_project_records: contexts.project_records.selected.clone(),
+        permission_mode: permission_mode.mode,
     })
     .await;
+    emit_prepared_send_input_turn(&app_handle, &session_id, &prepared);
     run_reserved_send_input_turn(RunReservedSendInputTurnRequest {
         state: &state,
         app_handle: &app_handle,

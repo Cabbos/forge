@@ -9,6 +9,7 @@ pub mod hooks;
 #[cfg(test)]
 mod hooks_test;
 pub mod mcp;
+pub mod permission_ledger;
 pub mod permissions;
 #[cfg(test)]
 mod permissions_test;
@@ -693,13 +694,28 @@ impl Harness {
                 }
 
                 // 2. Permission check — ask user if not pre-approved
-                match self
+                let permission_check = self
                     .permission_gate
-                    .check(session_id, tool_name, &input, &self.working_dir)
-                    .await
-                {
-                    PermissionDecision::Allow => {}
+                    .check_with_evidence(session_id, tool_name, &input, &self.working_dir)
+                    .await;
+                let mut permission_evidence = permission_check.evidence.clone();
+                let permission_block_id = tool_block_id
+                    .map(ToOwned::to_owned)
+                    .unwrap_or_else(|| uuid::Uuid::now_v7().to_string());
+                match permission_check.decision {
+                    PermissionDecision::Allow => {
+                        emitter.emit(crate::protocol::events::StreamEvent::PermissionDecision {
+                            session_id: session_id.to_string(),
+                            block_id: permission_block_id.clone(),
+                            evidence: permission_evidence,
+                        });
+                    }
                     PermissionDecision::Deny { reason } => {
+                        emitter.emit(crate::protocol::events::StreamEvent::PermissionDecision {
+                            session_id: session_id.to_string(),
+                            block_id: permission_block_id,
+                            evidence: permission_evidence,
+                        });
                         emit_blocked_tool_result_with_emitter(
                             session_id,
                             tool_block_id,
@@ -717,6 +733,7 @@ impl Harness {
                     } => {
                         let boundary =
                             build_write_boundary(tool_name, &input, &self.working_dir, &kind);
+                        permission_evidence.apply_boundary(&boundary);
                         let block_id = uuid::Uuid::now_v7().to_string();
                         let (tx, rx) = tokio::sync::oneshot::channel();
                         let descriptor = PendingConfirmDescriptor::new(
@@ -725,7 +742,8 @@ impl Harness {
                             kind.clone(),
                             now_ms(),
                         )
-                        .with_boundary(boundary.clone());
+                        .with_boundary(boundary.clone())
+                        .with_permission_evidence(permission_evidence.clone());
                         {
                             self.pending_confirms
                                 .write()
@@ -742,6 +760,7 @@ impl Harness {
                             question,
                             kind,
                             boundary: Some(boundary),
+                            permission_evidence: Some(permission_evidence),
                             replayed_interrupted: false,
                         });
                         // Wait 120s for user response

@@ -79,6 +79,8 @@ function loopTask(overrides: Partial<LoopTaskRecord> = {}): LoopTaskRecord {
     evidence: overrides.evidence ?? [],
     policy_decisions: overrides.policy_decisions ?? [],
     latest_budget_snapshot: overrides.latest_budget_snapshot ?? null,
+    latest_usage_ledger: overrides.latest_usage_ledger ?? null,
+    recovery_state: overrides.recovery_state ?? null,
     latest_event_id: overrides.latest_event_id ?? null,
     outcome: overrides.outcome ?? null,
     completion_result: overrides.completion_result ?? null,

@@ -1,0 +1,94 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "a2a-child-failed-recovery-evidence",
+    "title": "A2A failed child capsule includes recovery evidence",
+    "prompt": "Evaluate A2A child evidence and confirm a failed child carries failure reason, recovery actions, artifacts, and next action facts.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "A2A child evidence completeness: failed recovery evidence",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "a2a",
+      "a2a-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 136,
+        "input_tokens": 186,
+        "output_tokens": 39,
+        "forge_run_evidence": {
+          "session_id": "a2a-failed-session",
+          "loop_task_id": "a2a-failed-parent-task",
+          "prompt": "Evaluate A2A child evidence and confirm a failed child carries failure reason, recovery actions, artifacts, and next action facts.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-failed-parent-task:child-failed-recovery"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "A2A child evidence completeness: failed recovery evidence",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 186,
+            "output_tokens": 39
+          },
+          "failure_category": "none",
+          "a2a_child_capsules": [
+            {
+              "capsule_id": "child-capsule:a2a-failed-parent-task:child-failed-recovery",
+              "child_task_id": "child-failed-recovery",
+              "parent_task_id": "a2a-failed-parent-task",
+              "session_id": "a2a-failed-session",
+              "child_goal": "Run the worktree worker and report recovery evidence.",
+              "status": "failed",
+              "artifact_titles": [
+                "Failure evidence",
+                "Worker log"
+              ],
+              "failure_reason": "worktree worker verification failed",
+              "recovery_actions": [
+                {
+                  "action": "retry",
+                  "requires_human_approval": true,
+                  "requires_new_attempt": true,
+                  "requires_new_lease": true
+                },
+                {
+                  "action": "abandon",
+                  "requires_human_approval": true
+                }
+              ],
+              "estimated_tokens": 68,
+              "next_action": "Review failure evidence and decide whether to retry or abandon."
+            }
+          ]
+        }
+      }
+    }
+  }
+}

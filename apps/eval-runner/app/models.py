@@ -112,6 +112,36 @@ class EvalScore(EvalModel):
     gate_ci: bool = True
 
 
+class ForgeRunEvidence(EvalModel):
+    schema_version: int = 2
+    source: str = "forge_trace"
+    session_id: str | None = None
+    turn_id: str | None = None
+    loop_task_id: str | None = None
+    workspace_path: str | None = None
+    prompt: str | None = None
+    normalized_goal: str | None = None
+    prepared_context: dict[str, Any] = Field(default_factory=dict)
+    memory_audit: dict[str, Any] = Field(default_factory=dict)
+    permission_decisions: list[dict[str, Any]] = Field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = Field(default_factory=list)
+    shell_outputs: list[dict[str, Any]] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    file_diffs: list[dict[str, Any]] = Field(default_factory=list)
+    verification: dict[str, Any] | None = None
+    provider_usage: dict[str, Any] = Field(default_factory=dict)
+    failure_category: str | None = None
+    failure_reason: str | None = None
+    recovery: dict[str, Any] | None = None
+    recovery_cases: list[dict[str, Any]] = Field(default_factory=list)
+    completion_eligibility: dict[str, Any] = Field(
+        default_factory=lambda: {"status": "unknown"}
+    )
+    a2a_child_capsules: list[dict[str, Any]] = Field(default_factory=list)
+    gateway: dict[str, Any] = Field(default_factory=dict)
+    continuity_lessons: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class AgentTrace(EvalModel):
     task_id: str
     user_prompt: str
@@ -139,6 +169,7 @@ class AgentTrace(EvalModel):
     output_tokens: int | None = Field(default=None, ge=0)
     trajectory_path: str | None = None
     cost_usd: float | None = Field(default=None, ge=0)
+    forge_run_evidence: ForgeRunEvidence | None = None
     started_at: datetime
     ended_at: datetime
     duration_ms: int = Field(ge=0)

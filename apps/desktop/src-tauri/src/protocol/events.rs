@@ -1,6 +1,8 @@
 use crate::agent::a2a::projection::AgentA2AProjection;
+use crate::agent::prepared_turn::PreparedTurn;
 use crate::agent::turn_state::AgentTurnProjection;
 use crate::forge_wiki::model::{ForgeWikiUpdateProposal, SelectedForgeWikiPage};
+use crate::harness::permission_ledger::PermissionLedgerEvent;
 use crate::harness::write_boundary::WriteBoundary;
 use crate::loop_runtime::LoopTaskRecord;
 use crate::memory::{SelectedContextMemory, WikiMemory};
@@ -206,6 +208,8 @@ pub enum StreamEvent {
         kind: String, // "dangerous_cmd" | "file_delete" | "api_call"
         #[serde(skip_serializing_if = "Option::is_none")]
         boundary: Option<WriteBoundary>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission_evidence: Option<PermissionLedgerEvent>,
         /// When true, this confirm is a replayed/interrupted descriptor from a
         /// restored session. The frontend should render it as non-interactive
         /// (same visual path as `closeInterruptedConfirmBlocks` with reason
@@ -223,12 +227,20 @@ pub enum StreamEvent {
         kind: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         boundary: Option<WriteBoundary>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        permission_evidence: Option<PermissionLedgerEvent>,
         approved: Option<bool>,
         responded_at_ms: u64,
         #[serde(skip_serializing_if = "Option::is_none")]
         reason: Option<String>,
         #[serde(default, skip_serializing_if = "is_false")]
         replayed: bool,
+    },
+    #[serde(rename = "permission_decision")]
+    PermissionDecision {
+        session_id: String,
+        block_id: String,
+        evidence: PermissionLedgerEvent,
     },
 
     // ── Context Management ──
@@ -304,6 +316,11 @@ pub enum StreamEvent {
     WorkflowUpdated {
         session_id: String,
         state: WorkflowState,
+    },
+    #[serde(rename = "turn_prepared")]
+    TurnPrepared {
+        session_id: String,
+        prepared: PreparedTurn,
     },
 
     // ── Agent Turn Projection ──
@@ -484,6 +501,7 @@ impl StreamEvent {
             | ShellEnd { session_id, .. }
             | ConfirmAsk { session_id, .. }
             | ConfirmResponse { session_id, .. }
+            | PermissionDecision { session_id, .. }
             | ContextCompactStart { session_id, .. }
             | ContextCompacted { session_id, .. }
             | ContextCompactSkipped { session_id, .. }
@@ -495,6 +513,7 @@ impl StreamEvent {
             | ForgeWikiUpdated { session_id, .. }
             | McpContextStatus { session_id, .. }
             | WorkflowUpdated { session_id, .. }
+            | TurnPrepared { session_id, .. }
             | AgentTurnUpdated { session_id, .. }
             | AgentA2AUpdated { session_id, .. }
             | SubagentRuntimeEvent { session_id, .. }
@@ -535,6 +554,7 @@ impl StreamEvent {
             ShellEnd { .. } => "shell_end",
             ConfirmAsk { .. } => "confirm_ask",
             ConfirmResponse { .. } => "confirm_response",
+            PermissionDecision { .. } => "permission_decision",
             ContextCompactStart { .. } => "context_compact_start",
             ContextCompacted { .. } => "context_compacted",
             ContextCompactSkipped { .. } => "context_compact_skipped",
@@ -546,6 +566,7 @@ impl StreamEvent {
             ForgeWikiUpdated { .. } => "forge_wiki_updated",
             McpContextStatus { .. } => "mcp_context_status",
             WorkflowUpdated { .. } => "workflow_updated",
+            TurnPrepared { .. } => "turn_prepared",
             AgentTurnUpdated { .. } => "agent_turn_updated",
             AgentA2AUpdated { .. } => "agent_a2a_updated",
             SubagentRuntimeEvent { .. } => "subagent_runtime_event",
@@ -617,6 +638,7 @@ mod tests {
             question: Some("Allow write?".to_string()),
             kind: Some("file_write".to_string()),
             boundary: None,
+            permission_evidence: None,
             approved: Some(false),
             responded_at_ms: 1234,
             reason: Some("user_response".to_string()),
@@ -841,6 +863,7 @@ mod tests {
                     question: "q".into(),
                     kind: "k".into(),
                     boundary: None,
+                    permission_evidence: None,
                     replayed_interrupted: false,
                 },
                 "confirm_ask",
@@ -852,12 +875,30 @@ mod tests {
                     question: Some("q".into()),
                     kind: Some("k".into()),
                     boundary: None,
+                    permission_evidence: None,
                     approved: Some(true),
                     responded_at_ms: 1,
                     reason: Some("user_response".into()),
                     replayed: false,
                 },
                 "confirm_response",
+            ),
+            (
+                StreamEvent::PermissionDecision {
+                    session_id: "s".into(),
+                    block_id: "b".into(),
+                    evidence: crate::harness::permission_ledger::PermissionLedgerEvent {
+                        kind: crate::harness::permission_ledger::PermissionLedgerEventKind::AutoApproved,
+                        workspace_path: "/tmp/workspace".into(),
+                        session_id: Some("s".into()),
+                        risk_tier: crate::harness::permission_ledger::PermissionRiskTier::Normal,
+                        affected_files: Vec::new(),
+                        operation: "read_file".into(),
+                        permission_mode: crate::harness::permissions::PermissionMode::ManualConfirm,
+                        reason: "allow_rule".into(),
+                    },
+                },
+                "permission_decision",
             ),
             (
                 StreamEvent::ContextCompactStart {

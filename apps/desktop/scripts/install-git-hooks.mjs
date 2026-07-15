@@ -25,7 +25,7 @@ function run() {
     stdio: "inherit",
   });
 
-  for (const hookName of ["pre-commit", "pre-push"]) {
+  for (const hookName of ["pre-commit", "pre-push", "post-commit"]) {
     const hookPath = join(hooksDir, hookName);
     if (existsSync(hookPath)) {
       chmodSync(hookPath, 0o755);

@@ -22,7 +22,6 @@ export function ComposerPermissionModeButton({ sessionId }: ComposerPermissionMo
   const menuRef = React.useRef<HTMLDivElement>(null);
   const activeWorkspace = useActiveWorkspace();
   const session = useStore((state) => state.sessions.get(sessionId) ?? null);
-  const updateBlock = useStore((state) => state.updateBlock);
   const workingDir = session?.workingDir ?? activeWorkspace?.path ?? null;
   const [modeState, setModeState] = React.useState<PermissionModeState>(manualPermissionMode);
   const [open, setOpen] = React.useState(false);
@@ -119,9 +118,6 @@ export function ComposerPermissionModeButton({ sessionId }: ComposerPermissionMo
         );
         if (pendingConfirm) {
           await confirmResponse(pendingConfirm.block_id, true);
-          updateBlock(sessionId, pendingConfirm.block_id, {
-            metadata: { ...pendingConfirm.metadata, confirmed: true, answer: true },
-          });
         }
       }
     } catch (event) {
@@ -129,7 +125,7 @@ export function ComposerPermissionModeButton({ sessionId }: ComposerPermissionMo
     } finally {
       setBusy(false);
     }
-  }, [session?.blocks, sessionId, updateBlock, workingDir]);
+  }, [session?.blocks, sessionId, workingDir]);
 
   const view = permissionModeView(modeState.mode);
   const Icon = view.icon;

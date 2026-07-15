@@ -14,6 +14,7 @@ export * from "./ipc/files";
 export * from "./ipc/project";
 export * from "./ipc/memory";
 export * from "./ipc/memoryFacts";
+export * from "./ipc/unifiedMemory";
 export * from "./ipc/profiles";
 export * from "./ipc/diagnostics";
 export * from "./ipc/scheduler";

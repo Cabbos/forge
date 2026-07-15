@@ -251,6 +251,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         provider: display_provider,
         model: display_model,
         raw_events,
+        loop_task: None,
         latest_turn,
         file_diffs,
         changed_files,
@@ -414,7 +415,124 @@ mod tests {
                     output_tokens: 40,
                     estimated_cost_usd: 0.001,
                 },
+                StreamEvent::AgentA2AUpdated {
+                    session_id: "session-1".to_string(),
+                    state: serde_json::from_str(
+                        r#"{
+                            "running_count": 0,
+                            "completed_count": 1,
+                            "failed_count": 0,
+                            "interrupted_count": 0,
+                            "tasks": [
+                                {
+                                    "task_id": "parent-1",
+                                    "agent_id": "agent-parent",
+                                    "role": "reviewer",
+                                    "execution_mode": "read_only",
+                                    "status": "completed",
+                                    "title": "Parent",
+                                    "messages": [],
+                                    "latest_message": null,
+                                    "failure_message": null,
+                                    "updated_at_ms": 200,
+                                    "artifact_count": 0,
+                                    "latest_artifact_kind": null,
+                                    "latest_artifact_title": null,
+                                    "needs_human_review": null,
+                                    "reason_codes": [],
+                                    "tests_passed": null,
+                                    "diff_truncated": null,
+                                    "worktree_path": null,
+                                    "cleaned_up": null,
+                                    "suggested_action": null,
+                                    "child_capsules": [
+                                        {
+                                            "capsule_id": "child-capsule:parent-1:child-1",
+                                            "parent_task_id": "parent-1",
+                                            "child_task_id": "child-1",
+                                            "child_goal": "Update calculator child",
+                                            "status": "completed",
+                                            "artifact_titles": ["Patch proposal", "Worktree diff"],
+                                            "changed_files": ["src/calculator.py"],
+                                            "review_decision": "approved",
+                                            "failure_reason": null,
+                                            "next_action": "Review child evidence before parent completion.",
+                                            "estimated_tokens": 20
+                                        }
+                                    ]
+                                },
+                                {
+                                    "task_id": "child-1",
+                                    "agent_id": "agent-child",
+                                    "role": "implementer",
+                                    "execution_mode": "worktree_worker",
+                                    "status": "completed",
+                                    "title": "Child",
+                                    "messages": [],
+                                    "latest_message": null,
+                                    "failure_message": null,
+                                    "updated_at_ms": 190,
+                                    "artifact_count": 2,
+                                    "latest_artifact_kind": "diff_summary",
+                                    "latest_artifact_title": "Worktree diff",
+                                    "needs_human_review": false,
+                                    "reason_codes": [],
+                                    "tests_passed": true,
+                                    "diff_truncated": false,
+                                    "worktree_path": "/tmp/forge-child",
+                                    "cleaned_up": false,
+                                    "suggested_action": "Review approved by controller.",
+                                    "review_decision": "approved",
+                                    "runtime_events": [
+                                        {
+                                            "kind": "assigned",
+                                            "label": "Assigned",
+                                            "detail": "Child worker assigned",
+                                            "created_at_ms": 120
+                                        },
+                                        {
+                                            "kind": "lease_claimed",
+                                            "label": "Lease claimed",
+                                            "detail": "worker-1",
+                                            "created_at_ms": 125
+                                        },
+                                        {
+                                            "kind": "started",
+                                            "label": "Started",
+                                            "detail": "Worktree worker started",
+                                            "created_at_ms": 130
+                                        },
+                                        {
+                                            "kind": "file_fact",
+                                            "label": "File fact",
+                                            "detail": "src/calculator.py",
+                                            "created_at_ms": 150
+                                        },
+                                        {
+                                            "kind": "completed",
+                                            "label": "Completed",
+                                            "detail": "Worktree worker completed",
+                                            "created_at_ms": 175
+                                        }
+                                    ],
+                                    "review_gate": {
+                                        "kind": "approved",
+                                        "label": "Review approved",
+                                        "reason": "ship it",
+                                        "completion_impact": "child_review_approved_only",
+                                        "parent_task_id": "parent-1",
+                                        "child_task_id": "child-1",
+                                        "reviewed_at_ms": 180
+                                    },
+                                    "recovery_actions": []
+                                }
+                            ]
+                        }"#,
+                    )
+                    .expect("a2a projection"),
+                },
             ],
+            loop_task: None,
             latest_turn: Some(turn),
             file_diffs: vec![types::HeadlessFileDiff {
                 path: "src/calculator.py".to_string(),
@@ -477,6 +595,168 @@ mod tests {
             65
         );
         assert_eq!(payload["failure_category"], "none");
+        assert_eq!(
+            payload["forge_run_evidence"]["prompt"],
+            "Update src/calculator.py so add_one returns value + 1"
+        );
+        assert_eq!(payload["forge_run_evidence"]["schema_version"], 2);
+        assert_eq!(
+            payload["forge_run_evidence"]["completion_eligibility"]["status"],
+            "unknown"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["normalized_goal"],
+            "Update calculator"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["prepared_context"]["turn_context"]["sources"],
+            serde_json::json!([])
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["tool_calls"][0]["command"],
+            "edit_file src/calculator.py"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["changed_files"],
+            serde_json::json!(["src/calculator.py"])
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["verification"]["passed"],
+            true
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["provider_usage"]["latest"]["input_tokens"],
+            120
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["continuity_lessons"][0]["formed_count"],
+            1
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["child_task_id"],
+            "child-1"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["review_gate"]["kind"],
+            "approved"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["execution_mode"],
+            "worktree_worker"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["worktree_path"],
+            "/tmp/forge-child"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["tests_passed"],
+            true
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["diff_truncated"],
+            false
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["cleaned_up"],
+            false
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["runtime_events"][0]["kind"],
+            "assigned"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["a2a_child_capsules"][0]["runtime_events"][3]["kind"],
+            "file_fact"
+        );
+    }
+
+    #[test]
+    fn trace_payload_includes_projected_loop_task_authority() {
+        let mut task =
+            crate::loop_runtime::LoopTaskRecord::new_for_test("loop-trace", "recover task");
+        task.status = crate::loop_runtime::LoopTaskStatus::Interrupted;
+        task.latest_usage_ledger = Some(crate::loop_runtime::LoopUsageLedger {
+            provider_id: Some("deepseek".to_string()),
+            model: Some("deepseek-v4-flash".to_string()),
+            input_tokens: Some(222),
+            output_tokens: Some(33),
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_micros: Some(8),
+            pricing_source: Some("test".to_string()),
+            has_unknown_input_tokens: false,
+            has_unknown_output_tokens: false,
+            has_unknown_cost: false,
+            turn_count: 2,
+            tool_call_count: 4,
+            elapsed_ms: 3_000,
+        });
+        task.recovery_state = Some(crate::loop_runtime::LoopTaskRecoveryState::interrupted(
+            "stale lease recovered by operator",
+            5,
+            Some("event-loop-trace-interrupted".to_string()),
+        ));
+        task.completion_result = Some(crate::loop_runtime::LoopCompletionResult {
+            status: crate::loop_runtime::LoopCompletionStatus::Blocked,
+            reasons: vec!["task_interrupted".to_string()],
+            review_status: crate::loop_runtime::LoopReviewStatus::NotRequired,
+            commit_eligible: false,
+            commit_blockers: vec!["task_interrupted".to_string()],
+            human_gate_id: None,
+            last_review_decision: None,
+            eligibility_facts: crate::loop_runtime::LoopCompletionEligibilityFacts::default(),
+        });
+        task.evidence
+            .push(crate::loop_runtime::EvidenceRecord::command_for_test(
+                "build:desktop",
+                true,
+            ));
+
+        let payload = trace::build_trace_payload(types::TracePayloadInput {
+            task_id: "loop-trace".to_string(),
+            prompt: "Recover task".to_string(),
+            provider: "forge".to_string(),
+            model: "local-forge".to_string(),
+            raw_events: Vec::new(),
+            loop_task: Some(task),
+            latest_turn: None,
+            file_diffs: Vec::new(),
+            changed_files: Vec::new(),
+            final_answer: String::new(),
+            duration_ms: 50,
+            continuity_formed_count: None,
+            continuity_error: None,
+            repair_attempts_used: 0,
+            validation_attempts: 0,
+        });
+
+        assert_eq!(payload["loop_task"]["task_id"], "loop-trace");
+        assert_eq!(payload["loop_task"]["owner"]["kind"], "gateway");
+        assert_eq!(payload["loop_task"]["status"], "interrupted");
+        assert_eq!(payload["loop_task"]["failure_category"], "orphaned");
+        assert_eq!(payload["loop_task"]["usage"]["input_tokens"], 222);
+        assert_eq!(payload["loop_task"]["recovery_state"]["kind"], "orphaned");
+        assert_eq!(
+            payload["loop_task"]["completion_evidence"][0]["evidence_id"],
+            "evidence-command-build:desktop"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["failure_category"],
+            "orphaned"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["recovery"]["kind"],
+            "orphaned"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["completion_eligibility"]["status"],
+            "blocked"
+        );
+        assert_eq!(
+            payload["forge_run_evidence"]["completion_eligibility"]["commit_eligible"],
+            false
+        );
     }
 
     #[test]
@@ -596,6 +876,7 @@ mod tests {
                 is_error: false,
                 duration_ms: 10,
             }],
+            loop_task: None,
             latest_turn: Some(turn),
             file_diffs: Vec::new(),
             changed_files: Vec::new(),
@@ -727,6 +1008,7 @@ mod tests {
             question: "Need input?".to_string(),
             kind: "ask_user".to_string(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: false,
         });
         let ask_response = tokio::time::timeout(Duration::from_secs(1), ask_rx)
@@ -746,6 +1028,7 @@ mod tests {
             question: "Allow write?".to_string(),
             kind: "file_write".to_string(),
             replayed_interrupted: false,
+            permission_evidence: None,
             boundary: Some(WriteBoundary {
                 title: "准备修改项目".to_string(),
                 target_label: None,
@@ -785,6 +1068,7 @@ mod tests {
             question: "Allow write?".to_string(),
             kind: "file_write".to_string(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: false,
         });
 
@@ -807,6 +1091,7 @@ mod tests {
             question: "Allow write?".to_string(),
             kind: "file_write".to_string(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: false,
         });
 

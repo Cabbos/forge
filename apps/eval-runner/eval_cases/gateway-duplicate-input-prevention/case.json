@@ -1,0 +1,79 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "gateway-duplicate-input-prevention",
+    "title": "Gateway duplicate input prevention keeps one queued input",
+    "prompt": "Evaluate gateway duplicate input prevention and confirm repeated handoff attempts do not enqueue or execute duplicate input.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "gateway runtime safety: duplicate input prevention",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "gateway",
+      "gateway-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 132,
+        "input_tokens": 184,
+        "output_tokens": 36,
+        "forge_run_evidence": {
+          "session_id": "gateway-duplicate-input-session",
+          "loop_task_id": "gateway-duplicate-input-task",
+          "prompt": "Evaluate gateway duplicate input prevention and confirm repeated handoff attempts do not enqueue or execute duplicate input.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "gateway runtime safety: duplicate input prevention",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 184,
+            "output_tokens": 36
+          },
+          "failure_category": "none",
+          "gateway": {
+            "ownership_mode": "local_default",
+            "gateway_can_own_session": false,
+            "degraded_fallback": {
+              "active": true,
+              "reason": "duplicate_handoff_detected",
+              "fallback_target": "desktop_runtime",
+              "queued_input_preserved": true,
+              "recovery_command": "forge_trigger status"
+            },
+            "duplicate_input_prevention": {
+              "attempted_duplicate_input_count": 1,
+              "duplicate_input_count": 0,
+              "prevented": true,
+              "queued_input_count": 1,
+              "executed_turn_count": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

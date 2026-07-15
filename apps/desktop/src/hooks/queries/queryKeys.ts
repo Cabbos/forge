@@ -31,6 +31,13 @@ export const queryKeys = {
   memoryFactsAll: ["memory-facts"] as const,
   memoryFacts: (query?: string, profileId?: string | null) =>
     ["memory-facts", query ?? "", profileId ?? ""] as const,
+  unifiedMemories: (
+    sessionId: string | undefined | null,
+    projectPath: string | null | undefined,
+    query?: string,
+    filter?: string,
+  ) => ["unified-memories", sessionId ?? "", projectPath ?? "", query ?? "", filter ?? "current"] as const,
+  unifiedMemoriesAll: ["unified-memories"] as const,
   profilesAll: ["profiles"] as const,
   schedulerAll: ["scheduler"] as const,
 };

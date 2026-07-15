@@ -298,6 +298,7 @@ impl AgentTaskRecord {
 #[serde(rename_all = "snake_case")]
 pub(crate) enum AgentMessageKind {
     TaskAssigned,
+    LeaseClaimed,
     Started,
     Progress,
     Evidence,

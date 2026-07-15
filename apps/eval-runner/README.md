@@ -237,6 +237,69 @@ compares two `BacktestReport` payloads and returns critical regressions for
 large success-rate drops or scope-violation spikes, plus warnings for sharp
 model-round increases.
 
+For PR evidence, `node ../../scripts/release-confidence-summary.mjs --markdown`
+can combine acceptance metadata, optional gate results, eval reports, and
+boundary evidence. It reads failing eval scores from either `score_summary` or
+task-level `scores`, and includes failing task ids in the Markdown summary when
+only task-level score evidence is available, and reports CI-default gate
+totals/pass/fail/unknown counts beside the full matrix. Boundary evidence can
+also list `capabilityClaims`; declared capabilities with passing `evidenceGate`
+and `evidenceScore` references are listed as verified capability evidence, while
+a missing acceptance gate, missing acceptance result, failing acceptance gate,
+missing eval score, or failing eval score is reported as missing capability
+evidence. Add `--fail-on-attention` when the summary is being used as a gate and
+should exit nonzero for `attention_required` or `failed`.
+
+## Forge Runtime Evidence
+
+Desktop headless traces and `forge_session export-eval` emit
+`ForgeRunEvidence` V2. The V2 payload includes completion eligibility evidence
+alongside prepared context, memory audit, permissions, file effects,
+verification, provider usage, recovery, A2A child capsules, memory recall,
+gateway, and runtime recovery facts. Eval scoring includes a dedicated
+completion-eligibility consistency score: `unknown` authority is accepted, while
+commit-eligible claims with blockers, nonterminal status, or malformed fact
+buckets are flagged. Explicit V1 evidence is still accepted; missing V2-only
+fields are represented as `unknown` rather than pass, fail, or zero.
+
+The gateway eval pack lives in `eval_cases/gateway-*` and runs offline through
+the deterministic mock provider. It covers local parity dry-run evidence,
+degraded fallback with queued input preservation, and the gated read-only
+diagnostics owner slice, patch proposal owner proposal-only eligibility,
+direct-write owner blocked-by-default eligibility, lease timeout recovery, and
+duplicate input prevention; these cases feed
+`forge_gateway_runtime_safety_ok` without enabling live gateway ownership,
+provider/tool execution, file writes, or automatic resume.
+
+The A2A eval pack lives in `eval_cases/a2a-child-*` and runs offline through the
+same mock provider. It covers completed child capsules with review evidence, a
+context capsule contract with capsule ids, child goals, token estimates,
+prepared-context references, and no full child transcript, review gate identity
+binding across child task, parent task, and session, blocking review gates such
+as stale review, wrong parent, and missing evidence, failed child capsules with
+recovery actions, and a failure recovery policy that requires human approval,
+new attempt/new lease retry evidence, and no auto-executed recovery. It also
+checks runtime event file facts for compact child lifecycle lineage, plus
+worktree worker facts including worker path, changed files, test report, and
+cleanup or preserved-worktree inspection status, feeding
+`forge_a2a_child_evidence_complete_ok` without launching live subagents.
+
+The memory eval pack lives in `eval_cases/memory-recall-*` and also runs
+offline. It covers correct recall selection, duplicate and over-budget
+filtering, memory/continuity dedupe, wrong-project and wrong-profile filtering,
+archived/forgotten record filtering, and hidden-body leak prevention. The same
+scoring also detects when the same continuity record is injected through both
+memory and continuity context sources; these cases feed
+`forge_memory_recall_quality_ok` while keeping prepared context sources
+body-free.
+
+The runtime recovery eval pack lives in `eval_cases/runtime-recovery-*` and also
+runs offline. It covers orphaned run recovery, interrupted shell evidence
+export, pending confirmation restart replay, unknown provider usage preservation,
+and missing verification recovery requests; these cases feed
+`forge_runtime_recovery_quality_ok` without inventing token/cost values or
+claiming commit readiness.
+
 ## Trusted Backtest Operator Path
 
 Treat an eval run as two decisions: `execution_status` says whether the tasks

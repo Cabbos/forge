@@ -7,6 +7,7 @@ pub mod scoring;
 #[cfg(test)]
 mod scoring_test;
 pub mod storage;
+pub mod unified;
 
 pub use extraction::extract_candidates_from_user_message;
 #[allow(unused_imports)]
@@ -19,6 +20,14 @@ pub use model::{MemorySelectionAudit, MemoryStatus, RejectReason, RejectedMemory
 #[allow(unused_imports)]
 pub use scoring::select_relevant_memories_with_audit;
 pub use storage::WikiMemoryStore;
+#[allow(unused_imports)]
+pub use unified::{
+    format_unified_memory_context, memory_authority_map_v2, plan_unified_context_memory_recall,
+    select_unified_context_memories, MemoryAuthorityDescriptor, RecallBudget, RecallCandidateAudit,
+    RecallDecision, RecallPlan, UnifiedMemoryKind, UnifiedMemoryProvenance, UnifiedMemoryRecord,
+    UnifiedMemoryScope, UnifiedMemorySelection, UnifiedMemorySource, UnifiedMemoryStatus,
+    UnifiedMemoryVisibility,
+};
 
 pub fn format_selected_memory_context(selected: &[SelectedContextMemory]) -> Option<String> {
     if selected.is_empty() {

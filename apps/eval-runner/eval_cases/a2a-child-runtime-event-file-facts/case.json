@@ -1,0 +1,142 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "a2a-child-runtime-event-file-facts",
+    "title": "A2A child runtime events include file fact lineage",
+    "prompt": "Evaluate A2A child evidence and confirm worktree worker capsules carry compact runtime lifecycle events with file fact lineage.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "A2A child evidence completeness: runtime event file facts",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "a2a",
+      "a2a-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 164,
+        "input_tokens": 238,
+        "output_tokens": 56,
+        "forge_run_evidence": {
+          "session_id": "a2a-runtime-events-session",
+          "loop_task_id": "a2a-runtime-events-parent-task",
+          "prompt": "Evaluate A2A child evidence and confirm worktree worker capsules carry compact runtime lifecycle events with file fact lineage.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  },
+                  {
+                    "kind": "a2a_child_capsule",
+                    "capsule_id": "child-capsule:a2a-runtime-events-parent-task:child-runtime-events"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "A2A child evidence completeness: runtime event file facts",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 238,
+            "output_tokens": 56
+          },
+          "failure_category": "none",
+          "a2a_child_capsules": [
+            {
+              "capsule_id": "child-capsule:a2a-runtime-events-parent-task:child-runtime-events",
+              "child_task_id": "child-runtime-events",
+              "parent_task_id": "a2a-runtime-events-parent-task",
+              "session_id": "a2a-runtime-events-session",
+              "child_goal": "Return compact runtime lifecycle evidence with file fact lineage.",
+              "status": "completed",
+              "execution_mode": "worktree_worker",
+              "worktree_path": "/tmp/forge-a2a-runtime-events",
+              "artifact_titles": [
+                "Worktree diff",
+                "Runtime event summary",
+                "Review decision"
+              ],
+              "changed_files": [
+                "src/runtime.ts"
+              ],
+              "changed_file_count": 1,
+              "tests_passed": true,
+              "test_report_excerpt": "node --test runtime-events.test.ts ... ok",
+              "cleaned_up": false,
+              "runtime_events": [
+                {
+                  "kind": "assigned",
+                  "label": "Assigned",
+                  "detail": "Worktree worker assigned",
+                  "created_at_ms": 1800000001000
+                },
+                {
+                  "kind": "lease_claimed",
+                  "label": "Lease claimed",
+                  "detail": "worker-runtime-events",
+                  "created_at_ms": 1800000001010
+                },
+                {
+                  "kind": "started",
+                  "label": "Started",
+                  "detail": "Worker started",
+                  "created_at_ms": 1800000001020
+                },
+                {
+                  "kind": "progress",
+                  "label": "Progress",
+                  "detail": "Editing src/runtime.ts",
+                  "created_at_ms": 1800000001030
+                },
+                {
+                  "kind": "file_fact",
+                  "label": "File fact",
+                  "detail": "src/runtime.ts",
+                  "created_at_ms": 1800000001040
+                },
+                {
+                  "kind": "waiting_review",
+                  "label": "Waiting for review",
+                  "detail": "Worktree diff requires review",
+                  "created_at_ms": 1800000001050
+                },
+                {
+                  "kind": "completed",
+                  "label": "Completed",
+                  "detail": "Worker completed",
+                  "created_at_ms": 1800000001060
+                }
+              ],
+              "review_decision": "approved",
+              "review_gate": {
+                "kind": "approved",
+                "parent_task_id": "a2a-runtime-events-parent-task",
+                "child_task_id": "child-runtime-events",
+                "session_id": "a2a-runtime-events-session"
+              },
+              "estimated_tokens": 104,
+              "next_action": "Use compact event lineage in parent evidence without injecting the child transcript."
+            }
+          ]
+        }
+      }
+    }
+  }
+}

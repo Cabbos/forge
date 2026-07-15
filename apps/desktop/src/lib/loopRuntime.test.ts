@@ -53,6 +53,24 @@ describe("summarizeLoopTask", () => {
     assert.equal(summary.detail, "8 轮模型 / 24 次工具 / 2m 0s");
   });
 
+  it("prefers runtime usage ledger over budget snapshot for loop detail", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "running",
+      latest_budget_snapshot: {
+        model_rounds_used: 8,
+        tool_calls_used: 24,
+        elapsed_ms: 120_000,
+      },
+      latest_usage_ledger: {
+        turn_count: 3,
+        tool_call_count: 5,
+        elapsed_ms: 45_000,
+      },
+    }));
+
+    assert.equal(summary.detail, "3 轮模型 / 5 次工具 / 45s");
+  });
+
   it("surfaces ready-for-review while commit remains human-gated", () => {
     const summary = summarizeLoopTask(loopTask({
       status: "waiting_for_review",
@@ -109,6 +127,62 @@ describe("summarizeLoopTask", () => {
     assert.equal(summary.commitEligible, false);
     assert.deepEqual(summary.commitBlockers, ["review_rejected:needs tests"]);
     assert.match(summary.detail, /needs tests/);
+  });
+
+  it("exposes completion eligibility facts from the backend contract", () => {
+    const summary = summarizeLoopTask(loopTask({
+      status: "waiting_for_review",
+      completion_result: {
+        status: "waiting_for_review",
+        reasons: ["missing_review_decision"],
+        review_status: "ready_for_review",
+        commit_eligible: false,
+        commit_blockers: ["missing_human_review"],
+        eligibility_facts: {
+          verification: {
+            status: "satisfied",
+            reason: "required_checks_satisfied",
+            evidence_ids: ["evidence-command-build:desktop"],
+            blockers: [],
+          },
+          changed_file_scope: {
+            status: "unknown",
+            reason: "changed_file_scope_not_connected_to_completion_contract",
+          },
+          permission: {
+            status: "unknown",
+            reason: "permission_evidence_not_connected_to_completion_contract",
+          },
+          review: {
+            status: "missing",
+            reason: "review_decision_missing",
+            blockers: ["missing_human_review"],
+          },
+          docs: {
+            status: "satisfied",
+            reason: "docs_evidence_satisfied",
+            evidence_ids: ["evidence-docs"],
+          },
+          eval: {
+            status: "unknown",
+            reason: "eval_evidence_not_connected_to_completion_contract",
+          },
+          residual_risk: {
+            status: "satisfied",
+            reason: "residual_risk_satisfied",
+            evidence_ids: ["evidence-gitnexus-low"],
+          },
+          commit: {
+            status: "not_required",
+            reason: "commit_not_required",
+          },
+        },
+      },
+    }));
+
+    assert.equal(summary.eligibilityFacts?.verification?.status, "satisfied");
+    assert.equal(summary.eligibilityFacts?.review?.status, "missing");
+    assert.equal(summary.eligibilityFacts?.changed_file_scope?.status, "unknown");
   });
 
   it("does not label no-review completed tasks as human review work", () => {
@@ -426,6 +500,8 @@ function loopTask(overrides: Partial<LoopTaskRecord>): LoopTaskRecord {
     evidence: overrides.evidence ?? [],
     policy_decisions: overrides.policy_decisions ?? [],
     latest_budget_snapshot: overrides.latest_budget_snapshot ?? null,
+    latest_usage_ledger: overrides.latest_usage_ledger ?? null,
+    recovery_state: overrides.recovery_state ?? null,
     latest_event_id: overrides.latest_event_id ?? null,
     outcome: overrides.outcome ?? null,
     completion_result: overrides.completion_result ?? null,

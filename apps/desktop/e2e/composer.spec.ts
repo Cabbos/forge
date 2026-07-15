@@ -510,6 +510,66 @@ test.describe("InputBar", () => {
     await expect(usage).toHaveAttribute("title", /自动压缩阈值 967K/);
   });
 
+  test("turn prepared updates composer context usage from backend estimate", async ({ page }) => {
+    const sessionId = crypto.randomUUID();
+    await page.addInitScript((sessionId) => {
+      // @ts-expect-error mock
+      window.__mockSessionId = sessionId;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.locator("textarea")).toBeVisible();
+    await expect.poll(async () => page.evaluate(() => {
+      // @ts-expect-error mock
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    })).toBe(true);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "session_started",
+        session_id: sessionId,
+        agent_type: "deepseek",
+        model: "deepseek-v4-flash[1m]",
+        context_window_tokens: 1_000_000,
+      },
+      {
+        event_type: "turn_prepared",
+        session_id: sessionId,
+        prepared: {
+          session_id: sessionId,
+          project_path: "/Users/cabbos/project/forge",
+          user_text: "Continue",
+          activation_text: "Continue",
+          selected_memory_ids: ["memory_fact:acceptance"],
+          selected_project_record_ids: ["tasks.md"],
+          workflow_route: "workflow",
+          workflow_phase: "planning",
+          slash_command: null,
+          permission_mode: "manual_confirm",
+          context_estimate: {
+            used_tokens: 411,
+            context_window_tokens: 1_000_000,
+            percent_used: 0,
+            reserved_output_tokens: 20_000,
+            sources: [
+              {
+                kind: "user_input",
+                label: "用户输入",
+                reason: "Visible user input for this turn",
+                estimated_tokens: 3,
+                injected: true,
+              },
+            ],
+          },
+        },
+      },
+    ], 1);
+
+    const usage = page.getByTestId("composer-context-usage");
+    await expect(usage).toContainText("411 / 1M · 余 999.5K");
+    await expect(usage).toHaveAttribute("title", /预运行估算/);
+  });
+
   test("composer context usage view-model owns display copy and compact control state", () => {
     const viewPath = resolve(process.cwd(), "src/components/session/contextUsageView.ts");
     const controller = readFileSync(resolve(process.cwd(), "src/components/session/useComposerController.ts"), "utf8");

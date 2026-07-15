@@ -39,6 +39,9 @@ const GATEWAY_RESTART_BACKOFF_MAX_SECS: u64 = 300;
 /// Synthetic session id used for global runtime health alerts.
 const RUNTIME_HEALTH_SESSION_ID: &str = "__runtime__";
 
+const GATEWAY_LOCAL_FALLBACK_MESSAGE: &str =
+    "Forge keeps the desktop runtime as the local owner; queued input and confirmations remain there.";
+
 // ── Gateway service watchdog ─────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -137,9 +140,9 @@ fn evaluate_gateway_watchdog(
             action: GatewayWatchdogAction::AlertOnly,
             alert_level: Some("warn".to_string()),
             message: "Gateway service is not installed.".to_string(),
-            remediation: Some(
-                "Enable autostart in Settings -> General or run reinstall_service.".to_string(),
-            ),
+            remediation: Some(format!(
+                "Enable autostart in Settings -> General or run reinstall_service. {GATEWAY_LOCAL_FALLBACK_MESSAGE}"
+            )),
         };
     }
 
@@ -149,7 +152,7 @@ fn evaluate_gateway_watchdog(
                 action: GatewayWatchdogAction::WaitForBackoff,
                 alert_level: None,
                 message: format!(
-                    "Gateway service restart is waiting for backoff ({remaining}s remaining)."
+                    "Gateway service restart is waiting for backoff ({remaining}s remaining). {GATEWAY_LOCAL_FALLBACK_MESSAGE}"
                 ),
                 remediation: None,
             };
@@ -160,9 +163,9 @@ fn evaluate_gateway_watchdog(
         action: GatewayWatchdogAction::RestartGateway,
         alert_level: Some("warn".to_string()),
         message: "Gateway service is installed but is not running.".to_string(),
-        remediation: Some(
-            "Forge will try to restart the Gateway service automatically.".to_string(),
-        ),
+        remediation: Some(format!(
+            "Forge will try to restart the Gateway service automatically. {GATEWAY_LOCAL_FALLBACK_MESSAGE}"
+        )),
     }
 }
 
@@ -631,6 +634,11 @@ mod tests {
         assert_eq!(decision.action, GatewayWatchdogAction::RestartGateway);
         assert_eq!(decision.alert_level.as_deref(), Some("warn"));
         assert!(decision.message.contains("installed but is not running"));
+        assert!(decision
+            .remediation
+            .as_deref()
+            .unwrap_or_default()
+            .contains("desktop runtime as the local owner"));
     }
 
     #[test]
@@ -658,6 +666,9 @@ mod tests {
 
         assert_eq!(decision.action, GatewayWatchdogAction::WaitForBackoff);
         assert_eq!(decision.alert_level, None);
+        assert!(decision
+            .message
+            .contains("desktop runtime as the local owner"));
     }
 
     #[test]

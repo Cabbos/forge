@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "gateway-local-parity-dry-run",
+    "title": "Gateway/local parity dry-run keeps local owner",
+    "prompt": "Evaluate a gateway ownership dry-run and confirm that local-default ownership remains the active authority.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "cargo test gateway_local_parity_fixture_projects_backend_facts_without_taking_ownership",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "gateway",
+      "gateway-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 120,
+        "input_tokens": 160,
+        "output_tokens": 32,
+        "forge_run_evidence": {
+          "session_id": "gateway-parity-session",
+          "loop_task_id": "gateway-parity-task",
+          "prompt": "Evaluate a gateway ownership dry-run and confirm that local-default ownership remains the active authority.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "cargo test gateway_local_parity_fixture_projects_backend_facts_without_taking_ownership",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 160,
+            "output_tokens": 32
+          },
+          "failure_category": "none",
+          "gateway": {
+            "ownership_mode": "local_default",
+            "gateway_can_own_session": false,
+            "local_parity": {
+              "differences": [
+                {
+                  "field": "owner",
+                  "allowlisted": true
+                },
+                {
+                  "field": "transport",
+                  "allowlisted": true
+                }
+              ]
+            },
+            "duplicate_input_prevention": {
+              "duplicate_input_count": 0,
+              "prevented": true
+            }
+          }
+        }
+      }
+    }
+  }
+}

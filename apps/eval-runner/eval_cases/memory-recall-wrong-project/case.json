@@ -1,0 +1,81 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "memory-recall-wrong-project",
+    "title": "Memory recall filters wrong-project memory",
+    "prompt": "Evaluate memory recall evidence and confirm project-scoped memory from another project is not injected.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "memory recall quality: wrong project filtered",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "memory",
+      "memory-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 100,
+        "input_tokens": 130,
+        "output_tokens": 22,
+        "forge_run_evidence": {
+          "session_id": "memory-wrong-project-session",
+          "loop_task_id": "memory-wrong-project-task",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "memory",
+                    "source_id": "memory-current-project",
+                    "label": "Current project coding style",
+                    "visibility": "hidden"
+                  }
+                ]
+              }
+            }
+          },
+          "memory_audit": {
+            "selected_memory_audit": [
+              {
+                "memory_id": "memory-current-project",
+                "decision": "injected",
+                "status": "active",
+                "scope": "project",
+                "project_match": true
+              },
+              {
+                "memory_id": "memory-other-project",
+                "decision": "filtered",
+                "status": "active",
+                "scope": "project",
+                "project_match": false,
+                "filter_reason": "wrong_project"
+              }
+            ]
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "memory recall quality: wrong project filtered",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 130,
+            "output_tokens": 22
+          },
+          "failure_category": "none"
+        }
+      }
+    }
+  }
+}

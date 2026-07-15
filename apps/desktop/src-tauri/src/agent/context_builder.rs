@@ -16,7 +16,7 @@ pub(crate) enum ContextSourceKind {
 }
 
 impl ContextSourceKind {
-    fn as_str(&self) -> &'static str {
+    pub(crate) fn as_str(&self) -> &'static str {
         match self {
             ContextSourceKind::SystemPrompt => "system_prompt",
             ContextSourceKind::PreviousSummary => "previous_summary",
@@ -228,7 +228,7 @@ impl ContextBuilder {
                 if content.is_empty() {
                     return None;
                 }
-                let block = format!("## {}\n\n{}", part.label.trim(), content);
+                let block = format_hidden_context_block(&part.label, content);
                 sources.push(ContextSource::new(
                     part.kind,
                     part.label,
@@ -291,8 +291,16 @@ fn estimate_value_tokens(value: &serde_json::Value) -> usize {
     }
 }
 
-fn estimate_text_tokens_u32(text: &str) -> u32 {
+pub(crate) fn estimate_context_block_tokens(label: &str, content: &str) -> u32 {
+    estimate_text_tokens_u32(&format_hidden_context_block(label, content))
+}
+
+pub(crate) fn estimate_text_tokens_u32(text: &str) -> u32 {
     to_u32_tokens(estimate_text_tokens(text))
+}
+
+fn format_hidden_context_block(label: &str, content: &str) -> String {
+    format!("## {}\n\n{}", label.trim(), content.trim())
 }
 
 fn estimate_text_tokens(text: &str) -> usize {

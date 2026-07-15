@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::agent::turn_state::AgentVerificationTrace;
+use crate::loop_runtime::LoopTaskRecord;
 use crate::protocol::events::StreamEvent;
 
 pub type PendingConfirms =
@@ -94,6 +95,7 @@ pub struct TracePayloadInput {
     pub provider: String,
     pub model: String,
     pub raw_events: Vec<StreamEvent>,
+    pub loop_task: Option<LoopTaskRecord>,
     pub latest_turn: Option<crate::agent::turn_state::AgentTurnState>,
     pub file_diffs: Vec<HeadlessFileDiff>,
     pub changed_files: Vec<String>,

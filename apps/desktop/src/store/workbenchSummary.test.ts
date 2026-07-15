@@ -276,6 +276,66 @@ describe("deriveWorkbenchSummary", () => {
     assert.strictEqual(normalized.max_attempts, 3);
   });
 
+  it("normalizes missing child runtime events and capsules on sparse legacy task projections", () => {
+    const legacyTask = {
+      task_id: "legacy",
+      agent_id: "agent",
+      role: "implementer",
+      execution_mode: "worktree_worker",
+      status: "running",
+      title: "Legacy worker",
+      messages: [],
+      latest_message: null,
+      failure_message: null,
+      updated_at_ms: 0,
+      artifact_count: 0,
+      latest_artifact_kind: null,
+      latest_artifact_title: null,
+      needs_human_review: null,
+      reason_codes: [],
+      tests_passed: null,
+      diff_truncated: null,
+      worktree_path: null,
+      cleaned_up: null,
+      suggested_action: null,
+    } as unknown as AgentA2ATaskProjection;
+
+    const normalized = normalizeA2ATaskProjection(legacyTask);
+
+    assert.deepStrictEqual(normalized.runtime_events, []);
+    assert.deepStrictEqual(normalized.child_capsules, []);
+  });
+
+  it("normalizes missing review gate and recovery action fields on sparse legacy task projections", () => {
+    const legacyTask = {
+      task_id: "legacy",
+      agent_id: "agent",
+      role: "implementer",
+      execution_mode: "worktree_worker",
+      status: "failed",
+      title: "Legacy worker",
+      messages: [],
+      latest_message: null,
+      failure_message: "failed",
+      updated_at_ms: 0,
+      artifact_count: 0,
+      latest_artifact_kind: null,
+      latest_artifact_title: null,
+      needs_human_review: null,
+      reason_codes: [],
+      tests_passed: null,
+      diff_truncated: null,
+      worktree_path: null,
+      cleaned_up: null,
+      suggested_action: null,
+    } as unknown as AgentA2ATaskProjection;
+
+    const normalized = normalizeA2ATaskProjection(legacyTask);
+
+    assert.strictEqual(normalized.review_gate, null);
+    assert.deepStrictEqual(normalized.recovery_actions, []);
+  });
+
   it("normalizes missing child task ids on sparse legacy task projections", () => {
     const legacyTask = {
       task_id: "legacy",

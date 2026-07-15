@@ -5,9 +5,14 @@ use crate::adapters::base::AiAdapter;
 use crate::adapters::missing_key::MissingKeyAdapter;
 use crate::agent::capability_context::build_turn_input_intent;
 use crate::agent::context_builder::ContextSourceKind;
+use crate::agent::prepared_turn::{ContextUsageBucketKind, PreparedTurnMemoryAudit};
 use crate::agent::session::AgentSession;
-use crate::continuity::ContinuityStore;
+use crate::continuity::{
+    ContinuityEvent, ContinuityStore, ExperienceStatus, ReflectionEvent, ReflectionOutcome,
+};
+use crate::forge_wiki::model::{ForgeWikiPageKind, SelectedForgeWikiPage};
 use crate::harness::capability::CapabilityKind;
+use crate::harness::permissions::PermissionMode;
 use crate::harness::Harness;
 use crate::ipc::project_records::{
     propose_send_input_project_record_update, select_send_input_project_records_context,
@@ -18,8 +23,9 @@ use crate::ipc::send_input_context::{
     PrepareSendInputTurnRequest,
 };
 use crate::memory::facts::{MemoryFactStore, UpsertMemoryFactInput};
-use crate::memory::model::{MemoryCategory, MemoryScope, MemoryStatus, WikiMemory};
+use crate::memory::model::{MemoryStatus, WikiMemory};
 use crate::memory::storage::now_string as memory_now_string;
+use crate::memory::{MemoryCategory, MemoryScope, SelectedContextMemory};
 use crate::profile::{ProfileStore, UpsertProfileInput};
 use crate::state::AppState;
 use crate::workflow::classify_workflow_with_command;
@@ -214,6 +220,11 @@ async fn send_input_turn_context_uses_session_workspace_for_metadata_and_file_re
         wiki_context: None,
         continuity_context: None,
         connector_context: None,
+        selected_memories: Vec::new(),
+        selected_memory_audit: Vec::new(),
+        memory_recall_plan: None,
+        selected_project_records: Vec::new(),
+        permission_mode: PermissionMode::ManualConfirm,
     })
     .await;
 
@@ -262,6 +273,11 @@ async fn send_input_turn_context_includes_continuity_experience_context() {
                 .to_string(),
         ),
         connector_context: None,
+        selected_memories: Vec::new(),
+        selected_memory_audit: Vec::new(),
+        memory_recall_plan: None,
+        selected_project_records: Vec::new(),
+        permission_mode: PermissionMode::ManualConfirm,
     })
     .await;
 
@@ -271,6 +287,182 @@ async fn send_input_turn_context_includes_continuity_experience_context() {
         .find(|context| context.kind == ContextSourceKind::ContinuityExperience)
         .expect("continuity context");
     assert!(continuity.content.contains("[pinned] Package script"));
+
+    let _ = std::fs::remove_dir_all(&workspace);
+}
+
+#[tokio::test]
+async fn send_input_prepared_turn_contract_summarizes_sources_without_hidden_bodies() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-prepared-turn-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let session = test_agent_session("session-1", &workspace);
+    let input_intent = build_turn_input_intent("/plan continue with records", &[], Vec::new());
+    let workflow = classify_workflow_with_command(
+        "session-1",
+        "/plan continue with records",
+        Some("/plan"),
+        1,
+    );
+    let selected_memory = SelectedContextMemory {
+        memory_id: "memory_fact:alpha".to_string(),
+        title: "Alpha memory".to_string(),
+        body: "SECRET MEMORY BODY".to_string(),
+        category: MemoryCategory::ProjectFact,
+        scope: MemoryScope::Project,
+        score: 0.91,
+        reason: "Matches current goal".to_string(),
+        injected: true,
+    };
+    let selected_project_record = SelectedForgeWikiPage {
+        page_id: "tasks.md".to_string(),
+        title: "Tasks".to_string(),
+        path: ".forge/wiki/tasks.md".to_string(),
+        kind: ForgeWikiPageKind::Tasks,
+        summary: "Task summary".to_string(),
+        score: 0.88,
+        reason: "Current task record".to_string(),
+        injected: true,
+    };
+    let selected_memory_audit = PreparedTurnMemoryAudit {
+        memory_id: "memory_fact:alpha".to_string(),
+        source: "memory_fact".to_string(),
+        source_id: "alpha".to_string(),
+        kind: "project_fact".to_string(),
+        score: 0.91,
+        reason: "Matches current goal".to_string(),
+        project_match: true,
+        profile_match: false,
+        injected: true,
+    };
+
+    let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+        session_id: "session-1",
+        session: &session,
+        text: "/plan continue with records",
+        input_intent,
+        workflow: &workflow,
+        ready_connector_labels: Vec::new(),
+        memory_context: Some("SECRET MEMORY BODY".to_string()),
+        wiki_context: Some("SECRET PROJECT RECORD BODY".to_string()),
+        continuity_context: None,
+        connector_context: None,
+        selected_memories: vec![selected_memory.clone(), selected_memory],
+        selected_memory_audit: vec![selected_memory_audit.clone(), selected_memory_audit],
+        memory_recall_plan: None,
+        selected_project_records: vec![selected_project_record.clone(), selected_project_record],
+        permission_mode: PermissionMode::TrustCurrentProject,
+    })
+    .await;
+
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_ids,
+        vec!["memory_fact:alpha"]
+    );
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_audit.len(),
+        1,
+        "audit keeps one entry per selected unified memory"
+    );
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_audit[0].source,
+        "memory_fact"
+    );
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_audit[0].source_id,
+        "alpha"
+    );
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_audit[0].kind,
+        "project_fact"
+    );
+    assert_eq!(
+        prepared.prepared_turn.selected_memory_audit[0].reason,
+        "Matches current goal"
+    );
+    assert!(prepared.prepared_turn.selected_memory_audit[0].project_match);
+    assert!(prepared.prepared_turn.selected_memory_audit[0].injected);
+    assert_eq!(
+        prepared.prepared_turn.selected_project_record_ids,
+        vec!["tasks.md"]
+    );
+    assert_eq!(
+        prepared.prepared_turn.permission_mode,
+        PermissionMode::TrustCurrentProject
+    );
+    assert_eq!(
+        prepared
+            .prepared_turn
+            .context_estimate
+            .context_window_tokens,
+        Some(128_000)
+    );
+    assert!(prepared.prepared_turn.context_estimate.used_tokens > 0);
+    assert_eq!(
+        prepared
+            .prepared_turn
+            .context_estimate
+            .sources
+            .iter()
+            .filter(|source| source.kind == "project_records")
+            .count(),
+        1
+    );
+    assert!(prepared
+        .prepared_turn
+        .context_estimate
+        .sources
+        .iter()
+        .any(|source| source.kind == "user_input" && source.estimated_tokens > 0));
+    let context_buckets = &prepared.prepared_turn.context_estimate.buckets;
+    assert_eq!(
+        context_buckets
+            .iter()
+            .filter(|bucket| bucket.kind == ContextUsageBucketKind::VisibleInput)
+            .count(),
+        1
+    );
+    assert!(
+        context_buckets
+            .iter()
+            .any(|bucket| bucket.kind == ContextUsageBucketKind::Memory
+                && bucket.estimated_tokens > 0)
+    );
+    assert!(context_buckets.iter().any(|bucket| bucket.kind
+        == ContextUsageBucketKind::ProjectRecords
+        && bucket.estimated_tokens > 0));
+    assert!(context_buckets
+        .iter()
+        .any(|bucket| bucket.kind == ContextUsageBucketKind::HiddenSystem
+            && bucket.estimated_tokens > 0));
+    assert!(context_buckets.iter().any(|bucket| bucket.kind
+        == ContextUsageBucketKind::ReservedOutput
+        && bucket.estimated_tokens == 20_000));
+    let non_reserved_bucket_tokens = context_buckets
+        .iter()
+        .filter(|bucket| bucket.kind != ContextUsageBucketKind::ReservedOutput)
+        .map(|bucket| bucket.estimated_tokens)
+        .sum::<u32>();
+    assert_eq!(
+        non_reserved_bucket_tokens,
+        prepared.prepared_turn.context_estimate.used_tokens
+    );
+
+    let event = crate::protocol::events::StreamEvent::TurnPrepared {
+        session_id: "session-1".to_string(),
+        prepared: prepared.prepared_turn.clone(),
+    };
+    let json = serde_json::to_string(&event).expect("serialize turn_prepared");
+    assert!(json.contains("\"event_type\":\"turn_prepared\""));
+    assert!(json.contains("\"permission_mode\":\"trust_current_project\""));
+    assert!(json.contains("\"selected_memory_ids\":[\"memory_fact:alpha\"]"));
+    assert!(json.contains("\"selected_memory_audit\":["));
+    assert!(json.contains("\"source\":\"memory_fact\""));
+    assert!(json.contains("\"source_id\":\"alpha\""));
+    assert!(json.contains("\"kind\":\"project_fact\""));
+    assert!(json.contains("\"project_match\":true"));
+    assert!(!json.contains("SECRET MEMORY BODY"));
+    assert!(!json.contains("SECRET PROJECT RECORD BODY"));
 
     let _ = std::fs::remove_dir_all(&workspace);
 }
@@ -326,6 +518,88 @@ async fn send_input_memory_selection_uses_session_workspace_over_default_harness
 
     let _ = std::fs::remove_dir_all(session_workspace);
     let _ = std::fs::remove_dir_all(default_workspace);
+    let _ = std::fs::remove_file(memory_path);
+}
+
+#[tokio::test]
+async fn send_input_memory_recall_plan_reports_budget_without_exposing_body() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-send-memory-plan-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let workspace = workspace.canonicalize().expect("canonical workspace");
+    let memory_path = std::env::temp_dir().join(format!("forge-send-memory-plan-{nonce}.json"));
+    let mut app_state = AppState::new(Arc::new(Harness::new(workspace.clone())));
+    app_state.wiki_memory = Arc::new(crate::memory::WikiMemoryStore::new(memory_path.clone()));
+    let state = Arc::new(app_state);
+    let project_path = workspace.to_string_lossy().to_string();
+    state
+        .wiki_memory
+        .upsert_candidate(test_project_memory(
+            "planned-memory",
+            "permission confirmation plan",
+            "SECRET MEMORY BODY SHOULD ONLY BE HIDDEN CONTEXT",
+            &project_path,
+        ))
+        .await
+        .expect("insert memory");
+
+    let selected =
+        select_send_input_memory_context(&state, "permission confirmation plan", &project_path)
+            .await;
+    let recall_plan = selected.recall_plan.clone().expect("recall plan");
+    assert_eq!(recall_plan.budget.candidate_count, 1);
+    assert_eq!(recall_plan.budget.injected_count, 1);
+    assert_eq!(
+        recall_plan.selected_memory_ids,
+        vec!["wiki_memory:planned-memory"]
+    );
+    assert!(recall_plan.budget.estimated_injected_tokens > 0);
+    assert_eq!(
+        recall_plan.candidates[0].decision,
+        crate::memory::RecallDecision::Injected
+    );
+    let recall_json = serde_json::to_string(&recall_plan).expect("serialize recall plan");
+    assert!(recall_json.contains("\"estimated_injected_tokens\""));
+    assert!(!recall_json.contains("SECRET MEMORY BODY"));
+
+    let session = test_agent_session("session-memory-plan", &workspace);
+    let workflow = classify_workflow_with_command(
+        "session-memory-plan",
+        "permission confirmation plan",
+        None,
+        1772582400000,
+    );
+    let input_intent = build_turn_input_intent("permission confirmation plan", &[], Vec::new());
+    let prepared = prepare_send_input_turn_context(PrepareSendInputTurnRequest {
+        session_id: "session-memory-plan",
+        session: &session,
+        text: "permission confirmation plan",
+        input_intent,
+        workflow: &workflow,
+        ready_connector_labels: Vec::new(),
+        memory_context: selected.context,
+        wiki_context: None,
+        continuity_context: None,
+        connector_context: None,
+        selected_memories: selected.selected,
+        selected_memory_audit: selected.audit,
+        memory_recall_plan: selected.recall_plan,
+        selected_project_records: Vec::new(),
+        permission_mode: PermissionMode::ManualConfirm,
+    })
+    .await;
+
+    assert!(prepared.prepared_turn.memory_recall_plan.is_some());
+    let event = crate::protocol::events::StreamEvent::TurnPrepared {
+        session_id: "session-memory-plan".to_string(),
+        prepared: prepared.prepared_turn,
+    };
+    let json = serde_json::to_string(&event).expect("serialize turn_prepared");
+    assert!(json.contains("\"memory_recall_plan\""));
+    assert!(json.contains("\"budget\""));
+    assert!(!json.contains("SECRET MEMORY BODY"));
+
+    let _ = std::fs::remove_dir_all(workspace);
     let _ = std::fs::remove_file(memory_path);
 }
 
@@ -412,10 +686,10 @@ async fn send_input_memory_selection_includes_active_profile_and_global_facts() 
         .iter()
         .map(|memory| memory.memory_id.as_str())
         .collect::<Vec<_>>();
-    assert!(selected_ids.contains(&"wiki-memory"));
-    assert!(selected_ids.contains(&"fact:active-fact"));
-    assert!(selected_ids.contains(&"fact:global-fact"));
-    assert!(!selected_ids.contains(&"fact:other-profile-fact"));
+    assert!(selected_ids.contains(&"wiki_memory:wiki-memory"));
+    assert!(selected_ids.contains(&"memory_fact:active-fact"));
+    assert!(selected_ids.contains(&"memory_fact:global-fact"));
+    assert!(!selected_ids.contains(&"memory_fact:other-profile-fact"));
     let context = selected.context.expect("memory context");
     assert!(context.contains("gateway queue replay metadata"));
     assert!(context.contains("gateway queue trigger smoke"));
@@ -425,6 +699,68 @@ async fn send_input_memory_selection_includes_active_profile_and_global_facts() 
     let _ = std::fs::remove_file(memory_path);
     let _ = std::fs::remove_file(facts_path);
     let _ = std::fs::remove_file(profiles_path);
+}
+
+#[tokio::test]
+async fn send_input_memory_selection_includes_accepted_continuity_experience() {
+    let nonce = uuid::Uuid::now_v7();
+    let workspace = std::env::temp_dir().join(format!("forge-send-memory-continuity-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let workspace = workspace.canonicalize().expect("canonical workspace");
+    let app_state = AppState::new(Arc::new(Harness::new(workspace.clone())));
+    let state = Arc::new(app_state);
+    let project_path = workspace.to_string_lossy().to_string();
+    let reflection = ReflectionEvent {
+        session_id: "session-1".to_string(),
+        user_goal: "Fix permission confirmation card".to_string(),
+        execution_summary: "Accepted continuity lesson for permission confirmation cards."
+            .to_string(),
+        outcome: ReflectionOutcome::Completed,
+        verification_summary: Some("unit test passed".to_string()),
+        lessons: vec![
+            "Permission confirmation card fix requires unified memory recall.".to_string(),
+        ],
+        episode: None,
+        timestamp_ms: 1772582400000,
+    };
+
+    state
+        .continuity
+        .record_event(&project_path, &ContinuityEvent::Reflection(reflection))
+        .expect("record reflection");
+    let formed = state
+        .continuity
+        .form_experiences_for_session(&project_path, "session-1", 1772582400001)
+        .expect("form experiences");
+    state
+        .continuity
+        .update_experience_status(
+            &project_path,
+            &formed[0].id,
+            ExperienceStatus::Accepted,
+            Some("review-session"),
+            1772582400002,
+        )
+        .expect("accept experience");
+
+    let selected =
+        select_send_input_memory_context(&state, "permission confirmation card fix", &project_path)
+            .await;
+
+    let selected_ids = selected
+        .selected
+        .iter()
+        .map(|memory| memory.memory_id.as_str())
+        .collect::<Vec<_>>();
+    assert!(selected_ids
+        .iter()
+        .any(|id| id.starts_with("continuity_experience:")));
+    let context = selected.context.expect("memory context");
+    assert!(context.contains("## Work Memory"));
+    assert!(context.contains("continuity_experience/lesson"));
+    assert!(context.contains("Permission confirmation card fix"));
+
+    let _ = std::fs::remove_dir_all(workspace);
 }
 
 #[tokio::test]

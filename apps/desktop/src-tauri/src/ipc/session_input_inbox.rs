@@ -11,10 +11,12 @@ use crate::gateway::protocol::{CompleteSessionInputResult, GatewayReply, ListSes
 use crate::gateway::server::default_socket_path;
 use crate::gateway::session_input::SessionInputRecord;
 use crate::ipc::handlers::{compact_session_context_for_state, is_manual_compact_request};
+use crate::ipc::permission_handlers::sync_app_permission_mode_to_session;
 use crate::ipc::send_input_context::{
-    build_prepared_send_input_turn, record_send_input_user_turn, resolve_send_input_session,
-    run_reserved_send_input_turn, select_send_input_contexts, BuildPreparedSendInputTurnRequest,
-    RunReservedSendInputTurnRequest, SelectSendInputContextsRequest,
+    build_prepared_send_input_turn, emit_prepared_send_input_turn, record_send_input_user_turn,
+    resolve_send_input_session, run_reserved_send_input_turn, select_send_input_contexts,
+    BuildPreparedSendInputTurnRequest, RunReservedSendInputTurnRequest,
+    SelectSendInputContextsRequest,
 };
 use crate::state::AppState;
 use tauri::Manager;
@@ -123,16 +125,15 @@ async fn accept_gateway_session_input(
 
     let (session, project_path) =
         resolve_send_input_session(app_handle, state, &session_id).await?;
+    let permission_mode = sync_app_permission_mode_to_session(
+        state,
+        &session,
+        &session_id,
+        std::path::Path::new(&project_path),
+    )
+    .await;
     let turn_guard =
         record_send_input_user_turn(state, &session, &session_id, &text, &project_path)?;
-    if let Err(error) = complete_gateway_session_input(&input.id).await {
-        crate::app_log!(
-            "WARN",
-            "[gateway] failed to complete accepted session input '{}': {}",
-            input.id,
-            error
-        );
-    }
 
     let contexts = select_send_input_contexts(SelectSendInputContextsRequest {
         state,
@@ -156,9 +157,15 @@ async fn accept_gateway_session_input(
         wiki_context: contexts.project_records.context,
         continuity_context: contexts.continuity_context,
         connector_context: contexts.mcp_result.context,
+        selected_memories: contexts.memory_selection.selected.clone(),
+        selected_memory_audit: contexts.memory_selection.audit.clone(),
+        memory_recall_plan: contexts.memory_selection.recall_plan.clone(),
+        selected_project_records: contexts.project_records.selected.clone(),
+        permission_mode: permission_mode.mode,
     })
     .await;
-    run_reserved_send_input_turn(RunReservedSendInputTurnRequest {
+    emit_prepared_send_input_turn(app_handle, &session_id, &prepared);
+    let result = run_reserved_send_input_turn(RunReservedSendInputTurnRequest {
         state,
         app_handle,
         session: &session,
@@ -168,7 +175,20 @@ async fn accept_gateway_session_input(
         prepared,
         turn_guard,
     })
-    .await
+    .await;
+
+    if should_complete_gateway_session_input_after_local_acceptance(&result) {
+        if let Err(error) = complete_gateway_session_input(&input.id).await {
+            crate::app_log!(
+                "WARN",
+                "[gateway] failed to complete accepted session input '{}': {}",
+                input.id,
+                error
+            );
+        }
+    }
+
+    result
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -189,6 +209,12 @@ fn prepare_gateway_session_input(
         return Err(format!("input {} has blank message", input.id));
     }
     Ok(PreparedGatewaySessionInput { session_id, text })
+}
+
+fn should_complete_gateway_session_input_after_local_acceptance(
+    result: &Result<(), String>,
+) -> bool {
+    result.is_ok()
 }
 
 #[cfg(test)]
@@ -244,5 +270,15 @@ mod tests {
         assert!(prepare_gateway_session_input(&blank_message)
             .expect_err("blank message")
             .contains("message"));
+    }
+
+    #[test]
+    fn session_input_completion_waits_for_successful_local_acceptance() {
+        assert!(should_complete_gateway_session_input_after_local_acceptance(&Ok(())));
+        assert!(
+            !should_complete_gateway_session_input_after_local_acceptance(&Err(
+                "local turn failed".to_string()
+            ))
+        );
     }
 }

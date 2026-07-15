@@ -6,10 +6,11 @@ use crate::gateway::client::{
     build_get_session_snapshot_request, build_tail_session_events_request, GatewayClient,
 };
 use crate::gateway::protocol::{
+    default_gateway_degraded_recovery_command, default_gateway_ownership_capability,
     AttachSessionResult, CancelTriggerParams, CancelTriggerResult, EnqueueSessionInputResult,
-    EnqueueTriggerParams, EnqueueTriggerResult, GatewayReply, GatewayRequest, GatewaySessionInfo,
-    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult, ReplayTriggerRunParams,
-    ReplayTriggerRunResult, TailSessionEventsResult,
+    EnqueueTriggerParams, EnqueueTriggerResult, GatewayDegradedModeStatus, GatewayReply,
+    GatewayRequest, GatewaySessionInfo, GetSessionSnapshotResult, GetTriggerRunParams,
+    GetTriggerRunResult, ReplayTriggerRunParams, ReplayTriggerRunResult, TailSessionEventsResult,
 };
 use crate::gateway::server::{default_socket_path, GatewayRuntimeStatus};
 use crate::gateway::webhook::PendingTrigger;
@@ -392,9 +393,23 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
 }
 
 fn unavailable_gateway_runtime_status(message: impl Into<String>) -> GatewayRuntimeStatus {
+    let message = message.into();
     GatewayRuntimeStatus {
         ok: false,
-        message: message.into(),
+        message: message.clone(),
+        ownership: default_gateway_ownership_capability(),
+        degraded_mode: GatewayDegradedModeStatus {
+            active: true,
+            reason: message,
+            fallback: "desktop_runtime".to_string(),
+            input_policy:
+                "Queued session input stays pending until the owning desktop runtime accepts it."
+                    .to_string(),
+            confirmation_policy: "Pending confirmations stay with the owning desktop runtime."
+                .to_string(),
+            recovery_command: default_gateway_degraded_recovery_command(),
+        },
+        runtime_health: crate::loop_runtime::default_runtime_health_snapshot(),
         uptime_seconds: 0,
         active_sessions: 0,
         pending_triggers: 0,
@@ -403,6 +418,9 @@ fn unavailable_gateway_runtime_status(message: impl Into<String>) -> GatewayRunt
         pending_loop_tasks: 0,
         running_loop_tasks: 0,
         stale_loop_task_leases: 0,
+        orphaned_loop_tasks: 0,
+        interrupted_loop_tasks: 0,
+        recoverable_loop_tasks: 0,
         dry_run_headless_owner_runs: 0,
         waiting_headless_owner_runs: 0,
         denied_headless_owner_runs: 0,
@@ -496,6 +514,14 @@ mod tests {
         assert_eq!(status.dead_letter_runs, 0);
         assert!(status.recent_runs.is_empty());
         assert!(status.message.contains("gateway offline"));
+        assert_eq!(
+            status.ownership.ownership_mode,
+            crate::gateway::protocol::GatewayOwnershipMode::LocalDefault
+        );
+        assert!(!status.ownership.gateway_default_enabled);
+        assert!(status.degraded_mode.active);
+        assert_eq!(status.degraded_mode.fallback, "desktop_runtime");
+        assert!(status.degraded_mode.reason.contains("gateway offline"));
     }
 
     #[test]

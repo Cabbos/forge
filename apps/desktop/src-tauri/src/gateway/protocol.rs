@@ -7,10 +7,11 @@
 use serde::{Deserialize, Serialize};
 
 use crate::gateway::runner::TriggerRunRecord;
-use crate::gateway::session_input::SessionInputRecord;
+use crate::gateway::session_input::{SessionInputCompletionRecord, SessionInputRecord};
 use crate::loop_runtime::{
-    HeadlessResumeApproval, HeadlessResumeMode, LoopBudget, LoopCompletionContract,
-    LoopCompletionResult, LoopPolicy, LoopTaskRecord, LoopTaskStatus,
+    HeadlessOwnerRun, HeadlessResumeApproval, HeadlessResumeMode, LoopBudget,
+    LoopCompletionContract, LoopCompletionResult, LoopPolicy, LoopTaskRecord, LoopTaskRecoveryKind,
+    LoopTaskStatus,
 };
 
 /// An incoming request from a gateway client.
@@ -111,10 +112,132 @@ pub enum GatewaySessionControlPlane {
     Unavailable,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayOwnershipMode {
+    #[default]
+    LocalDefault,
+    GatewayOptIn,
+    GatewayOptInDryRun,
+    GatewayReadOnlyOwner,
+    GatewayPatchProposalOwner,
+    GatewayToolOwnerBlockedByDefault,
+}
+
+/// Runtime ownership capability advertised by the gateway.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayOwnershipCapability {
+    #[serde(default)]
+    pub ownership_mode: GatewayOwnershipMode,
+    pub gateway_default_enabled: bool,
+    pub gateway_can_own_sessions: bool,
+    pub requires_opt_in: bool,
+    pub parity_gate: String,
+    pub recovery_gate: String,
+    pub required_action: String,
+}
+
+/// Visible fallback policy when the gateway is unavailable or degraded.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayDegradedModeStatus {
+    pub active: bool,
+    pub reason: String,
+    pub fallback: String,
+    pub input_policy: String,
+    pub confirmation_policy: String,
+    #[serde(default = "default_gateway_degraded_recovery_command")]
+    pub recovery_command: String,
+}
+
+pub fn default_gateway_ownership_capability() -> GatewayOwnershipCapability {
+    GatewayOwnershipCapability {
+        ownership_mode: GatewayOwnershipMode::LocalDefault,
+        gateway_default_enabled: false,
+        gateway_can_own_sessions: false,
+        requires_opt_in: true,
+        parity_gate: "pending".to_string(),
+        recovery_gate: "pending".to_string(),
+        required_action:
+            "Keep the desktop runtime as owner until parity and restart/recovery gates pass."
+                .to_string(),
+    }
+}
+
+pub fn default_gateway_degraded_mode_status() -> GatewayDegradedModeStatus {
+    GatewayDegradedModeStatus {
+        active: false,
+        reason: "Gateway runtime is reachable.".to_string(),
+        fallback: "desktop_runtime".to_string(),
+        input_policy:
+            "Queued session input stays pending until the owning desktop runtime accepts it."
+                .to_string(),
+        confirmation_policy: "Pending confirmations stay with the owning desktop runtime."
+            .to_string(),
+        recovery_command: default_gateway_degraded_recovery_command(),
+    }
+}
+
+pub fn default_gateway_degraded_recovery_command() -> String {
+    "forge service restart".to_string()
+}
+
+pub fn default_gateway_ownership_eligibility_mode() -> GatewayOwnershipMode {
+    GatewayOwnershipMode::GatewayReadOnlyOwner
+}
+
+/// Dry-run decision for whether the gateway may own a session/task.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GatewayOwnershipEligibilityDecision {
+    Allow,
+    Deny,
+    RequiresHumanApproval,
+}
+
+/// Parameters for evaluating gateway ownership without taking ownership.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayOwnershipEligibilityParams {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    #[serde(default = "default_gateway_ownership_eligibility_mode")]
+    pub requested_mode: GatewayOwnershipMode,
+}
+
+/// Read-only gateway ownership eligibility evidence.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayOwnershipEligibilityResult {
+    pub ok: bool,
+    pub decision: GatewayOwnershipEligibilityDecision,
+    pub requested_mode: GatewayOwnershipMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task_id: Option<String>,
+    pub reasons: Vec<String>,
+    pub missing_evidence: Vec<String>,
+    pub required_action: String,
+    #[serde(default)]
+    pub proposal_only: bool,
+    #[serde(default)]
+    pub would_generate_patch_proposal: bool,
+    #[serde(default)]
+    pub would_apply_patch: bool,
+    pub would_execute_provider: bool,
+    pub would_execute_tools: bool,
+    pub would_write_files: bool,
+    pub changes_task_state: bool,
+}
+
 /// Gateway-side control capabilities for a session attach attempt.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GatewaySessionControl {
     pub control_plane: GatewaySessionControlPlane,
+    #[serde(default)]
+    pub ownership_mode: GatewayOwnershipMode,
+    #[serde(default)]
+    pub gateway_can_own_session: bool,
     pub gateway_can_stream: bool,
     pub gateway_can_send_input: bool,
     pub gateway_can_resume: bool,
@@ -221,6 +344,25 @@ pub struct CompleteSessionInputResult {
     pub input_id: String,
     pub removed: bool,
     pub pending_inputs: usize,
+}
+
+/// Parameters for explicitly clearing a queued gateway input that can no longer be delivered.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClearStaleSessionInputParams {
+    pub input_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+}
+
+/// Result returned after an operator clears a stale queued gateway input.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ClearStaleSessionInputResult {
+    pub ok: bool,
+    pub input_id: String,
+    pub cleared: bool,
+    pub pending_inputs: usize,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<SessionInputCompletionRecord>,
 }
 
 /// Parameters for removing a queued gateway trigger.
@@ -378,6 +520,47 @@ pub struct HeadlessResumeControlResult {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayReadOnlyOwnerDiagnosticsParams {
+    pub task_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved_by: Option<String>,
+    #[serde(default)]
+    pub dev_only_allow: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requested_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayReadOnlyOwnerSideEffects {
+    pub provider: bool,
+    pub tools: bool,
+    pub shell: bool,
+    pub write_files: bool,
+    pub confirmations: bool,
+    pub commits: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct GatewayReadOnlyOwnerDiagnosticsResult {
+    pub ok: bool,
+    pub started: bool,
+    pub completed: bool,
+    pub gateway_can_resume: bool,
+    pub task: LoopTaskRecord,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub owner_run: Option<HeadlessOwnerRun>,
+    pub summary: String,
+    pub message: String,
+    pub side_effects: GatewayReadOnlyOwnerSideEffects,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct CancelLoopTaskParams {
     pub task_id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -390,6 +573,56 @@ pub struct CancelLoopTaskResult {
     pub changed: bool,
     pub task: LoopTaskRecord,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverLoopTaskParams {
+    pub task_id: String,
+    #[serde(default)]
+    pub action: RecoveryActionKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub idempotency_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum RecoveryActionKind {
+    #[default]
+    MarkInterrupted,
+    AbandonOrphan,
+    RetryWaitingTask,
+    ExportEvidence,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoveryActionEvidence {
+    pub task_id: String,
+    pub status: LoopTaskStatus,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_kind: Option<LoopTaskRecoveryKind>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_event_id: Option<String>,
+    pub event_count: usize,
+    pub evidence_count: usize,
+    pub policy_decision_count: usize,
+    pub open_gate_count: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct RecoverLoopTaskResult {
+    pub ok: bool,
+    pub action: RecoveryActionKind,
+    pub changed: bool,
+    pub task: LoopTaskRecord,
+    pub notice: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub evidence: Option<RecoveryActionEvidence>,
+}
+
+pub type RecoveryActionResult = RecoverLoopTaskResult;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct EvaluateLoopTaskCompletionParams {
@@ -526,6 +759,22 @@ mod tests {
         let json = serde_json::to_string(&health).expect("serialize");
         let back: HealthResult = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back, health);
+    }
+
+    #[test]
+    fn recover_loop_task_params_accept_retry_waiting_task_action() {
+        let params = RecoverLoopTaskParams {
+            task_id: " loop-waiting ".into(),
+            action: RecoveryActionKind::RetryWaitingTask,
+            reason: Some(" operator retry ".into()),
+            idempotency_key: Some("retry-key".into()),
+        };
+
+        let json = serde_json::to_string(&params).expect("serialize params");
+        assert!(json.contains("\"action\":\"retry_waiting_task\""));
+        let back: RecoverLoopTaskParams = serde_json::from_str(&json).expect("deserialize params");
+
+        assert_eq!(back, params);
     }
 
     #[test]
@@ -666,6 +915,39 @@ mod tests {
     }
 
     #[test]
+    fn clear_stale_session_input_params_and_result_roundtrip() {
+        let params = ClearStaleSessionInputParams {
+            input_id: " input-1 ".into(),
+            reason: Some(" operator recovery ".into()),
+        };
+        let json = serde_json::to_string(&params).expect("serialize params");
+        let back: ClearStaleSessionInputParams =
+            serde_json::from_str(&json).expect("deserialize params");
+        assert_eq!(back, params);
+
+        let result = ClearStaleSessionInputResult {
+            ok: true,
+            input_id: "input-1".into(),
+            cleared: true,
+            pending_inputs: 0,
+            evidence: Some(SessionInputCompletionRecord {
+                input_id: "input-1".into(),
+                session_id: "session-1".into(),
+                message_preview: "continue".into(),
+                received_at_ms: 10,
+                completed_at_ms: 20,
+                action: crate::gateway::session_input::SessionInputCompletionAction::ClearedStale,
+                reason: Some("operator recovery".into()),
+            }),
+        };
+        let json = serde_json::to_string(&result).expect("serialize result");
+        assert!(json.contains("\"action\":\"cleared_stale\""));
+        let back: ClearStaleSessionInputResult =
+            serde_json::from_str(&json).expect("deserialize result");
+        assert_eq!(back, result);
+    }
+
+    #[test]
     fn tail_session_events_params_and_result_roundtrip() {
         let params = TailSessionEventsParams {
             session_id: " session-1 ".into(),
@@ -712,6 +994,8 @@ mod tests {
             message: "Session is live and attachable.".into(),
             control: GatewaySessionControl {
                 control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
+                ownership_mode: GatewayOwnershipMode::LocalDefault,
+                gateway_can_own_session: false,
                 gateway_can_stream: false,
                 gateway_can_send_input: false,
                 gateway_can_resume: false,
@@ -746,6 +1030,24 @@ mod tests {
         assert!(json.contains("\"message_count\":3"));
         let back: AttachSessionResult = serde_json::from_str(&json).expect("deserialize result");
         assert_eq!(back, result);
+    }
+
+    #[test]
+    fn session_control_defaults_to_local_ownership_for_older_payloads() {
+        let json = r#"{
+            "control_plane": "desktop_runtime_required",
+            "gateway_can_stream": true,
+            "gateway_can_send_input": true,
+            "gateway_can_resume": false,
+            "gateway_can_read_snapshot": true,
+            "required_action": "Queue input through the gateway."
+        }"#;
+
+        let control: GatewaySessionControl =
+            serde_json::from_str(json).expect("deserialize older session control");
+
+        assert_eq!(control.ownership_mode, GatewayOwnershipMode::LocalDefault);
+        assert!(!control.gateway_can_own_session);
     }
 
     // ── GatewayRequest roundtrip ─────────────────────────────────────────
@@ -822,5 +1124,85 @@ mod tests {
         let restored_result: ReplayTriggerRunResult =
             serde_json::from_str(&result_json).expect("deserialize result");
         assert_eq!(restored_result, result);
+    }
+
+    #[test]
+    fn gateway_read_only_owner_diagnostics_contract_roundtrips() {
+        let params = GatewayReadOnlyOwnerDiagnosticsParams {
+            task_id: "loop-readonly".into(),
+            session_id: Some("session-1".into()),
+            approved_by: None,
+            dev_only_allow: true,
+            requested_at_ms: Some(10),
+            expires_at_ms: Some(60_010),
+            idempotency_key: Some("readonly:loop-readonly".into()),
+        };
+        let params_json = serde_json::to_string(&params).expect("serialize params");
+        let restored_params: GatewayReadOnlyOwnerDiagnosticsParams =
+            serde_json::from_str(&params_json).expect("deserialize params");
+        assert_eq!(restored_params, params);
+
+        let result = GatewayReadOnlyOwnerSideEffects {
+            provider: false,
+            tools: false,
+            shell: false,
+            write_files: false,
+            confirmations: false,
+            commits: false,
+        };
+        let result_json = serde_json::to_value(&result).expect("serialize result");
+        assert_eq!(result_json["provider"], false);
+        assert_eq!(result_json["tools"], false);
+        assert_eq!(result_json["shell"], false);
+        assert_eq!(result_json["write_files"], false);
+        assert_eq!(result_json["confirmations"], false);
+        assert_eq!(result_json["commits"], false);
+    }
+
+    #[test]
+    fn gateway_patch_proposal_owner_eligibility_contract_roundtrips() {
+        let params = GatewayOwnershipEligibilityParams {
+            session_id: Some("session-1".into()),
+            task_id: Some("loop-patch".into()),
+            requested_mode: GatewayOwnershipMode::GatewayPatchProposalOwner,
+        };
+        let params_json = serde_json::to_value(&params).expect("serialize params");
+        assert_eq!(
+            params_json["requested_mode"],
+            "gateway_patch_proposal_owner"
+        );
+        let restored_params: GatewayOwnershipEligibilityParams =
+            serde_json::from_value(params_json).expect("deserialize params");
+        assert_eq!(restored_params, params);
+
+        let result = GatewayOwnershipEligibilityResult {
+            ok: true,
+            decision: GatewayOwnershipEligibilityDecision::Deny,
+            requested_mode: GatewayOwnershipMode::GatewayPatchProposalOwner,
+            session_id: Some("session-1".into()),
+            task_id: Some("loop-patch".into()),
+            reasons: vec!["patch_proposal_owner_requires_gate".into()],
+            missing_evidence: vec![
+                "patch_proposal_review_gate".into(),
+                "diff_evidence_contract".into(),
+            ],
+            required_action: "proposal only".into(),
+            proposal_only: true,
+            would_generate_patch_proposal: true,
+            would_apply_patch: false,
+            would_execute_provider: false,
+            would_execute_tools: false,
+            would_write_files: false,
+            changes_task_state: false,
+        };
+        let result_json = serde_json::to_value(&result).expect("serialize result");
+        assert_eq!(
+            result_json["requested_mode"],
+            "gateway_patch_proposal_owner"
+        );
+        assert_eq!(result_json["proposal_only"], true);
+        assert_eq!(result_json["would_generate_patch_proposal"], true);
+        assert_eq!(result_json["would_apply_patch"], false);
+        assert_eq!(result_json["would_write_files"], false);
     }
 }

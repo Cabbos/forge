@@ -189,7 +189,155 @@ describe("createOutputEventDispatcher live file_io events", () => {
   });
 });
 
+describe("createOutputEventDispatcher live permission_decision events", () => {
+  it("merges permission evidence into the matching tool block", () => {
+    const { state, dispatch } = createHarness();
+    const evidence = testPermissionEvidence();
+
+    dispatch({
+      event_type: "tool_call_start",
+      session_id: "session-1",
+      block_id: "tool-1",
+      tool_name: "read_file",
+      tool_input: { path: "src/main.rs" },
+    });
+    dispatch({
+      event_type: "permission_decision",
+      session_id: "session-1",
+      block_id: "tool-1",
+      evidence,
+    });
+    dispatch({
+      event_type: "tool_call_result",
+      session_id: "session-1",
+      block_id: "tool-1",
+      result: "hello",
+      is_error: false,
+      duration_ms: 12,
+    });
+
+    const blocks = state.sessions.get("session-1")!.blocks;
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.strictEqual(blocks[0].content, "hello");
+    assert.deepStrictEqual(blocks[0].metadata.permission_evidence, evidence);
+  });
+});
+
 describe("createOutputEventDispatcher live provider_usage events", () => {
+  it("updates context usage from turn_prepared as a local estimate", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "turn_prepared",
+      session_id: "session-1",
+      prepared: {
+        session_id: "session-1",
+        project_path: "/workspace",
+        user_text: "Continue the task",
+        activation_text: "Continue the task",
+        selected_memory_ids: ["memory_fact:alpha"],
+        selected_project_record_ids: ["tasks.md"],
+        workflow_route: "workflow",
+        workflow_phase: "planning",
+        slash_command: null,
+        permission_mode: "manual_confirm",
+        context_estimate: {
+          used_tokens: 411,
+          context_window_tokens: 1000,
+          percent_used: 41,
+          reserved_output_tokens: 250,
+          sources: [
+            {
+              kind: "user_input",
+              label: "用户输入",
+              reason: "Visible user input for this turn",
+              estimated_tokens: 7,
+              injected: true,
+            },
+          ],
+        },
+      },
+    });
+
+    let session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.contextUsage?.source, "local_estimate");
+    assert.strictEqual(session.contextUsage?.usedTokens, 411);
+    assert.strictEqual(session.contextUsage?.contextWindowTokens, 1000);
+    assert.strictEqual(session.contextUsage?.percentUsed, 41);
+    assert.strictEqual(session.blocks.length, 0);
+
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-after-turn-prepared",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_reported",
+      input_tokens: 512,
+      output_tokens: 137,
+      estimated_cost_micros: 96,
+    });
+
+    session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.contextUsage?.source, "provider_usage");
+    assert.strictEqual(session.contextUsage?.usedTokens, 512);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+  });
+
+  it("clears prepared context estimate when provider_usage reports unknown input tokens", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch(testTurnPreparedEvent({ usedTokens: 411, percentUsed: 41 }));
+    dispatch({
+      event_type: "provider_usage",
+      session_id: "session-1",
+      block_id: "usage-provider-omitted-context",
+      provider_id: "deepseek",
+      model: "deepseek-v4-flash[1m]",
+      source: "anthropic",
+      reason: "provider_omitted",
+      input_tokens: null,
+      output_tokens: null,
+      cache_read_tokens: null,
+      cache_creation_tokens: null,
+      reasoning_tokens: null,
+      estimated_cost_micros: null,
+    });
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.usageLedger?.lastEventType, "provider_usage");
+    assert.strictEqual(session.usageLedger?.hasUnknownInputTokens, true);
+    assert.strictEqual(session.contextUsage, null);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks[0].event_type, "provider_usage");
+  });
+
+  it("does not carry compaction metadata into prepared context estimates", () => {
+    const { state, dispatch } = createHarness();
+
+    dispatch({
+      event_type: "context_compacted",
+      session_id: "session-1",
+      block_id: "compact-before-prepared",
+      summary: "Compacted context",
+      retained_messages: 2,
+      compacted_messages: 3,
+      estimated_tokens_before: 411,
+      estimated_tokens_after: 128,
+    });
+    dispatch(testTurnPreparedEvent({ usedTokens: 256, percentUsed: 26 }));
+
+    const usage = state.sessions.get("session-1")!.contextUsage;
+    assert.strictEqual(usage?.source, "local_estimate");
+    assert.strictEqual(usage?.usedTokens, 256);
+    assert.strictEqual(usage?.lastCompactedAt, null);
+    assert.strictEqual(usage?.compactedFromTokens, null);
+    assert.strictEqual(usage?.compactedToTokens, null);
+  });
+
   it("updates context usage and cost from provider_usage without legacy usage", () => {
     const { state, dispatch } = createHarness();
 
@@ -764,6 +912,19 @@ function testLoopTaskRecord(): Extract<StreamEvent, { event_type: "loop_runtime_
   };
 }
 
+function testPermissionEvidence() {
+  return {
+    kind: "auto_approved" as const,
+    workspace_path: "/workspace",
+    session_id: "session-1",
+    risk_tier: "normal" as const,
+    affected_files: [],
+    operation: "read_file",
+    permission_mode: "full_access" as const,
+    reason: "full_access_current_project",
+  };
+}
+
 function testUsageLedger(overrides: Partial<SessionUsageLedgerState> = {}): SessionUsageLedgerState {
   return {
     providerId: "deepseek",
@@ -786,6 +947,46 @@ function testUsageLedger(overrides: Partial<SessionUsageLedgerState> = {}): Sess
     legacyDuplicateIgnored: false,
     updatedAt: 123,
     ...overrides,
+  };
+}
+
+function testTurnPreparedEvent({
+  usedTokens,
+  percentUsed,
+}: {
+  usedTokens: number;
+  percentUsed: number;
+}): Extract<StreamEvent, { event_type: "turn_prepared" }> {
+  return {
+    event_type: "turn_prepared",
+    session_id: "session-1",
+    prepared: {
+      session_id: "session-1",
+      project_path: "/workspace",
+      user_text: "Continue the task",
+      activation_text: "Continue the task",
+      selected_memory_ids: ["memory_fact:alpha"],
+      selected_project_record_ids: ["tasks.md"],
+      workflow_route: "workflow",
+      workflow_phase: "planning",
+      slash_command: null,
+      permission_mode: "manual_confirm",
+      context_estimate: {
+        used_tokens: usedTokens,
+        context_window_tokens: 1000,
+        percent_used: percentUsed,
+        reserved_output_tokens: 250,
+        sources: [
+          {
+            kind: "user_input",
+            label: "用户输入",
+            reason: "Visible user input for this turn",
+            estimated_tokens: 7,
+            injected: true,
+          },
+        ],
+      },
+    },
   };
 }
 

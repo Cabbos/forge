@@ -1,0 +1,70 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "runtime-recovery-provider-usage-unknown",
+    "title": "Runtime recovery preserves unknown provider usage",
+    "prompt": "Evaluate runtime recovery evidence for a provider response that omitted usage and confirm Forge keeps token and cost values unknown instead of inventing numbers.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "cargo test unknown_pricing --lib",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "runtime-recovery",
+      "recovery-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 120,
+        "forge_run_evidence": {
+          "session_id": "recovery-usage-session",
+          "loop_task_id": "recovery-usage-task",
+          "prompt": "Evaluate runtime recovery evidence for a provider response that omitted usage and confirm Forge keeps token and cost values unknown instead of inventing numbers.",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "user_input",
+                    "label": "prompt"
+                  }
+                ]
+              }
+            }
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "cargo test unknown_pricing --lib",
+            "passed": true
+          },
+          "provider_usage": {
+            "latest": {
+              "has_unknown_input_tokens": true,
+              "has_unknown_output_tokens": true,
+              "unknown_reason": "provider_omitted_usage"
+            }
+          },
+          "failure_category": "none",
+          "recovery_cases": [
+            {
+              "case_id": "usage-1",
+              "kind": "provider_usage_unknown",
+              "usage_unknown": true,
+              "unknown_reason": "provider_omitted_usage"
+            }
+          ]
+        }
+      }
+    }
+  }
+}

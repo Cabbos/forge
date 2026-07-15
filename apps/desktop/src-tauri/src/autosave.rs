@@ -291,6 +291,7 @@ mod tests {
             question: "q".into(),
             kind: "k".into(),
             boundary: None,
+            permission_evidence: None,
             replayed_interrupted: false,
         }));
         assert!(is_significant_stream_event(&StreamEvent::ConfirmResponse {
@@ -299,6 +300,7 @@ mod tests {
             question: Some("q".into()),
             kind: Some("k".into()),
             boundary: None,
+            permission_evidence: None,
             approved: Some(true),
             responded_at_ms: 1,
             reason: Some("user_response".into()),
@@ -472,6 +474,7 @@ mod tests {
                 question: "q".into(),
                 kind: "k".into(),
                 boundary: None,
+                permission_evidence: None,
                 replayed_interrupted: false,
             },
             StreamEvent::ConfirmResponse {
@@ -480,6 +483,7 @@ mod tests {
                 question: Some("q".into()),
                 kind: Some("k".into()),
                 boundary: None,
+                permission_evidence: None,
                 approved: Some(true),
                 responded_at_ms: 1,
                 reason: Some("user_response".into()),

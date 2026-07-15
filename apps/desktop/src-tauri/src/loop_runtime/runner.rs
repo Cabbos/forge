@@ -7,8 +7,8 @@ use crate::loop_runtime::{
     evaluate_completion, BudgetSnapshot, HeadlessOwnerExecutorKind, HeadlessOwnerRun,
     HeadlessOwnerRunState, HeadlessOwnerSnapshotSource, LoopActionIntent, LoopActor,
     LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent, LoopTaskLease, LoopTaskProjection,
-    LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus, PolicyDecisionRecord,
-    LOOP_RUNTIME_SCHEMA_VERSION,
+    LoopTaskProjectionStore, LoopTaskRecord, LoopTaskRecoveryKind, LoopTaskStatus,
+    PolicyDecisionRecord, LOOP_RUNTIME_SCHEMA_VERSION,
 };
 
 pub const LOOP_RUNNER_POLL_INTERVAL_SECS: u64 = 5;
@@ -37,6 +37,9 @@ pub struct LoopRunnerQueueStats {
     pub pending_loop_tasks: usize,
     pub running_loop_tasks: usize,
     pub stale_loop_task_leases: usize,
+    pub orphaned_loop_tasks: usize,
+    pub interrupted_loop_tasks: usize,
+    pub recoverable_loop_tasks: usize,
     pub dry_run_headless_owner_runs: usize,
     pub waiting_headless_owner_runs: usize,
     pub denied_headless_owner_runs: usize,
@@ -162,6 +165,15 @@ impl LoopTaskRunner {
                     }
                 }
                 _ => {}
+            }
+            if let Some(recovery) = task.recovery_state.as_ref() {
+                if recovery.recoverable {
+                    stats.recoverable_loop_tasks += 1;
+                }
+                match recovery.kind {
+                    LoopTaskRecoveryKind::Orphaned => stats.orphaned_loop_tasks += 1,
+                    LoopTaskRecoveryKind::Interrupted => stats.interrupted_loop_tasks += 1,
+                }
             }
             for owner_run in &task.headless_owner_runs {
                 if owner_run.executor_kind == HeadlessOwnerExecutorKind::DryRun {

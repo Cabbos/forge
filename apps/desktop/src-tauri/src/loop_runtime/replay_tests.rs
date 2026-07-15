@@ -1,7 +1,8 @@
 use crate::loop_runtime::{
     HeadlessOwnerExecutorKind, HeadlessOwnerRun, HeadlessOwnerRunState,
-    HeadlessOwnerSnapshotSource, HumanGateType, LoopEventEnvelope, LoopEventJournal,
-    LoopTaskProjection, LoopTaskProjectionStore, LoopTaskStatus, LOOP_RUNTIME_SCHEMA_VERSION,
+    HeadlessOwnerSnapshotSource, HumanGateType, LoopActor, LoopEventEnvelope, LoopEventJournal,
+    LoopRuntimeEvent, LoopTaskProjection, LoopTaskProjectionStore, LoopTaskRecoveryKind,
+    LoopTaskStatus, LoopUsageLedger, LOOP_RUNTIME_SCHEMA_VERSION,
 };
 use serde_json::json;
 
@@ -85,6 +86,51 @@ fn headless_owner_run_survives_journal_reload_rebuild_and_idempotent_retry() {
     );
 }
 
+#[test]
+fn recovery_and_usage_survive_journal_reload_rebuild() {
+    let temp = tempfile::tempdir().unwrap();
+    let journal = LoopEventJournal::persistent_at(temp.path().join("loop-events.jsonl"));
+    let projection_store =
+        LoopTaskProjectionStore::persistent_at(temp.path().join("loop-tasks.json"));
+    journal
+        .append(LoopEventEnvelope::task_created_for_test(
+            "loop-recovery",
+            "recover stale loop",
+        ))
+        .unwrap();
+    journal
+        .append(usage_ledger_event_for_test("loop-recovery"))
+        .unwrap();
+    journal
+        .append(task_interrupted_event_for_test(
+            "loop-recovery",
+            "stale lease recovered by operator",
+        ))
+        .unwrap();
+
+    let reloaded = LoopEventJournal::persistent_at(temp.path().join("loop-events.jsonl"));
+    let rebuilt = projection_store.load_or_rebuild(&reloaded).unwrap();
+    let task = rebuilt.find("loop-recovery").expect("projected task");
+
+    assert_eq!(task.status, LoopTaskStatus::Interrupted);
+    assert_eq!(
+        task.latest_usage_ledger
+            .as_ref()
+            .and_then(|usage| usage.input_tokens),
+        Some(123)
+    );
+    let recovery = task.recovery_state.as_ref().expect("recovery state");
+    assert_eq!(recovery.kind, LoopTaskRecoveryKind::Orphaned);
+    assert!(recovery.recoverable);
+    assert!(recovery.reason.contains("stale lease"));
+    assert!(task
+        .outcome
+        .as_ref()
+        .unwrap()
+        .message
+        .contains("stale lease"));
+}
+
 fn owner_run_for_test(
     owner_run_id: &str,
     task_id: &str,
@@ -136,4 +182,60 @@ fn headless_owner_run_requested_event_for_test(owner_run: &HeadlessOwnerRun) -> 
         "created_at_ms": owner_run.requested_at_ms
     }))
     .unwrap()
+}
+
+fn usage_ledger_event_for_test(task_id: &str) -> LoopEventEnvelope {
+    LoopEventEnvelope {
+        schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+        event_id: format!("event-{task_id}-usage"),
+        task_id: task_id.to_string(),
+        sequence: 0,
+        event: LoopRuntimeEvent::UsageLedgerRecorded {
+            task_id: task_id.to_string(),
+            usage: LoopUsageLedger {
+                provider_id: Some("deepseek".to_string()),
+                model: Some("deepseek-v4-flash".to_string()),
+                input_tokens: Some(123),
+                output_tokens: Some(45),
+                cache_read_tokens: None,
+                cache_creation_tokens: None,
+                reasoning_tokens: None,
+                estimated_cost_micros: Some(9),
+                pricing_source: Some("test".to_string()),
+                has_unknown_input_tokens: false,
+                has_unknown_output_tokens: false,
+                has_unknown_cost: false,
+                turn_count: 2,
+                tool_call_count: 3,
+                elapsed_ms: 4_000,
+            },
+        },
+        actor: LoopActor::Gateway,
+        lease_id: None,
+        attempt: None,
+        correlation_id: None,
+        causation_id: None,
+        idempotency_key: None,
+        created_at_ms: 3,
+    }
+}
+
+fn task_interrupted_event_for_test(task_id: &str, reason: &str) -> LoopEventEnvelope {
+    LoopEventEnvelope {
+        schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+        event_id: format!("event-{task_id}-interrupted"),
+        task_id: task_id.to_string(),
+        sequence: 0,
+        event: LoopRuntimeEvent::TaskInterrupted {
+            task_id: task_id.to_string(),
+            reason: reason.to_string(),
+        },
+        actor: LoopActor::Gateway,
+        lease_id: None,
+        attempt: None,
+        correlation_id: None,
+        causation_id: None,
+        idempotency_key: None,
+        created_at_ms: 4,
+    }
 }

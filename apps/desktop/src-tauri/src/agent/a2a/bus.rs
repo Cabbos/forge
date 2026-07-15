@@ -1,6 +1,8 @@
 use crate::agent::a2a::projection::{
-    AgentA2AMessageProjection, AgentA2AProjection, AgentA2ATaskProjection,
-    AgentFileIoEventProjection,
+    AgentA2AChildCapsule, AgentA2AChildEventKind, AgentA2AChildRuntimeEvent,
+    AgentA2AMessageProjection, AgentA2AProjection, AgentA2ARecoveryActionKind,
+    AgentA2ARecoveryActionSuggestion, AgentA2AReviewGateKind, AgentA2AReviewGateProjection,
+    AgentA2ATaskProjection, AgentFileIoEventProjection,
 };
 use crate::agent::a2a::types::{
     AgentArtifact, AgentExecutionMode, AgentId, AgentMessage, AgentMessageKind,
@@ -155,28 +157,40 @@ impl AgentA2ABus {
         lease_duration_ms: u64,
     ) -> bool {
         let owner = owner.into();
-        let Some(task) = self.tasks.iter_mut().find(|task| task.task_id == *task_id) else {
+        let Some(result) = self.update_task(task_id, timestamp_ms, |task| {
+            if !is_lease_claimable_status(&task.status) {
+                return None;
+            }
+            if let Some(current_owner) = task.lease_owner.as_deref() {
+                if current_owner != owner && !lease_is_expired(task, timestamp_ms) {
+                    return None;
+                }
+            }
+
+            task.updated_at_ms = timestamp_ms;
+            task.status = AgentTaskStatus::Running;
+            task.started_at_ms.get_or_insert(timestamp_ms);
+            task.ended_at_ms = None;
+            task.resume_note = None;
+            task.lease_owner = Some(owner.clone());
+            task.lease_acquired_at_ms = Some(timestamp_ms);
+            task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
+            task.last_heartbeat_at_ms = Some(timestamp_ms);
+            task.attempt_count = task.attempt_count.saturating_add(1);
+            Some((task.agent_id.clone(), task.task_id.clone()))
+        }) else {
             return false;
         };
-        if !is_lease_claimable_status(&task.status) {
+        let Some((agent_id, task_id_for_message)) = result else {
             return false;
-        }
-        if let Some(current_owner) = task.lease_owner.as_deref() {
-            if current_owner != owner && !lease_is_expired(task, timestamp_ms) {
-                return false;
-            }
-        }
-
-        task.updated_at_ms = timestamp_ms;
-        task.status = AgentTaskStatus::Running;
-        task.started_at_ms.get_or_insert(timestamp_ms);
-        task.ended_at_ms = None;
-        task.resume_note = None;
-        task.lease_owner = Some(owner);
-        task.lease_acquired_at_ms = Some(timestamp_ms);
-        task.lease_expires_at_ms = Some(lease_expires_at(timestamp_ms, lease_duration_ms));
-        task.last_heartbeat_at_ms = Some(timestamp_ms);
-        task.attempt_count = task.attempt_count.saturating_add(1);
+        };
+        self.push_message(
+            task_id_for_message,
+            agent_id,
+            AgentMessageKind::LeaseClaimed,
+            format!("Lease claimed by {owner}"),
+            timestamp_ms,
+        );
         true
     }
 
@@ -583,26 +597,7 @@ impl AgentA2ABus {
                 }
                 let latest_artifact = task.artifacts.last();
                 let worktree_meta = latest_worktree_metadata(task);
-                // Phase 4-B: extract changed files from DiffSummary artifacts.
-                let diff_text = task.artifacts.iter().rev().find_map(|a| {
-                    if a.kind == crate::agent::a2a::types::AgentArtifactKind::DiffSummary
-                        || a.title == "Worktree diff"
-                    {
-                        Some(a.content.as_str())
-                    } else {
-                        None
-                    }
-                });
-                let all_diff_files = diff_text
-                    .map(extract_files_from_diff_text)
-                    .unwrap_or_default();
-                // Limit to a small safe number (first 8 unique paths).
-                let changed_files: Vec<String> = all_diff_files.iter().take(8).cloned().collect();
-                let changed_file_count = if all_diff_files.is_empty() {
-                    None
-                } else {
-                    Some(all_diff_files.len())
-                };
+                let (changed_files, changed_file_count) = changed_files_for_task(task);
                 // Phase 4-B: test report excerpt from TestReport artifact.
                 let test_report_excerpt = task.artifacts.iter().rev().find_map(|a| {
                     if a.kind == crate::agent::a2a::types::AgentArtifactKind::TestReport
@@ -623,6 +618,11 @@ impl AgentA2ABus {
                     .and_then(|value| value.get("file_io_events"))
                     .map(extract_file_io_events)
                     .unwrap_or_default();
+                let runtime_events = if task.parent_task_id.is_some() {
+                    self.child_runtime_events_for(task, worktree_meta.as_ref(), &file_io_events)
+                } else {
+                    Vec::new()
+                };
                 let usage_ledger = worktree_meta
                     .as_ref()
                     .and_then(|value| value.get("usage_ledger"))
@@ -652,6 +652,14 @@ impl AgentA2ABus {
                         }
                     }
                 }
+                let child_capsules = child_capsules_for_task(task, &self.tasks, &child_task_ids);
+                let review_gate = review_gate_for_task(
+                    task,
+                    worktree_meta.as_ref(),
+                    diff_available,
+                    latest_artifact.map(|artifact| artifact.created_at_ms),
+                );
+                let recovery_actions = recovery_actions_for_task(task, worktree_meta.as_ref());
                 AgentA2ATaskProjection {
                     task_id: task.task_id.as_str().to_string(),
                     agent_id: task.agent_id.as_str().to_string(),
@@ -725,6 +733,10 @@ impl AgentA2ABus {
                     last_heartbeat_at_ms: task.last_heartbeat_at_ms,
                     attempt_count: task.attempt_count,
                     max_attempts: task.max_attempts,
+                    runtime_events,
+                    child_capsules,
+                    review_gate,
+                    recovery_actions,
                     // Phase 4-B — diff-derived file visibility.
                     diff_available,
                     changed_file_count,
@@ -767,6 +779,83 @@ impl AgentA2ABus {
                 created_at_ms: message.created_at_ms,
             })
             .collect()
+    }
+
+    fn child_runtime_events_for(
+        &self,
+        task: &AgentTaskRecord,
+        worktree_meta: Option<&serde_json::Value>,
+        file_io_events: &[AgentFileIoEventProjection],
+    ) -> Vec<AgentA2AChildRuntimeEvent> {
+        let mut events = Vec::new();
+        for message in self
+            .messages
+            .iter()
+            .filter(|message| message.task_id == task.task_id)
+        {
+            if let Some(kind) = child_event_kind_for_message(&message.kind) {
+                push_child_runtime_event(
+                    &mut events,
+                    kind,
+                    child_event_label(kind),
+                    message.content.clone(),
+                    message.created_at_ms,
+                );
+            }
+        }
+        for artifact in &task.artifacts {
+            if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::PatchProposal {
+                push_child_runtime_event(
+                    &mut events,
+                    AgentA2AChildEventKind::PatchProposed,
+                    "Patch proposed",
+                    artifact.title.clone(),
+                    artifact.created_at_ms,
+                );
+            }
+        }
+        if let Some((metadata, created_at_ms)) = latest_worktree_metadata_with_time(task) {
+            if metadata
+                .get("needs_human_review")
+                .and_then(|value| value.as_bool())
+                == Some(true)
+            {
+                push_child_runtime_event(
+                    &mut events,
+                    AgentA2AChildEventKind::WaitingReview,
+                    "Waiting for review",
+                    metadata
+                        .get("suggested_action")
+                        .and_then(|value| value.as_str())
+                        .unwrap_or("Human review required")
+                        .to_string(),
+                    created_at_ms,
+                );
+            }
+        } else if worktree_meta
+            .and_then(|metadata| metadata.get("needs_human_review"))
+            .and_then(|value| value.as_bool())
+            == Some(true)
+        {
+            push_child_runtime_event(
+                &mut events,
+                AgentA2AChildEventKind::WaitingReview,
+                "Waiting for review",
+                "Human review required".to_string(),
+                task.updated_at_ms,
+            );
+        }
+        for file_io in file_io_events {
+            push_child_runtime_event(
+                &mut events,
+                AgentA2AChildEventKind::FileFact,
+                "File fact",
+                format!("{} {}", file_io.operation, file_io.path),
+                task.updated_at_ms,
+            );
+        }
+        events.sort_by_key(|event| event.created_at_ms);
+        events
     }
 
     fn update_task<T>(
@@ -885,6 +974,458 @@ fn extract_file_io_events(value: &serde_json::Value) -> Vec<AgentFileIoEventProj
         .collect()
 }
 
+fn child_event_kind_for_message(kind: &AgentMessageKind) -> Option<AgentA2AChildEventKind> {
+    match kind {
+        AgentMessageKind::TaskAssigned => Some(AgentA2AChildEventKind::Assigned),
+        AgentMessageKind::LeaseClaimed => Some(AgentA2AChildEventKind::LeaseClaimed),
+        AgentMessageKind::Started => Some(AgentA2AChildEventKind::Started),
+        AgentMessageKind::Progress => Some(AgentA2AChildEventKind::Progress),
+        AgentMessageKind::FinalResult => Some(AgentA2AChildEventKind::Completed),
+        AgentMessageKind::Failed => Some(AgentA2AChildEventKind::Failed),
+        AgentMessageKind::Cancelled => Some(AgentA2AChildEventKind::Abandoned),
+        AgentMessageKind::Interrupted => Some(AgentA2AChildEventKind::Recovered),
+        AgentMessageKind::Evidence | AgentMessageKind::ArtifactCreated => None,
+    }
+}
+
+fn child_event_label(kind: AgentA2AChildEventKind) -> &'static str {
+    match kind {
+        AgentA2AChildEventKind::Assigned => "Assigned",
+        AgentA2AChildEventKind::LeaseClaimed => "Lease claimed",
+        AgentA2AChildEventKind::Started => "Started",
+        AgentA2AChildEventKind::Progress => "Progress",
+        AgentA2AChildEventKind::FileFact => "File fact",
+        AgentA2AChildEventKind::PatchProposed => "Patch proposed",
+        AgentA2AChildEventKind::WaitingReview => "Waiting for review",
+        AgentA2AChildEventKind::Completed => "Completed",
+        AgentA2AChildEventKind::Failed => "Failed",
+        AgentA2AChildEventKind::Abandoned => "Abandoned",
+        AgentA2AChildEventKind::Recovered => "Recovered",
+    }
+}
+
+fn push_child_runtime_event(
+    events: &mut Vec<AgentA2AChildRuntimeEvent>,
+    kind: AgentA2AChildEventKind,
+    label: impl Into<String>,
+    detail: impl Into<String>,
+    created_at_ms: u64,
+) {
+    events.push(AgentA2AChildRuntimeEvent {
+        kind,
+        label: label.into(),
+        detail: detail.into(),
+        created_at_ms,
+    });
+}
+
+fn changed_files_for_task(task: &AgentTaskRecord) -> (Vec<String>, Option<usize>) {
+    let all_diff_files = task
+        .artifacts
+        .iter()
+        .rev()
+        .find_map(|artifact| {
+            if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::DiffSummary
+                || artifact.title == "Worktree diff"
+            {
+                Some(artifact.content.as_str())
+            } else {
+                None
+            }
+        })
+        .map(extract_files_from_diff_text)
+        .unwrap_or_default();
+    let changed_files = all_diff_files.iter().take(8).cloned().collect();
+    let changed_file_count = if all_diff_files.is_empty() {
+        None
+    } else {
+        Some(all_diff_files.len())
+    };
+    (changed_files, changed_file_count)
+}
+
+fn child_capsules_for_task(
+    parent: &AgentTaskRecord,
+    all_tasks: &[AgentTaskRecord],
+    child_task_ids: &[String],
+) -> Vec<AgentA2AChildCapsule> {
+    child_task_ids
+        .iter()
+        .filter_map(|child_task_id| {
+            let child = all_tasks
+                .iter()
+                .find(|task| task.task_id.as_str() == child_task_id)?;
+            Some(child_capsule_for(parent, child))
+        })
+        .collect()
+}
+
+fn child_capsule_for(parent: &AgentTaskRecord, child: &AgentTaskRecord) -> AgentA2AChildCapsule {
+    let (changed_files, _) = changed_files_for_task(child);
+    let worktree_meta = latest_worktree_metadata(child);
+    let review_decision = worktree_meta
+        .as_ref()
+        .and_then(|metadata| metadata.get("review_decision"))
+        .and_then(|value| value.as_str())
+        .map(str::to_string);
+    let next_action = child_capsule_next_action(child, worktree_meta.as_ref());
+    let failure_reason = child
+        .failure
+        .as_ref()
+        .map(|failure| failure.message.clone());
+    let artifact_titles = artifact_titles_for_task(child);
+    let child_goal = child.prompt.trim().to_string();
+    let status = child.status.as_str().to_string();
+    let estimated_tokens = estimate_child_capsule_tokens(
+        &child_goal,
+        &status,
+        &artifact_titles,
+        &changed_files,
+        review_decision.as_deref(),
+        failure_reason.as_deref(),
+        &next_action,
+    );
+
+    AgentA2AChildCapsule {
+        capsule_id: format!(
+            "child-capsule:{}:{}",
+            parent.task_id.as_str(),
+            child.task_id.as_str()
+        ),
+        parent_task_id: parent.task_id.as_str().to_string(),
+        child_task_id: child.task_id.as_str().to_string(),
+        child_goal,
+        status,
+        artifact_titles,
+        changed_files,
+        review_decision,
+        failure_reason,
+        next_action,
+        estimated_tokens,
+    }
+}
+
+fn child_capsule_next_action(
+    child: &AgentTaskRecord,
+    worktree_meta: Option<&serde_json::Value>,
+) -> String {
+    if let Some(action) = worktree_meta
+        .and_then(|metadata| metadata.get("suggested_action"))
+        .and_then(|value| value.as_str())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        return action.to_string();
+    }
+    match child.status {
+        AgentTaskStatus::Pending => "Wait for the child task to start.".to_string(),
+        AgentTaskStatus::Running => "Wait for the child task to finish.".to_string(),
+        AgentTaskStatus::Completed => {
+            "Review child evidence before using it for parent completion.".to_string()
+        }
+        AgentTaskStatus::Failed => {
+            if child
+                .failure
+                .as_ref()
+                .map(|failure| failure.retryable)
+                .unwrap_or(false)
+            {
+                "Review failure evidence and decide whether to retry.".to_string()
+            } else {
+                "Review failure evidence before continuing the parent task.".to_string()
+            }
+        }
+        AgentTaskStatus::Cancelled => "Child task was abandoned.".to_string(),
+        AgentTaskStatus::Interrupted => {
+            "Recover or abandon the interrupted child task before relying on it.".to_string()
+        }
+    }
+}
+
+fn review_gate_for_task(
+    task: &AgentTaskRecord,
+    worktree_meta: Option<&serde_json::Value>,
+    diff_available: Option<bool>,
+    latest_artifact_at_ms: Option<u64>,
+) -> Option<AgentA2AReviewGateProjection> {
+    if task.execution_mode != AgentExecutionMode::WorktreeWorker {
+        return None;
+    }
+
+    let review_decision = metadata_string(worktree_meta, "review_decision");
+    let reviewed_at_ms = worktree_meta
+        .and_then(|metadata| metadata.get("reviewed_at_ms"))
+        .and_then(|value| value.as_u64());
+    let needs_human_review = worktree_meta
+        .and_then(|metadata| metadata.get("needs_human_review"))
+        .and_then(|value| value.as_bool());
+    let suggested_action =
+        metadata_string(worktree_meta, "suggested_action").filter(|value| !value.trim().is_empty());
+    let review_message =
+        metadata_string(worktree_meta, "review_message").filter(|value| !value.trim().is_empty());
+
+    if review_decision.as_deref() == Some("approved") {
+        if reviewed_at_ms
+            .zip(latest_artifact_at_ms)
+            .map(|(reviewed, latest)| latest > reviewed)
+            .unwrap_or(false)
+        {
+            return Some(review_gate_projection(
+                AgentA2AReviewGateKind::StaleReview,
+                "Stale review",
+                "Child artifacts changed after the last review decision.",
+                "stale_review_blocks_parent_completion",
+                task,
+                reviewed_at_ms,
+            ));
+        }
+        return Some(review_gate_projection(
+            AgentA2AReviewGateKind::Approved,
+            "Review approved",
+            review_message
+                .as_deref()
+                .or(suggested_action.as_deref())
+                .unwrap_or("Child review was approved."),
+            "child_review_approved_only",
+            task,
+            reviewed_at_ms,
+        ));
+    }
+
+    if review_decision.as_deref() == Some("rejected")
+        || task
+            .failure
+            .as_ref()
+            .map(|failure| failure.kind == "review_rejection")
+            .unwrap_or(false)
+    {
+        return Some(review_gate_projection(
+            AgentA2AReviewGateKind::Rejected,
+            "Review rejected",
+            task.failure
+                .as_ref()
+                .map(|failure| failure.message.as_str())
+                .or(review_message.as_deref())
+                .or(suggested_action.as_deref())
+                .unwrap_or("Child review was rejected."),
+            "child_review_rejected",
+            task,
+            reviewed_at_ms,
+        ));
+    }
+
+    if needs_human_review == Some(true) {
+        return Some(review_gate_projection(
+            AgentA2AReviewGateKind::WaitingReview,
+            "Waiting for review",
+            suggested_action.as_deref().unwrap_or(
+                "Human review is required before parent completion can rely on this child.",
+            ),
+            "blocks_parent_completion",
+            task,
+            reviewed_at_ms,
+        ));
+    }
+
+    if task.status == AgentTaskStatus::Completed
+        && task.parent_task_id.is_some()
+        && diff_available == Some(true)
+    {
+        return Some(review_gate_projection(
+            AgentA2AReviewGateKind::MissingEvidence,
+            "Review evidence missing",
+            "Child produced a diff but no review decision evidence is recorded.",
+            "missing_review_evidence",
+            task,
+            reviewed_at_ms,
+        ));
+    }
+
+    None
+}
+
+fn review_gate_projection(
+    kind: AgentA2AReviewGateKind,
+    label: impl Into<String>,
+    reason: impl Into<String>,
+    completion_impact: impl Into<String>,
+    task: &AgentTaskRecord,
+    reviewed_at_ms: Option<u64>,
+) -> AgentA2AReviewGateProjection {
+    AgentA2AReviewGateProjection {
+        kind,
+        label: label.into(),
+        reason: reason.into(),
+        completion_impact: completion_impact.into(),
+        parent_task_id: task
+            .parent_task_id
+            .as_ref()
+            .map(|task_id| task_id.as_str().to_string()),
+        child_task_id: task.task_id.as_str().to_string(),
+        reviewed_at_ms,
+    }
+}
+
+fn recovery_actions_for_task(
+    task: &AgentTaskRecord,
+    worktree_meta: Option<&serde_json::Value>,
+) -> Vec<AgentA2ARecoveryActionSuggestion> {
+    let mut actions = Vec::new();
+    let worktree_path = metadata_string(worktree_meta, "worktree_path")
+        .or_else(|| worktree_path_from_resume_note(task.resume_note.as_deref()));
+
+    match task.status {
+        AgentTaskStatus::Failed => {
+            if task
+                .failure
+                .as_ref()
+                .map(|failure| failure.retryable)
+                .unwrap_or(false)
+                && task.attempt_count < task.max_attempts
+            {
+                push_recovery_action(
+                    &mut actions,
+                    AgentA2ARecoveryActionKind::Retry,
+                    "Retry child task",
+                    task.failure
+                        .as_ref()
+                        .map(|failure| failure.message.as_str())
+                        .unwrap_or("Child task failed and can be retried."),
+                    true,
+                    true,
+                    Some(task.attempt_count.saturating_add(1)),
+                );
+            }
+            if let Some(path) = worktree_path.as_deref() {
+                push_recovery_action(
+                    &mut actions,
+                    AgentA2ARecoveryActionKind::InspectWorktree,
+                    "Inspect retained worktree",
+                    format!("Inspect retained worktree at {path}."),
+                    true,
+                    false,
+                    None,
+                );
+            }
+            push_recovery_action(
+                &mut actions,
+                AgentA2ARecoveryActionKind::Abandon,
+                "Abandon child task",
+                "Mark this child as abandoned after reviewing failure evidence.",
+                true,
+                false,
+                None,
+            );
+        }
+        AgentTaskStatus::Interrupted => {
+            if let Some(path) = worktree_path.as_deref() {
+                push_recovery_action(
+                    &mut actions,
+                    AgentA2ARecoveryActionKind::InspectWorktree,
+                    "Inspect retained worktree",
+                    format!("Inspect retained worktree at {path}."),
+                    true,
+                    false,
+                    None,
+                );
+            }
+            push_recovery_action(
+                &mut actions,
+                AgentA2ARecoveryActionKind::Abandon,
+                "Abandon interrupted child",
+                "Decide whether this interrupted child should be abandoned before parent completion relies on it.",
+                true,
+                false,
+                None,
+            );
+        }
+        AgentTaskStatus::Pending
+        | AgentTaskStatus::Running
+        | AgentTaskStatus::Completed
+        | AgentTaskStatus::Cancelled => {}
+    }
+
+    actions
+}
+
+fn push_recovery_action(
+    actions: &mut Vec<AgentA2ARecoveryActionSuggestion>,
+    action: AgentA2ARecoveryActionKind,
+    label: impl Into<String>,
+    reason: impl Into<String>,
+    requires_human_approval: bool,
+    retryable: bool,
+    next_attempt: Option<u32>,
+) {
+    actions.push(AgentA2ARecoveryActionSuggestion {
+        action,
+        label: label.into(),
+        reason: reason.into(),
+        requires_human_approval,
+        retryable,
+        next_attempt,
+    });
+}
+
+fn metadata_string(worktree_meta: Option<&serde_json::Value>, key: &str) -> Option<String> {
+    worktree_meta
+        .and_then(|metadata| metadata.get(key))
+        .and_then(|value| value.as_str())
+        .map(str::to_string)
+}
+
+fn worktree_path_from_resume_note(resume_note: Option<&str>) -> Option<String> {
+    let note = resume_note?;
+    let marker = "Inspect ";
+    let start = note.find(marker)? + marker.len();
+    let rest = &note[start..];
+    let end = rest.find('.').unwrap_or(rest.len());
+    Some(rest[..end].trim().to_string()).filter(|value| !value.is_empty())
+}
+
+fn artifact_titles_for_task(task: &AgentTaskRecord) -> Vec<String> {
+    let mut titles = Vec::new();
+    for artifact in &task.artifacts {
+        if !artifact.title.trim().is_empty()
+            && !titles
+                .iter()
+                .any(|existing: &String| existing == &artifact.title)
+        {
+            titles.push(artifact.title.clone());
+        }
+    }
+    titles
+}
+
+fn estimate_child_capsule_tokens(
+    child_goal: &str,
+    status: &str,
+    artifact_titles: &[String],
+    changed_files: &[String],
+    review_decision: Option<&str>,
+    failure_reason: Option<&str>,
+    next_action: &str,
+) -> u32 {
+    let mut text = format!("{child_goal}\n{status}\n{next_action}");
+    for title in artifact_titles {
+        text.push('\n');
+        text.push_str(title);
+    }
+    for file in changed_files {
+        text.push('\n');
+        text.push_str(file);
+    }
+    if let Some(review_decision) = review_decision {
+        text.push('\n');
+        text.push_str(review_decision);
+    }
+    if let Some(failure_reason) = failure_reason {
+        text.push('\n');
+        text.push_str(failure_reason);
+    }
+    ((text.chars().count() as u32).saturating_add(3) / 4).max(1)
+}
+
 /// Compute duration in milliseconds for a finished task.
 /// Running tasks intentionally return None; the UI derives live elapsed time.
 fn compute_duration_ms(started_at_ms: Option<u64>, ended_at_ms: Option<u64>) -> Option<u64> {
@@ -916,11 +1457,17 @@ fn clear_active_lease(task: &mut AgentTaskRecord) {
 }
 
 fn latest_worktree_metadata(task: &AgentTaskRecord) -> Option<serde_json::Value> {
+    latest_worktree_metadata_with_time(task).map(|(metadata, _)| metadata)
+}
+
+fn latest_worktree_metadata_with_time(task: &AgentTaskRecord) -> Option<(serde_json::Value, u64)> {
     task.artifacts.iter().rev().find_map(|artifact| {
         if artifact.kind == crate::agent::a2a::types::AgentArtifactKind::Evidence
             && artifact.title == "Worktree metadata"
         {
-            serde_json::from_str::<serde_json::Value>(&artifact.content).ok()
+            serde_json::from_str::<serde_json::Value>(&artifact.content)
+                .ok()
+                .map(|metadata| (metadata, artifact.created_at_ms))
         } else {
             None
         }
@@ -951,6 +1498,7 @@ fn is_lease_claimable_status(status: &AgentTaskStatus) -> bool {
 fn message_kind_for_projection(kind: &AgentMessageKind) -> &'static str {
     match kind {
         AgentMessageKind::TaskAssigned => "task_assigned",
+        AgentMessageKind::LeaseClaimed => "lease_claimed",
         AgentMessageKind::Started => "started",
         AgentMessageKind::Progress => "progress",
         AgentMessageKind::Evidence => "evidence",
@@ -965,6 +1513,7 @@ fn message_kind_for_projection(kind: &AgentMessageKind) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::a2a::projection::AgentA2AChildEventKind;
     use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
 
     #[test]
@@ -1330,6 +1879,277 @@ mod tests {
             task_proj.test_report_excerpt.as_deref(),
             Some("12 tests passed")
         );
+    }
+
+    #[test]
+    fn projection_exposes_child_runtime_events_and_parent_capsule() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Reviewer,
+            AgentExecutionMode::ReadOnly,
+            "Parent review",
+            "Review child evidence",
+            10,
+        );
+        let child_id = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Child worker",
+                "Implement capsule summary",
+                20,
+            )
+            .expect("child task assigned");
+        assert!(bus.claim_task_lease(&child_id, "worker-1", 25, 100));
+        bus.start_task(&child_id, 30);
+        bus.record_progress(&child_id, "Editing src/lib.rs", 35);
+        bus.add_artifact(
+            &child_id,
+            AgentArtifact {
+                artifact_id: "patch-1".to_string(),
+                task_id: child_id.clone(),
+                kind: AgentArtifactKind::PatchProposal,
+                title: "Patch proposal".to_string(),
+                content: "{}".to_string(),
+                created_at_ms: 36,
+            },
+            36,
+        );
+        bus.add_artifact(
+            &child_id,
+            AgentArtifact {
+                artifact_id: "meta-1".to_string(),
+                task_id: child_id.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-child-worker",
+                    "diff_available": true,
+                    "diff_truncated": false,
+                    "tests_passed": true,
+                    "needs_human_review": true,
+                    "suggested_action": "Review before merge.",
+                    "file_io_events": [
+                        { "path": "src/lib.rs", "operation": "diff_observed" }
+                    ]
+                })
+                .to_string(),
+                created_at_ms: 37,
+            },
+            37,
+        );
+        bus.add_artifact(
+            &child_id,
+            AgentArtifact {
+                artifact_id: "diff-1".to_string(),
+                task_id: child_id.clone(),
+                kind: AgentArtifactKind::DiffSummary,
+                title: "Worktree diff".to_string(),
+                content: "diff --git a/src/lib.rs b/src/lib.rs\n--- a/src/lib.rs\n+++ b/src/lib.rs\n@@ -1 +1 @@\n-old\n+new".to_string(),
+                created_at_ms: 38,
+            },
+            38,
+        );
+        bus.complete_task(&child_id, "Patch ready for review", 40);
+
+        let projection = bus.projection();
+        let parent = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == parent_id.as_str())
+            .expect("parent projection");
+        let child = projection
+            .tasks
+            .iter()
+            .find(|task| task.task_id == child_id.as_str())
+            .expect("child projection");
+
+        for expected in [
+            AgentA2AChildEventKind::Assigned,
+            AgentA2AChildEventKind::LeaseClaimed,
+            AgentA2AChildEventKind::Started,
+            AgentA2AChildEventKind::Progress,
+            AgentA2AChildEventKind::PatchProposed,
+            AgentA2AChildEventKind::FileFact,
+            AgentA2AChildEventKind::WaitingReview,
+            AgentA2AChildEventKind::Completed,
+        ] {
+            assert!(
+                child
+                    .runtime_events
+                    .iter()
+                    .any(|event| event.kind == expected),
+                "missing child runtime event: {expected:?}"
+            );
+        }
+
+        assert_eq!(parent.child_capsules.len(), 1);
+        let capsule = &parent.child_capsules[0];
+        assert_eq!(capsule.parent_task_id, parent_id.as_str());
+        assert_eq!(capsule.child_task_id, child_id.as_str());
+        assert_eq!(capsule.child_goal, "Implement capsule summary");
+        assert_eq!(capsule.status, "completed");
+        assert_eq!(capsule.changed_files, vec!["src/lib.rs"]);
+        assert_eq!(capsule.review_decision, None);
+        assert_eq!(capsule.failure_reason, None);
+        assert_eq!(capsule.next_action, "Review before merge.");
+        assert!(capsule.estimated_tokens > 0);
+        assert_eq!(parent.review_decision, None);
+    }
+
+    #[test]
+    fn projection_exposes_review_gate_and_recovery_suggestions() {
+        use crate::agent::a2a::types::{AgentArtifact, AgentArtifactKind};
+
+        fn projected<'a>(
+            projection: &'a AgentA2AProjection,
+            task_id: &AgentTaskId,
+        ) -> &'a AgentA2ATaskProjection {
+            projection
+                .tasks
+                .iter()
+                .find(|task| task.task_id == task_id.as_str())
+                .expect("task projection")
+        }
+
+        let mut bus = AgentA2ABus::default();
+        let parent_id = bus.assign_task(
+            AgentRole::Reviewer,
+            AgentExecutionMode::ReadOnly,
+            "Parent",
+            "Coordinate children",
+            10,
+        );
+        let review_child = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Review child",
+                "Create a patch",
+                20,
+            )
+            .expect("child task");
+        assert!(bus.claim_task_lease(&review_child, "worker-1", 25, 100));
+        bus.add_artifact(
+            &review_child,
+            AgentArtifact {
+                artifact_id: "review-meta-1".to_string(),
+                task_id: review_child.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-review-child",
+                    "needs_human_review": true,
+                    "suggested_action": "Review before merge.",
+                    "tests_passed": true,
+                    "diff_available": true
+                })
+                .to_string(),
+                created_at_ms: 30,
+            },
+            30,
+        );
+        bus.complete_task(&review_child, "Patch ready", 35);
+
+        let projection = bus.projection();
+        let child = projected(&projection, &review_child);
+        let gate = child.review_gate.as_ref().expect("review gate");
+        assert_eq!(gate.kind, AgentA2AReviewGateKind::WaitingReview);
+        assert_eq!(gate.child_task_id, review_child.as_str());
+        assert_eq!(gate.parent_task_id.as_deref(), Some(parent_id.as_str()));
+        assert_eq!(gate.completion_impact, "blocks_parent_completion");
+        assert!(
+            gate.reason.contains("Review before merge"),
+            "unexpected gate reason: {}",
+            gate.reason
+        );
+        let parent = projected(&projection, &parent_id);
+        assert_eq!(parent.review_gate, None);
+        assert_eq!(parent.review_decision, None);
+
+        bus.record_review_decision(&review_child, AgentReviewDecision::Approve, "ship it", 45)
+            .expect("review approval");
+        let projection = bus.projection();
+        let child = projected(&projection, &review_child);
+        let gate = child.review_gate.as_ref().expect("approved review gate");
+        assert_eq!(gate.kind, AgentA2AReviewGateKind::Approved);
+        assert_eq!(gate.reviewed_at_ms, Some(45));
+        assert_eq!(gate.completion_impact, "child_review_approved_only");
+        let parent = projected(&projection, &parent_id);
+        assert_eq!(parent.review_gate, None);
+        assert_eq!(parent.review_decision, None);
+
+        let failed_child = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Failed child",
+                "Try risky patch",
+                50,
+            )
+            .expect("failed child");
+        assert!(bus.claim_task_lease(&failed_child, "worker-2", 55, 100));
+        bus.fail_task(&failed_child, "tool_error", "worker failed", true, 60);
+
+        let projection = bus.projection();
+        let failed = projected(&projection, &failed_child);
+        assert!(failed
+            .recovery_actions
+            .iter()
+            .any(|action| action.action == AgentA2ARecoveryActionKind::Retry
+                && action.requires_human_approval
+                && action.next_attempt == Some(2)));
+        assert!(failed.recovery_actions.iter().any(|action| {
+            action.action == AgentA2ARecoveryActionKind::Abandon
+                && action.requires_human_approval
+                && !action.retryable
+        }));
+
+        let interrupted_child = bus
+            .assign_child_task(
+                &parent_id,
+                AgentRole::Implementer,
+                AgentExecutionMode::WorktreeWorker,
+                "Interrupted child",
+                "Preserve worktree",
+                70,
+            )
+            .expect("interrupted child");
+        assert!(bus.claim_task_lease(&interrupted_child, "worker-3", 75, 100));
+        bus.add_artifact(
+            &interrupted_child,
+            AgentArtifact {
+                artifact_id: "interrupted-meta-1".to_string(),
+                task_id: interrupted_child.clone(),
+                kind: AgentArtifactKind::Evidence,
+                title: "Worktree metadata".to_string(),
+                content: serde_json::json!({
+                    "worktree_path": "/tmp/forge-interrupted-child",
+                    "needs_human_review": false,
+                    "cleaned_up": false
+                })
+                .to_string(),
+                created_at_ms: 80,
+            },
+            80,
+        );
+        bus.normalize_for_resume(90);
+
+        let projection = bus.projection();
+        let interrupted = projected(&projection, &interrupted_child);
+        assert!(interrupted.recovery_actions.iter().any(|action| {
+            action.action == AgentA2ARecoveryActionKind::InspectWorktree
+                && action.reason.contains("/tmp/forge-interrupted-child")
+        }));
+        assert!(interrupted
+            .recovery_actions
+            .iter()
+            .any(|action| action.action == AgentA2ARecoveryActionKind::Abandon));
     }
 
     #[test]

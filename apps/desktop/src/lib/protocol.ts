@@ -135,6 +135,28 @@ export interface WorkflowState {
 }
 
 export type WriteBoundaryRisk = "normal" | "caution" | "high";
+export type PermissionRiskTier = "normal" | "caution" | "high";
+export type PermissionMode = "manual_confirm" | "trust_current_project" | "full_access";
+export type PermissionLedgerEventKind =
+  | "mode_changed"
+  | "manual_required"
+  | "auto_approved"
+  | "blocked_external_path"
+  | "blocked_sensitive_path"
+  | "blocked_policy"
+  | "user_approved"
+  | "user_declined";
+
+export interface PermissionLedgerEvent {
+  kind: PermissionLedgerEventKind;
+  workspace_path: string;
+  session_id?: string | null;
+  risk_tier: PermissionRiskTier;
+  affected_files: string[];
+  operation: string;
+  permission_mode: PermissionMode;
+  reason: string;
+}
 
 export interface WriteBoundary {
   title: string;
@@ -162,6 +184,110 @@ export interface DeliverySummary {
   record_label?: string | null;
   record_status?: string | null;
   record_target_pages?: string[];
+}
+
+export type PreparedTurnPermissionMode = "manual_confirm" | "trust_current_project" | "full_access";
+
+export interface PreparedTurnContextSource {
+  kind: string;
+  label: string;
+  reason: string;
+  estimated_tokens: number;
+  injected: boolean;
+}
+
+export type ContextUsageBucketKind =
+  | "visible_input"
+  | "hidden_system"
+  | "memory"
+  | "files"
+  | "project_records"
+  | "compacted_transcript"
+  | "connector_context"
+  | "reserved_output";
+
+export interface ContextUsageBucket {
+  kind: ContextUsageBucketKind;
+  label: string;
+  estimated_tokens: number;
+  source_count: number;
+  injected: boolean;
+}
+
+export interface ContextUsageEstimate {
+  used_tokens: number;
+  context_window_tokens?: number | null;
+  percent_used?: number | null;
+  reserved_output_tokens: number;
+  sources: PreparedTurnContextSource[];
+  buckets?: ContextUsageBucket[];
+}
+
+export interface PreparedTurnMemoryAudit {
+  memory_id: string;
+  source: string;
+  source_id: string;
+  kind: string;
+  score: number;
+  reason: string;
+  project_match: boolean;
+  profile_match: boolean;
+  injected: boolean;
+}
+
+export type RecallDecision =
+  | "injected"
+  | "duplicate"
+  | "excluded_status"
+  | "excluded_project"
+  | "excluded_profile"
+  | "no_relevance_signal"
+  | "low_signal_query"
+  | "budget_exceeded";
+
+export interface RecallCandidateAudit {
+  memory_id: string;
+  source: string;
+  source_id: string;
+  kind: string;
+  status: string;
+  score: number;
+  reason: string;
+  decision: RecallDecision;
+  project_match: boolean;
+  profile_match: boolean;
+  estimated_tokens: number;
+  rank?: number | null;
+}
+
+export interface RecallBudget {
+  candidate_count: number;
+  injection_limit: number;
+  budget_tokens: number;
+  estimated_injected_tokens: number;
+  injected_count: number;
+}
+
+export interface RecallPlan {
+  selected_memory_ids: string[];
+  candidates: RecallCandidateAudit[];
+  budget: RecallBudget;
+}
+
+export interface PreparedTurn {
+  session_id: string;
+  project_path: string;
+  user_text: string;
+  activation_text: string;
+  selected_memory_ids: string[];
+  selected_memory_audit?: PreparedTurnMemoryAudit[];
+  memory_recall_plan?: RecallPlan | null;
+  selected_project_record_ids: string[];
+  workflow_route: string;
+  workflow_phase: string;
+  slash_command?: string | null;
+  permission_mode: PreparedTurnPermissionMode;
+  context_estimate: ContextUsageEstimate;
 }
 
 export interface McpContextStatus {
@@ -201,6 +327,74 @@ export interface AgentTurnProjection {
   estimated_context_tokens?: number | null;
   stop_reason?: string | null;
   compact_saved_tokens: number;
+}
+
+export type AgentA2AChildEventKind =
+  | "assigned"
+  | "lease_claimed"
+  | "started"
+  | "progress"
+  | "file_fact"
+  | "patch_proposed"
+  | "waiting_review"
+  | "completed"
+  | "failed"
+  | "abandoned"
+  | "recovered";
+
+export interface AgentA2AChildRuntimeEvent {
+  kind: AgentA2AChildEventKind;
+  label: string;
+  detail: string;
+  created_at_ms: number;
+}
+
+export interface AgentA2AChildCapsule {
+  capsule_id: string;
+  parent_task_id: string;
+  child_task_id: string;
+  child_goal: string;
+  status: string;
+  artifact_titles: string[];
+  changed_files: string[];
+  review_decision?: string | null;
+  failure_reason?: string | null;
+  next_action: string;
+  estimated_tokens: number;
+}
+
+export type AgentA2AReviewGateKind =
+  | "approved"
+  | "changes_requested"
+  | "rejected"
+  | "stale_review"
+  | "wrong_parent"
+  | "missing_evidence"
+  | "waiting_review";
+
+export interface AgentA2AReviewGateProjection {
+  kind: AgentA2AReviewGateKind;
+  label: string;
+  reason: string;
+  completion_impact: string;
+  parent_task_id?: string | null;
+  child_task_id: string;
+  reviewed_at_ms?: number | null;
+}
+
+export type AgentA2ARecoveryActionKind =
+  | "retry"
+  | "abandon"
+  | "reassign"
+  | "inspect_worktree";
+
+export interface AgentA2ARecoveryActionSuggestion {
+  action: AgentA2ARecoveryActionKind;
+  label: string;
+  reason: string;
+  requires_human_approval: boolean;
+  retryable: boolean;
+  next_attempt?: number | null;
 }
 
 export interface AgentA2ATaskProjection {
@@ -245,6 +439,14 @@ export interface AgentA2ATaskProjection {
   last_heartbeat_at_ms: number | null;
   attempt_count: number;
   max_attempts: number;
+  // A2A runtime contract: compact, replayable child event facts.
+  runtime_events?: AgentA2AChildRuntimeEvent[];
+  // Parent-consumable summaries of direct child tasks.
+  child_capsules?: AgentA2AChildCapsule[];
+  // A2A Review Gate V2 — typed task-local review facts.
+  review_gate?: AgentA2AReviewGateProjection | null;
+  // A2A Failure Recovery — suggestions only.
+  recovery_actions?: AgentA2ARecoveryActionSuggestion[];
   // Phase 4-B — diff-derived file visibility (safe: parsed from existing artifacts).
   diff_available: boolean | null;
   changed_file_count: number | null;
@@ -375,6 +577,15 @@ export interface LoopTaskRecord {
   evidence?: unknown[];
   policy_decisions?: unknown[];
   latest_budget_snapshot?: Record<string, unknown> | null;
+  latest_usage_ledger?: Record<string, unknown> | null;
+  recovery_state?: {
+    kind?: "orphaned" | "interrupted" | string;
+    recoverable?: boolean;
+    reason?: string;
+    notice?: string;
+    recorded_at_ms?: number;
+    source_event_id?: string | null;
+  } | null;
   latest_event_id?: string | null;
   outcome?: Record<string, unknown> | null;
   completion_result?: {
@@ -385,7 +596,28 @@ export interface LoopTaskRecord {
     commit_blockers?: string[];
     human_gate_id?: string | null;
     last_review_decision?: Record<string, unknown> | null;
+    eligibility_facts?: LoopCompletionEligibilityFacts;
   } | Record<string, unknown> | null;
+}
+
+export type CompletionFactStatus = "satisfied" | "missing" | "blocked" | "not_required" | "unknown";
+
+export interface CompletionFactBucket {
+  status?: CompletionFactStatus | string;
+  reason?: string;
+  evidence_ids?: string[];
+  blockers?: string[];
+}
+
+export interface LoopCompletionEligibilityFacts {
+  verification?: CompletionFactBucket;
+  changed_file_scope?: CompletionFactBucket;
+  permission?: CompletionFactBucket;
+  review?: CompletionFactBucket;
+  docs?: CompletionFactBucket;
+  eval?: CompletionFactBucket;
+  residual_risk?: CompletionFactBucket;
+  commit?: CompletionFactBucket;
 }
 
 export type StreamEvent =
@@ -418,6 +650,7 @@ export type StreamEvent =
       question: string;
       kind: string;
       boundary?: WriteBoundary | null;
+      permission_evidence?: PermissionLedgerEvent | null;
       replayed_interrupted?: boolean;
     }
   | {
@@ -427,11 +660,13 @@ export type StreamEvent =
       question?: string | null;
       kind?: string | null;
       boundary?: WriteBoundary | null;
+      permission_evidence?: PermissionLedgerEvent | null;
       approved: boolean | null;
       responded_at_ms: number;
       reason?: string | null;
       replayed?: boolean;
     }
+  | { event_type: "permission_decision"; session_id: string; block_id: string; evidence: PermissionLedgerEvent }
   // ── Context Management ──
   | {
       event_type: "context_compact_start";
@@ -465,6 +700,7 @@ export type StreamEvent =
   | { event_type: "forge_wiki_updated"; session_id: string; proposal: ForgeWikiUpdateProposal }
   | { event_type: "mcp_context_status"; session_id: string; source_id: string; status: "ready" | "failed"; message?: string | null }
   | { event_type: "workflow_updated"; session_id: string; state: WorkflowState }
+  | { event_type: "turn_prepared"; session_id: string; prepared: PreparedTurn }
   | { event_type: "agent_turn_updated"; session_id: string; state: AgentTurnProjection }
   | { event_type: "agent_a2a_updated"; session_id: string; state: AgentA2AProjection }
   | {

@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { setup } from "./fixtures/app";
+import { expandArchiveRecords, setup } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
 
 test.describe("Phase 7 acceptance surfaces", () => {
@@ -56,6 +56,33 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(card).toContainText("预览地址");
     await expect(card).toContainText("预览归属");
     await expect(card).toContainText("/Users/cabbos/project/forge");
+  });
+
+  test("project archive shows unified memory overview and search", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "unified-memory-overview-session";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await expect(page.getByTestId("composer-lane")).toBeVisible();
+
+    await page.getByRole("button", { name: "打开项目档案" }).click();
+    const records = await expandArchiveRecords(page);
+
+    await expect(records.getByText("记忆", { exact: true })).toBeVisible();
+    await expect(records.getByText("权限进度")).toBeVisible();
+    await expect(records.getByText("完全访问模式用于测试权限绕过。")).toBeVisible();
+    await expect(records.getByText("确认卡片回归")).toBeVisible();
+
+    await records.getByPlaceholder("搜索记忆、经验、背景").fill("回归");
+    await expect(records.getByText("确认卡片回归")).toBeVisible();
+    await expect(records.getByText("权限进度")).toHaveCount(0);
+
+    await records.getByRole("button", { name: "归档记忆", exact: true }).click();
+    await expect(records.getByText("确认卡片回归")).toHaveCount(0);
+
+    await records.getByRole("button", { name: "归档", exact: true }).click();
+    await expect(records.getByText("确认卡片回归")).toBeVisible();
   });
 
   test("project status card can trust the current project across conversations", async ({ page }) => {
@@ -126,6 +153,16 @@ test.describe("Phase 7 acceptance surfaces", () => {
         block_id: "trust-pending-confirm",
         question: "Allow edit_file?",
         kind: "file_write",
+        permission_evidence: {
+          kind: "manual_required",
+          workspace_path: "/Users/cabbos/project/forge",
+          session_id: sessionId,
+          risk_tier: "caution",
+          affected_files: ["src/styles.css"],
+          operation: "edit_file",
+          permission_mode: "manual_confirm",
+          reason: "manual_confirm_requires_user_response",
+        },
         boundary: {
           workspace_name: "forge",
           workspace_path: "/Users/cabbos/project/forge",
@@ -139,6 +176,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
     await expect(confirmPanel).toContainText("src/styles.css");
+    await expect(confirmPanel.getByTestId("confirm-permission-evidence")).toContainText("manual_required");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
     await page.getByRole("button", { name: "打开项目档案" }).click();

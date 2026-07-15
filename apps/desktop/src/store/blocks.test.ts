@@ -1,12 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert";
 import {
+  applyConfirmResponseToBlocks,
+  applyPermissionDecisionToBlocks,
   applyTranscriptEventToBlocks,
   closeInterruptedConfirmBlocks,
   eventToBlock,
   SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
 } from "./blocks.ts";
-import type { StreamEvent } from "../lib/protocol.ts";
+import type { PermissionLedgerEvent, StreamEvent } from "../lib/protocol.ts";
 import type { SubagentRuntimePayload } from "../lib/protocol.ts";
 import {
   applyLoopRuntimeUpdate,
@@ -471,6 +473,118 @@ describe("confirm_response replay", () => {
     assert.strictEqual(blocks[0].metadata.answer, null);
     assert.strictEqual(blocks[0].metadata.confirm_interrupted, true);
     assert.strictEqual(blocks[0].metadata.confirm_interrupted_reason, "session_restored");
+  });
+
+  it("keeps backend permission evidence on confirm ask and response blocks", () => {
+    const evidence: PermissionLedgerEvent = {
+      kind: "manual_required",
+      workspace_path: "/workspace/forge",
+      session_id: "s1",
+      risk_tier: "caution",
+      affected_files: ["src/main.rs"],
+      operation: "write_to_file",
+      permission_mode: "manual_confirm",
+      reason: "manual_confirm_requires_user_response",
+    };
+    const askEvent: StreamEvent = {
+      event_type: "confirm_ask",
+      session_id: "s1",
+      block_id: "confirm-evidence",
+      question: "Allow write?",
+      kind: "file_write",
+      boundary: null,
+      permission_evidence: evidence,
+    };
+    const responseEvent: Extract<StreamEvent, { event_type: "confirm_response" }> = {
+      event_type: "confirm_response",
+      session_id: "s1",
+      block_id: "confirm-evidence",
+      question: "Allow write?",
+      kind: "file_write",
+      boundary: null,
+      approved: true,
+      responded_at_ms: 123,
+      reason: "user_response",
+      permission_evidence: {
+        ...evidence,
+        kind: "user_approved",
+        reason: "user_response",
+      },
+    };
+
+    const askBlock = eventToBlock(askEvent);
+    assert.ok(askBlock);
+    assert.deepStrictEqual(askBlock!.metadata.permission_evidence, evidence);
+
+    const blocks = applyConfirmResponseToBlocks([askBlock!], responseEvent);
+
+    assert.strictEqual(blocks[0].metadata.confirmed, true);
+    assert.strictEqual(blocks[0].metadata.answer, true);
+    assert.deepStrictEqual(blocks[0].metadata.permission_evidence, {
+      ...evidence,
+      kind: "user_approved",
+      reason: "user_response",
+    });
+  });
+});
+
+describe("permission_decision replay", () => {
+  const evidence: PermissionLedgerEvent = {
+    kind: "auto_approved",
+    workspace_path: "/workspace/forge",
+    session_id: "s1",
+    risk_tier: "normal",
+    affected_files: [],
+    operation: "read_file",
+    permission_mode: "full_access",
+    reason: "full_access_current_project",
+  };
+
+  const permissionDecision: Extract<StreamEvent, { event_type: "permission_decision" }> = {
+    event_type: "permission_decision",
+    session_id: "s1",
+    block_id: "tool-1",
+    evidence,
+  };
+
+  it("merges permission evidence into an existing tool block", () => {
+    const blocks = applyPermissionDecisionToBlocks([
+      {
+        block_id: "tool-1",
+        event_type: "tool_call",
+        content: "",
+        isComplete: false,
+        metadata: { tool_name: "read_file", tool_input: { path: "README.md" } },
+      },
+    ], permissionDecision);
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.deepStrictEqual(blocks[0].metadata.permission_evidence, evidence);
+  });
+
+  it("keeps out-of-order permission decisions internal until tool_start upgrades them", () => {
+    let blocks = applyTranscriptEventToBlocks([], permissionDecision);
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "permission_decision");
+    assert.strictEqual(blocks[0].content, "");
+
+    blocks = applyTranscriptEventToBlocks(blocks, {
+      event_type: "tool_call_start",
+      session_id: "s1",
+      block_id: "tool-1",
+      tool_name: "read_file",
+      tool_input: { path: "README.md" },
+    });
+
+    assert.strictEqual(blocks.length, 1);
+    assert.strictEqual(blocks[0].event_type, "tool_call");
+    assert.deepStrictEqual(blocks[0].metadata.permission_evidence, evidence);
+    assert.strictEqual(blocks[0].metadata.tool_name, "read_file");
+  });
+
+  it("does not create a standalone rendered block from eventToBlock", () => {
+    assert.strictEqual(eventToBlock(permissionDecision), null);
   });
 });
 

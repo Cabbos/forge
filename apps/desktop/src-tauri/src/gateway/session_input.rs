@@ -16,6 +16,14 @@ pub struct SessionInputRecord {
     pub received_at_ms: u64,
 }
 
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionInputCompletionAction {
+    #[default]
+    Accepted,
+    ClearedStale,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SessionInputCompletionRecord {
     pub input_id: String,
@@ -23,6 +31,10 @@ pub struct SessionInputCompletionRecord {
     pub message_preview: String,
     pub received_at_ms: u64,
     pub completed_at_ms: u64,
+    #[serde(default)]
+    pub action: SessionInputCompletionAction,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -129,6 +141,42 @@ impl SessionInputStore {
             message_preview: message_preview(&record.message),
             received_at_ms: record.received_at_ms,
             completed_at_ms: now_millis(),
+            action: SessionInputCompletionAction::Accepted,
+            reason: None,
+        };
+        self.push_completion(completion.clone());
+        Some(completion)
+    }
+
+    pub fn clear_stale_with_record(
+        &self,
+        input_id: &str,
+        reason: &str,
+    ) -> Option<SessionInputCompletionRecord> {
+        let input_id = input_id.trim();
+        if input_id.is_empty() {
+            return None;
+        }
+        let record = self.records.lock().ok().and_then(|mut records| {
+            self.refresh_locked(&mut records);
+            let position = records.iter().position(|record| record.id == input_id)?;
+            let record = records.remove(position);
+            self.save_locked(&records);
+            Some(record)
+        })?;
+        let reason = reason.trim();
+        let completion = SessionInputCompletionRecord {
+            input_id: record.id,
+            session_id: record.session_id,
+            message_preview: message_preview(&record.message),
+            received_at_ms: record.received_at_ms,
+            completed_at_ms: now_millis(),
+            action: SessionInputCompletionAction::ClearedStale,
+            reason: Some(if reason.is_empty() {
+                "stale gateway session input cleared by operator".to_string()
+            } else {
+                reason.to_string()
+            }),
         };
         self.push_completion(completion.clone());
         Some(completion)
@@ -448,5 +496,34 @@ mod tests {
 
         let restored = SessionInputStore::persistent_at(path);
         assert_eq!(restored.recent_completions(10), vec![completion]);
+    }
+
+    #[test]
+    fn session_input_store_clears_stale_input_with_recovery_evidence() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("session-inputs.json");
+        let store = SessionInputStore::persistent_at(path.clone());
+        store.push(SessionInputRecord {
+            id: "input-stale".into(),
+            session_id: "session-1".into(),
+            message: "continue but owner disappeared".into(),
+            received_at_ms: 10,
+        });
+
+        let cleared = store
+            .clear_stale_with_record(" input-stale ", "operator cleared stale queued input")
+            .expect("clear stale input");
+
+        assert_eq!(cleared.input_id, "input-stale");
+        assert_eq!(cleared.session_id, "session-1");
+        assert_eq!(cleared.action, SessionInputCompletionAction::ClearedStale);
+        assert_eq!(
+            cleared.reason.as_deref(),
+            Some("operator cleared stale queued input")
+        );
+        assert!(store.list().is_empty());
+
+        let restored = SessionInputStore::persistent_at(path);
+        assert_eq!(restored.recent_completions(10), vec![cleared]);
     }
 }

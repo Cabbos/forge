@@ -28,7 +28,7 @@ pub mod service;
 pub mod session_store;
 pub mod settings;
 mod state;
-mod transcript;
+pub mod transcript;
 mod workflow;
 mod workspace_safety;
 
@@ -123,6 +123,8 @@ pub fn run() {
             ipc::continuity_experiences::list_continuity_experiences,
             ipc::continuity_experiences::search_continuity_experiences,
             ipc::continuity_experiences::update_continuity_experience_status,
+            ipc::unified_memory::list_unified_memories,
+            ipc::unified_memory::apply_unified_memory_action,
             ipc::workspace_files::search_workspace_files,
             ipc::workspace_files::get_default_working_dir,
             ipc::settings_handlers::get_api_key_status,

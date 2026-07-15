@@ -259,6 +259,15 @@ fn event_payload_fingerprint(event: &LoopEventEnvelope) -> Result<String, String
             "task_id": task_id,
             "reason": reason,
         }),
+        LoopRuntimeEvent::TaskRequeued {
+            task_id,
+            reason,
+            requeued_at_ms: _,
+        } => serde_json::json!({
+            "type": "task_requeued",
+            "task_id": task_id,
+            "reason": reason,
+        }),
         LoopRuntimeEvent::TaskInterrupted { task_id, reason } => serde_json::json!({
             "type": "task_interrupted",
             "task_id": task_id,

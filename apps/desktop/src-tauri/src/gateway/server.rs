@@ -2,19 +2,25 @@
 //! response serialization.
 
 use crate::gateway::protocol::{
-    serialize_reply, AttachSessionParams, AttachSessionResult, CancelLoopTaskParams,
-    CancelLoopTaskResult, CancelTriggerParams, CancelTriggerResult, CompleteSessionInputParams,
-    CompleteSessionInputResult, CreateLoopTaskRequest, EnqueueSessionInputParams,
-    EnqueueSessionInputResult, EnqueueTriggerParams, EnqueueTriggerResult,
-    EvaluateLoopTaskCompletionParams, EvaluateLoopTaskCompletionResult, GatewayError,
-    GatewayErrorBody, GatewayReply, GatewayRequest, GatewayResponse, GatewaySessionAttachStatus,
-    GatewaySessionControl, GatewaySessionControlPlane, GatewaySessionInfo,
-    GatewaySessionSnapshotSummary, GetLoopTaskParams, GetSessionSnapshotParams,
-    GetSessionSnapshotResult, GetTriggerRunParams, GetTriggerRunResult,
-    HeadlessResumeControlParams, HeadlessResumeControlResult, HealthResult, ListLoopTasksParams,
-    ListLoopTasksResult, ListSessionInputsParams, ListSessionInputsResult, LoopTaskResponse,
-    PingResult, ReplayTriggerRunParams, ReplayTriggerRunResult, TailSessionEventsParams,
-    TailSessionEventsResult, GATEWAY_VERSION,
+    default_gateway_degraded_mode_status, default_gateway_degraded_recovery_command,
+    default_gateway_ownership_capability, serialize_reply, AttachSessionParams,
+    AttachSessionResult, CancelLoopTaskParams, CancelLoopTaskResult, CancelTriggerParams,
+    CancelTriggerResult, ClearStaleSessionInputParams, ClearStaleSessionInputResult,
+    CompleteSessionInputParams, CompleteSessionInputResult, CreateLoopTaskRequest,
+    EnqueueSessionInputParams, EnqueueSessionInputResult, EnqueueTriggerParams,
+    EnqueueTriggerResult, EvaluateLoopTaskCompletionParams, EvaluateLoopTaskCompletionResult,
+    GatewayDegradedModeStatus, GatewayError, GatewayErrorBody, GatewayOwnershipCapability,
+    GatewayOwnershipEligibilityDecision, GatewayOwnershipEligibilityParams,
+    GatewayOwnershipEligibilityResult, GatewayOwnershipMode, GatewayReadOnlyOwnerDiagnosticsParams,
+    GatewayReadOnlyOwnerDiagnosticsResult, GatewayReadOnlyOwnerSideEffects, GatewayReply,
+    GatewayRequest, GatewayResponse, GatewaySessionAttachStatus, GatewaySessionControl,
+    GatewaySessionControlPlane, GatewaySessionInfo, GatewaySessionSnapshotSummary,
+    GetLoopTaskParams, GetSessionSnapshotParams, GetSessionSnapshotResult, GetTriggerRunParams,
+    GetTriggerRunResult, HeadlessResumeControlParams, HeadlessResumeControlResult, HealthResult,
+    ListLoopTasksParams, ListLoopTasksResult, ListSessionInputsParams, ListSessionInputsResult,
+    LoopTaskResponse, PingResult, RecoverLoopTaskParams, RecoverLoopTaskResult,
+    RecoveryActionEvidence, RecoveryActionKind, ReplayTriggerRunParams, ReplayTriggerRunResult,
+    TailSessionEventsParams, TailSessionEventsResult, GATEWAY_VERSION,
 };
 use crate::gateway::runner::{TriggerRunRecord, TriggerRunStore};
 use crate::gateway::session_input::{
@@ -22,9 +28,14 @@ use crate::gateway::session_input::{
 };
 use crate::gateway::webhook::{PendingTrigger, TriggerStore};
 use crate::loop_runtime::runner::{LoopRunnerQueueStats, LoopTaskRunner};
+use crate::loop_runtime::types::new_loop_event_id;
 use crate::loop_runtime::{
-    evaluate_completion, HeadlessResumeApproval, HeadlessResumeMode, LoopEventEnvelope,
-    LoopEventJournal, LoopRuntimeEvent, LoopTaskProjectionStore, LoopTaskRecord,
+    default_runtime_health_snapshot, evaluate_completion, HeadlessOwnerExecutorKind,
+    HeadlessOwnerRun, HeadlessOwnerRunState, HeadlessOwnerSnapshotSource, HeadlessResumeApproval,
+    HeadlessResumeMode, LoopActor, LoopEventEnvelope, LoopEventJournal, LoopRuntimeEvent,
+    LoopTaskProjectionStore, LoopTaskRecord, LoopTaskStatus, RuntimeHealthSnapshot,
+    RuntimeHealthSnapshotInput, RuntimeObservedTask, RuntimeReplayHealth,
+    LOOP_RUNTIME_SCHEMA_VERSION,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -39,6 +50,12 @@ use tokio::net::{UnixListener, UnixStream};
 pub struct GatewayRuntimeStatus {
     pub ok: bool,
     pub message: String,
+    #[serde(default = "default_gateway_ownership_capability")]
+    pub ownership: GatewayOwnershipCapability,
+    #[serde(default = "default_gateway_degraded_mode_status")]
+    pub degraded_mode: GatewayDegradedModeStatus,
+    #[serde(default = "default_runtime_health_snapshot")]
+    pub runtime_health: RuntimeHealthSnapshot,
     pub uptime_seconds: u64,
     pub active_sessions: usize,
     pub pending_triggers: usize,
@@ -52,6 +69,12 @@ pub struct GatewayRuntimeStatus {
     pub running_loop_tasks: usize,
     #[serde(default)]
     pub stale_loop_task_leases: usize,
+    #[serde(default)]
+    pub orphaned_loop_tasks: usize,
+    #[serde(default)]
+    pub interrupted_loop_tasks: usize,
+    #[serde(default)]
+    pub recoverable_loop_tasks: usize,
     #[serde(default)]
     pub dry_run_headless_owner_runs: usize,
     #[serde(default)]
@@ -371,6 +394,7 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "enqueue_session_input" => handle_enqueue_session_input(state, request),
         "list_session_inputs" => handle_list_session_inputs(state, request),
         "complete_session_input" => handle_complete_session_input(state, request),
+        "clear_stale_session_input" => handle_clear_stale_session_input(state, request),
         "cancel_trigger" => handle_cancel_trigger(state, request),
         "replay_trigger_run" => handle_replay_trigger_run(state, request),
         "get_trigger_run" => handle_get_trigger_run(state, request),
@@ -380,8 +404,15 @@ pub fn dispatch(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
         "list_loop_tasks" => handle_list_loop_tasks(state, request),
         "get_loop_task" => handle_get_loop_task(state, request),
         "request_headless_resume" => handle_request_headless_resume(state, request),
+        "run_gateway_read_only_owner_diagnostics" => {
+            handle_run_gateway_read_only_owner_diagnostics(state, request)
+        }
+        "evaluate_gateway_ownership_eligibility" => {
+            handle_evaluate_gateway_ownership_eligibility(state, request)
+        }
         "evaluate_loop_task_completion" => handle_evaluate_loop_task_completion(state, request),
         "cancel_loop_task" => handle_cancel_loop_task(state, request),
+        "recover_loop_task" => handle_recover_loop_task(state, request),
         "list_trigger_runs" => handle_list_trigger_runs(state, request.id),
         "runtime_status" => handle_runtime_status(state, request.id),
         "dashboard_snapshot" => handle_dashboard_snapshot(state, request.id),
@@ -631,6 +662,37 @@ fn handle_complete_session_input(state: &GatewayState, request: GatewayRequest) 
             input_id,
             removed,
             pending_inputs: state.session_input_store.list().len(),
+        })
+        .unwrap(),
+    })
+}
+
+fn handle_clear_stale_session_input(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<ClearStaleSessionInputParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let input_id = params.input_id.trim().to_string();
+    if input_id.is_empty() {
+        return invalid_params(request.id, "input_id must not be empty");
+    }
+    let reason = clean_optional_string(params.reason)
+        .unwrap_or_else(|| "stale gateway session input cleared by operator".to_string());
+    let evidence = state
+        .session_input_store
+        .clear_stale_with_record(&input_id, &reason);
+
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(ClearStaleSessionInputResult {
+            ok: true,
+            input_id,
+            cleared: evidence.is_some(),
+            pending_inputs: state.session_input_store.list().len(),
+            evidence,
         })
         .unwrap(),
     })
@@ -1111,6 +1173,351 @@ fn handle_request_headless_resume(state: &GatewayState, request: GatewayRequest)
     }
 }
 
+fn handle_run_gateway_read_only_owner_diagnostics(
+    state: &GatewayState,
+    request: GatewayRequest,
+) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<GatewayReadOnlyOwnerDiagnosticsParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    if task.status.is_terminal() {
+        return gateway_read_only_owner_diagnostics_response(
+            request.id,
+            task,
+            None,
+            false,
+            false,
+            false,
+            "Read-only diagnostics owner was not started because the loop task is terminal.",
+        );
+    }
+
+    let approved_by = clean_optional_string(params.approved_by);
+    if approved_by.is_none() && !params.dev_only_allow {
+        return gateway_read_only_owner_diagnostics_response(
+            request.id,
+            task,
+            None,
+            false,
+            false,
+            false,
+            "Gateway read-only owner diagnostics requires explicit human approval or a dev-only explicit flag; no owner run was started.",
+        );
+    }
+
+    let requested_at_ms = params.requested_at_ms.unwrap_or_else(now_millis);
+    let expires_at_ms = params
+        .expires_at_ms
+        .unwrap_or_else(|| requested_at_ms.saturating_add(60_000));
+    if expires_at_ms <= requested_at_ms {
+        return invalid_params(
+            request.id,
+            "expires_at_ms must be greater than requested_at_ms",
+        );
+    }
+    let session_id = clean_optional_string(params.session_id);
+    let idempotency_key = clean_optional_string(params.idempotency_key).unwrap_or_else(|| {
+        format!(
+            "gateway_read_only_owner:{task_id}:{}",
+            session_id.as_deref().unwrap_or("projection")
+        )
+    });
+
+    if let Some(existing) = task
+        .headless_owner_runs
+        .iter()
+        .find(|owner_run| owner_run.matches_idempotency_key(&task_id, &idempotency_key))
+        .cloned()
+    {
+        return gateway_read_only_owner_diagnostics_response(
+            request.id,
+            task,
+            Some(existing),
+            true,
+            true,
+            true,
+            "Gateway read-only diagnostics owner evidence was already recorded; no duplicate side effects were produced.",
+        );
+    }
+
+    let attempt = task.headless_owner_runs.len() as u32 + 1;
+    let owner_run_id = format!("gateway-readonly-owner:{task_id}:{attempt}");
+    let lease_id = format!("gateway-readonly-lease:{task_id}:{attempt}");
+    let correlation_id = format!("gateway-readonly-correlation:{task_id}:{attempt}");
+    let owner_run = HeadlessOwnerRun {
+        owner_run_id: owner_run_id.clone(),
+        task_id: task_id.clone(),
+        session_id: session_id.clone(),
+        lease_id: lease_id.clone(),
+        attempt,
+        state: HeadlessOwnerRunState::Requested,
+        snapshot_source: if session_id.is_some() {
+            HeadlessOwnerSnapshotSource::CurrentDesktopSession
+        } else {
+            HeadlessOwnerSnapshotSource::WorkspaceSnapshot
+        },
+        snapshot_ref: session_id
+            .clone()
+            .or_else(|| Some(format!("loop_projection:{task_id}"))),
+        human_gate_id: approved_by
+            .as_ref()
+            .map(|approver| format!("human-approval:{task_id}:{approver}"))
+            .unwrap_or_else(|| format!("dev-only-read-only-owner:{task_id}:{attempt}")),
+        policy_decision_id: format!("gateway-readonly-policy:{task_id}:{attempt}"),
+        budget_snapshot_id: format!("gateway-readonly-budget:{task_id}:{attempt}"),
+        idempotency_key: idempotency_key.clone(),
+        correlation_id: correlation_id.clone(),
+        causation_id: Some(request.id.clone()),
+        requested_by: approved_by
+            .map(|approver| format!("human:{approver}"))
+            .unwrap_or_else(|| "dev_only:gateway_read_only_owner".to_string()),
+        requested_at_ms,
+        heartbeat_at_ms: None,
+        expires_at_ms,
+        cancellation_reason: None,
+        waiting_reason: None,
+        executor_kind: HeadlessOwnerExecutorKind::DryRun,
+        evidence_refs: gateway_read_only_owner_evidence_refs(&task_id, attempt),
+    };
+    if let Err(error) = owner_run.validate_authorization_bundle() {
+        return invalid_params(request.id, error);
+    }
+
+    let request_event = LoopEventEnvelope::headless_owner_run_requested(owner_run.clone());
+    if let Err(error) = state.loop_event_journal.append_idempotent(request_event) {
+        return invalid_params(request.id, error);
+    }
+    let lease_event = gateway_read_only_owner_state_event(
+        &task_id,
+        &owner_run_id,
+        &lease_id,
+        attempt,
+        &correlation_id,
+        Some(owner_run.requested_at_ms),
+        HeadlessOwnerRunState::LeaseAcquired,
+        requested_at_ms,
+        "Gateway read-only diagnostics lease acquired.",
+        &idempotency_key,
+    );
+    if let Err(error) = state.loop_event_journal.append_idempotent(lease_event) {
+        return invalid_params(request.id, error);
+    }
+    let completed_event = gateway_read_only_owner_state_event(
+        &task_id,
+        &owner_run_id,
+        &lease_id,
+        attempt,
+        &correlation_id,
+        Some(requested_at_ms),
+        HeadlessOwnerRunState::Completed,
+        requested_at_ms.saturating_add(1),
+        "Gateway read-only diagnostics completed without provider/tool/file side effects.",
+        &idempotency_key,
+    );
+    if let Err(error) = state.loop_event_journal.append_idempotent(completed_event) {
+        return invalid_params(request.id, error);
+    }
+
+    let projection = match state
+        .loop_task_projection_store
+        .rebuild_from_journal(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    let owner_run = task
+        .headless_owner_runs
+        .iter()
+        .find(|owner_run| owner_run.owner_run_id == owner_run_id)
+        .cloned();
+    gateway_read_only_owner_diagnostics_response(
+        request.id,
+        task,
+        owner_run,
+        true,
+        true,
+        true,
+        "Gateway read-only diagnostics owner completed without provider, tool, shell, file, confirmation, or commit side effects.",
+    )
+}
+
+fn handle_evaluate_gateway_ownership_eligibility(
+    state: &GatewayState,
+    request: GatewayRequest,
+) -> GatewayReply {
+    let params = match request.params {
+        Some(params) => match serde_json::from_value::<GatewayOwnershipEligibilityParams>(params) {
+            Ok(params) => params,
+            Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+        },
+        None => GatewayOwnershipEligibilityParams {
+            session_id: None,
+            task_id: None,
+            requested_mode: GatewayOwnershipMode::GatewayReadOnlyOwner,
+        },
+    };
+    GatewayReply::Ok(GatewayResponse {
+        id: request.id,
+        result: serde_json::to_value(evaluate_gateway_ownership_eligibility(state, params))
+            .unwrap(),
+    })
+}
+
+fn evaluate_gateway_ownership_eligibility(
+    state: &GatewayState,
+    params: GatewayOwnershipEligibilityParams,
+) -> GatewayOwnershipEligibilityResult {
+    let session_id = clean_optional_string(params.session_id);
+    let task_id = clean_optional_string(params.task_id);
+    let capability = default_gateway_ownership_capability();
+    let mut reasons = Vec::new();
+    let mut missing_evidence = Vec::new();
+    let mut proposal_only = false;
+    let mut would_generate_patch_proposal = false;
+    let would_apply_patch = false;
+
+    if !capability.gateway_can_own_sessions {
+        push_unique(&mut reasons, "gateway_ownership_disabled");
+    }
+    if capability.ownership_mode == GatewayOwnershipMode::LocalDefault {
+        push_unique(&mut reasons, "local_default_owner");
+    }
+    match params.requested_mode {
+        GatewayOwnershipMode::LocalDefault => {
+            push_unique(&mut reasons, "gateway_owner_not_requested");
+        }
+        GatewayOwnershipMode::GatewayOptIn => {
+            push_unique(&mut reasons, "gateway_opt_in_not_enabled");
+        }
+        GatewayOwnershipMode::GatewayOptInDryRun => {
+            push_unique(&mut reasons, "gateway_opt_in_dry_run_not_enabled");
+        }
+        GatewayOwnershipMode::GatewayReadOnlyOwner => {
+            push_unique(&mut reasons, "read_only_owner_requires_explicit_approval");
+        }
+        GatewayOwnershipMode::GatewayPatchProposalOwner => {
+            proposal_only = true;
+            would_generate_patch_proposal = true;
+            push_unique(&mut reasons, "patch_proposal_owner_requires_gate");
+            push_unique(&mut missing_evidence, "patch_proposal_review_gate");
+            push_unique(&mut missing_evidence, "diff_evidence_contract");
+        }
+        GatewayOwnershipMode::GatewayToolOwnerBlockedByDefault => {
+            push_unique(&mut reasons, "tool_owner_blocked_by_default");
+        }
+    }
+
+    if let Some(session_id) = session_id.as_deref() {
+        let attach = state.attach_session(session_id);
+        if !attach.control.gateway_can_read_snapshot {
+            push_unique(&mut missing_evidence, "session_snapshot");
+        }
+        if attach.status != GatewaySessionAttachStatus::Live {
+            push_unique(
+                &mut reasons,
+                format!(
+                    "session_attach_{}",
+                    gateway_session_attach_status_label(attach.status)
+                ),
+            );
+        }
+    } else {
+        push_unique(&mut missing_evidence, "session_context");
+    }
+
+    if let Some(task_id) = task_id.as_deref() {
+        match state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+        {
+            Ok(projection) => {
+                if let Some(task) = projection.find(task_id) {
+                    if task.recovery_state.is_none() {
+                        push_unique(&mut missing_evidence, "recovery_evidence");
+                    }
+                    if task.status.is_terminal() {
+                        push_unique(&mut reasons, "task_is_terminal");
+                    }
+                } else {
+                    push_unique(&mut missing_evidence, "runtime_projection");
+                    push_unique(&mut reasons, "loop_task_not_found");
+                }
+            }
+            Err(_) => {
+                push_unique(&mut missing_evidence, "runtime_projection");
+                push_unique(&mut reasons, "runtime_projection_unavailable");
+            }
+        }
+    } else {
+        push_unique(&mut missing_evidence, "runtime_projection");
+    }
+
+    push_unique(&mut missing_evidence, "memory_recall_audit");
+    push_unique(&mut missing_evidence, "context_capsule");
+    push_unique(&mut missing_evidence, "permission_decision_ledger");
+
+    let decision = if capability.gateway_can_own_sessions && reasons.is_empty() {
+        GatewayOwnershipEligibilityDecision::RequiresHumanApproval
+    } else {
+        GatewayOwnershipEligibilityDecision::Deny
+    };
+    let required_action = match decision {
+        GatewayOwnershipEligibilityDecision::Allow => {
+            "Gateway ownership may proceed without additional action.".to_string()
+        }
+        GatewayOwnershipEligibilityDecision::RequiresHumanApproval => {
+            "Require explicit human approval before starting a gateway owner run.".to_string()
+        }
+        GatewayOwnershipEligibilityDecision::Deny => {
+            if params.requested_mode == GatewayOwnershipMode::GatewayPatchProposalOwner {
+                "Keep the desktop runtime as owner; patch proposal ownership remains proposal-only, requires review evidence, and direct apply/write stays blocked.".to_string()
+            } else {
+                "Keep the desktop runtime as owner; resolve the listed gateway eligibility gaps first."
+                    .to_string()
+            }
+        }
+    };
+
+    GatewayOwnershipEligibilityResult {
+        ok: true,
+        decision,
+        requested_mode: params.requested_mode,
+        session_id,
+        task_id,
+        reasons,
+        missing_evidence,
+        required_action,
+        proposal_only,
+        would_generate_patch_proposal,
+        would_apply_patch,
+        would_execute_provider: false,
+        would_execute_tools: false,
+        would_write_files: false,
+        changes_task_state: false,
+    }
+}
+
 fn handle_evaluate_loop_task_completion(
     state: &GatewayState,
     request: GatewayRequest,
@@ -1198,6 +1605,181 @@ fn handle_cancel_loop_task(state: &GatewayState, request: GatewayRequest) -> Gat
     cancel_loop_task_response(request.id, true, task)
 }
 
+fn handle_recover_loop_task(state: &GatewayState, request: GatewayRequest) -> GatewayReply {
+    let Some(params) = request.params else {
+        return invalid_params(request.id, "missing params");
+    };
+    let params = match serde_json::from_value::<RecoverLoopTaskParams>(params) {
+        Ok(params) => params,
+        Err(error) => return invalid_params(request.id, format!("invalid params: {error}")),
+    };
+    let task_id = params.task_id.trim().to_string();
+    if task_id.is_empty() {
+        return invalid_params(request.id, "task_id must not be empty");
+    }
+    let action = params.action;
+    let reason = recovery_reason_for_action(action, params.reason);
+    let projection = match state
+        .loop_task_projection_store
+        .load_or_rebuild(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    if action == RecoveryActionKind::ExportEvidence {
+        let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+            Ok(evidence) => evidence,
+            Err(error) => return invalid_params(request.id, error),
+        };
+        return recover_loop_task_response(
+            request.id,
+            action,
+            false,
+            task,
+            "Recovery evidence was exported without changing journal state.",
+            Some(evidence),
+        );
+    }
+    if task.status.is_terminal() {
+        let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+            Ok(evidence) => Some(evidence),
+            Err(error) => return invalid_params(request.id, error),
+        };
+        return recover_loop_task_response(
+            request.id,
+            action,
+            false,
+            task,
+            "Loop task is terminal; recovery state was left unchanged.",
+            evidence,
+        );
+    }
+    if action == RecoveryActionKind::RetryWaitingTask {
+        if task.status != LoopTaskStatus::WaitingForInput {
+            let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+                Ok(evidence) => Some(evidence),
+                Err(error) => return invalid_params(request.id, error),
+            };
+            return recover_loop_task_response(
+                request.id,
+                action,
+                false,
+                task,
+                "Loop task is not waiting for input; retry was not applied.",
+                evidence,
+            );
+        }
+
+        let idempotency_key = clean_optional_string(params.idempotency_key)
+            .unwrap_or_else(|| recover_idempotency_key(action, &task_id, &reason));
+        let now_ms = now_millis();
+        let event = LoopEventEnvelope {
+            schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: new_loop_event_id(),
+            task_id: task_id.clone(),
+            sequence: 0,
+            event: LoopRuntimeEvent::TaskRequeued {
+                task_id: task_id.clone(),
+                reason,
+                requeued_at_ms: now_ms,
+            },
+            actor: LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: Some(request.id.clone()),
+            causation_id: task.latest_event_id.clone(),
+            idempotency_key: Some(idempotency_key),
+            created_at_ms: now_ms,
+        };
+        let append = match state.loop_event_journal.append_idempotent(event) {
+            Ok(append) => append,
+            Err(error) => return invalid_params(request.id, error),
+        };
+        let projection = match state
+            .loop_task_projection_store
+            .rebuild_from_journal(&state.loop_event_journal)
+        {
+            Ok(projection) => projection,
+            Err(error) => return invalid_params(request.id, error),
+        };
+        let Some(task) = projection.find(&task_id).cloned() else {
+            return invalid_params(request.id, format!("loop task not found: {task_id}"));
+        };
+        let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+            Ok(evidence) => Some(evidence),
+            Err(error) => return invalid_params(request.id, error),
+        };
+        return recover_loop_task_response(
+            request.id,
+            action,
+            append.appended,
+            task,
+            "Loop task was requeued for safe retry.",
+            evidence,
+        );
+    }
+    if task.status == LoopTaskStatus::Interrupted && task.recovery_state.is_some() {
+        let notice = task
+            .recovery_state
+            .as_ref()
+            .map(|recovery| recovery.notice.clone())
+            .unwrap_or_else(|| "Loop task is already interrupted and recoverable.".to_string());
+        let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+            Ok(evidence) => Some(evidence),
+            Err(error) => return invalid_params(request.id, error),
+        };
+        return recover_loop_task_response(request.id, action, false, task, notice, evidence);
+    }
+
+    let idempotency_key = clean_optional_string(params.idempotency_key)
+        .unwrap_or_else(|| recover_idempotency_key(action, &task_id, &reason));
+    let now_ms = now_millis();
+    let event = LoopEventEnvelope {
+        schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+        event_id: new_loop_event_id(),
+        task_id: task_id.clone(),
+        sequence: 0,
+        event: LoopRuntimeEvent::TaskInterrupted {
+            task_id: task_id.clone(),
+            reason,
+        },
+        actor: LoopActor::Gateway,
+        lease_id: task.lease.as_ref().map(|lease| lease.lease_id.clone()),
+        attempt: None,
+        correlation_id: Some(request.id.clone()),
+        causation_id: task.latest_event_id.clone(),
+        idempotency_key: Some(idempotency_key),
+        created_at_ms: now_ms,
+    };
+    let append = match state.loop_event_journal.append_idempotent(event) {
+        Ok(append) => append,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let projection = match state
+        .loop_task_projection_store
+        .rebuild_from_journal(&state.loop_event_journal)
+    {
+        Ok(projection) => projection,
+        Err(error) => return invalid_params(request.id, error),
+    };
+    let Some(task) = projection.find(&task_id).cloned() else {
+        return invalid_params(request.id, format!("loop task not found: {task_id}"));
+    };
+    let notice = task
+        .recovery_state
+        .as_ref()
+        .map(|recovery| recovery.notice.clone())
+        .unwrap_or_else(|| "Loop task was marked interrupted.".to_string());
+    let evidence = match recovery_action_evidence(&state.loop_event_journal, &task) {
+        Ok(evidence) => Some(evidence),
+        Err(error) => return invalid_params(request.id, error),
+    };
+    recover_loop_task_response(request.id, action, append.appended, task, notice, evidence)
+}
+
 fn loop_task_response(id: String, task: LoopTaskRecord) -> GatewayReply {
     GatewayReply::Ok(GatewayResponse {
         id,
@@ -1215,6 +1797,133 @@ fn cancel_loop_task_response(id: String, changed: bool, task: LoopTaskRecord) ->
         })
         .unwrap(),
     })
+}
+
+fn recover_loop_task_response(
+    id: String,
+    action: RecoveryActionKind,
+    changed: bool,
+    task: LoopTaskRecord,
+    notice: impl Into<String>,
+    evidence: Option<RecoveryActionEvidence>,
+) -> GatewayReply {
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(RecoverLoopTaskResult {
+            ok: true,
+            action,
+            changed,
+            task,
+            notice: notice.into(),
+            evidence,
+        })
+        .unwrap(),
+    })
+}
+
+fn gateway_read_only_owner_diagnostics_response(
+    id: String,
+    task: LoopTaskRecord,
+    owner_run: Option<HeadlessOwnerRun>,
+    started: bool,
+    completed: bool,
+    gateway_can_resume: bool,
+    message: impl Into<String>,
+) -> GatewayReply {
+    let summary = gateway_read_only_owner_summary(&task, owner_run.as_ref());
+    GatewayReply::Ok(GatewayResponse {
+        id,
+        result: serde_json::to_value(GatewayReadOnlyOwnerDiagnosticsResult {
+            ok: started && completed,
+            started,
+            completed,
+            gateway_can_resume,
+            task,
+            owner_run,
+            summary,
+            message: message.into(),
+            side_effects: gateway_read_only_owner_side_effects(),
+        })
+        .unwrap(),
+    })
+}
+
+fn gateway_read_only_owner_side_effects() -> GatewayReadOnlyOwnerSideEffects {
+    GatewayReadOnlyOwnerSideEffects {
+        provider: false,
+        tools: false,
+        shell: false,
+        write_files: false,
+        confirmations: false,
+        commits: false,
+    }
+}
+
+fn gateway_read_only_owner_summary(
+    task: &LoopTaskRecord,
+    owner_run: Option<&HeadlessOwnerRun>,
+) -> String {
+    let owner_state = owner_run
+        .map(|run| format!("{:?}", run.state))
+        .unwrap_or_else(|| "not_started".to_string());
+    format!(
+        "Read-only diagnostics for task {}: status={:?}, owner_state={}, owner_runs={}, no provider, tool, shell, file, confirmation, or commit side effects.",
+        task.id,
+        task.status,
+        owner_state,
+        task.headless_owner_runs.len()
+    )
+}
+
+fn gateway_read_only_owner_evidence_refs(task_id: &str, attempt: u32) -> Vec<String> {
+    vec![
+        "gateway_read_only_diagnostics".to_string(),
+        format!("loop_projection:{task_id}"),
+        format!("gateway_read_only_owner_attempt:{attempt}"),
+    ]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn gateway_read_only_owner_state_event(
+    task_id: &str,
+    owner_run_id: &str,
+    lease_id: &str,
+    attempt: u32,
+    correlation_id: &str,
+    causation_at_ms: Option<u64>,
+    state: HeadlessOwnerRunState,
+    heartbeat_at_ms: u64,
+    waiting_reason: &str,
+    owner_idempotency_key: &str,
+) -> LoopEventEnvelope {
+    let state_key = match state {
+        HeadlessOwnerRunState::LeaseAcquired => "lease_acquired",
+        HeadlessOwnerRunState::Completed => "completed",
+        _ => "state",
+    };
+    LoopEventEnvelope {
+        schema_version: LOOP_RUNTIME_SCHEMA_VERSION,
+        event_id: new_loop_event_id(),
+        task_id: task_id.to_string(),
+        sequence: 0,
+        event: LoopRuntimeEvent::HeadlessOwnerRunStateRecorded {
+            task_id: task_id.to_string(),
+            owner_run_id: owner_run_id.to_string(),
+            state,
+            heartbeat_at_ms: Some(heartbeat_at_ms),
+            cancellation_reason: None,
+            waiting_reason: Some(waiting_reason.to_string()),
+            evidence_refs: gateway_read_only_owner_evidence_refs(task_id, attempt),
+        },
+        actor: LoopActor::Gateway,
+        lease_id: Some(lease_id.to_string()),
+        attempt: Some(attempt),
+        correlation_id: Some(correlation_id.to_string()),
+        causation_id: causation_at_ms
+            .map(|value| format!("gateway-readonly-owner:{task_id}:{value}")),
+        idempotency_key: Some(format!("{owner_idempotency_key}:{state_key}")),
+        created_at_ms: heartbeat_at_ms,
+    }
 }
 
 fn headless_resume_control_response(
@@ -1293,8 +2002,13 @@ fn handle_dashboard_snapshot(state: &GatewayState, id: String) -> GatewayReply {
 }
 
 fn build_dashboard_snapshot(state: &GatewayState) -> GatewayDashboardSnapshot {
-    let (loop_tasks, loop_stats) = load_loop_tasks_and_stats(state);
-    let status = build_runtime_status_with_loop_stats(state, loop_stats);
+    let loop_load = load_loop_tasks_and_stats(state);
+    let status = build_runtime_status_with_loop_stats(
+        state,
+        &loop_load.tasks,
+        loop_load.stats,
+        loop_load.replay.clone(),
+    );
     let sessions = state.list_sessions();
     let queued_triggers = state.trigger_store.list();
     let recent_runs = status.recent_runs.clone();
@@ -1306,7 +2020,7 @@ fn build_dashboard_snapshot(state: &GatewayState) -> GatewayDashboardSnapshot {
         ok: status.ok,
         generated_at_ms: now_millis(),
         status,
-        loop_tasks,
+        loop_tasks: loop_load.tasks,
         sessions,
         queued_triggers,
         recent_runs,
@@ -1357,27 +2071,55 @@ fn build_dashboard_event_log(
 }
 
 fn build_runtime_status(state: &GatewayState) -> GatewayRuntimeStatus {
-    let (_loop_tasks, loop_stats) = load_loop_tasks_and_stats(state);
-    build_runtime_status_with_loop_stats(state, loop_stats)
+    let loop_load = load_loop_tasks_and_stats(state);
+    build_runtime_status_with_loop_stats(state, &loop_load.tasks, loop_load.stats, loop_load.replay)
 }
 
-fn load_loop_tasks_and_stats(state: &GatewayState) -> (Vec<LoopTaskRecord>, LoopRunnerQueueStats) {
-    state
+struct LoopTaskRuntimeLoad {
+    tasks: Vec<LoopTaskRecord>,
+    stats: LoopRunnerQueueStats,
+    replay: RuntimeReplayHealth,
+}
+
+fn load_loop_tasks_and_stats(state: &GatewayState) -> LoopTaskRuntimeLoad {
+    match state
         .loop_task_projection_store
         .load_or_rebuild(&state.loop_event_journal)
-        .map(|projection| {
+    {
+        Ok(projection) => {
+            let task_count = projection.tasks.len();
             let stats = LoopTaskRunner::queue_stats(&projection, now_millis());
-            (projection.tasks, stats)
-        })
-        .unwrap_or_else(|error| {
+            LoopTaskRuntimeLoad {
+                tasks: projection.tasks,
+                stats,
+                replay: RuntimeReplayHealth {
+                    ok: true,
+                    task_count,
+                    message: "Loop projection replay succeeded.".to_string(),
+                },
+            }
+        }
+        Err(error) => {
+            let message = format!("Loop projection replay failed: {error}");
             log::warn!("failed to load loop task projection for runtime status: {error}");
-            (Vec::new(), LoopRunnerQueueStats::default())
-        })
+            LoopTaskRuntimeLoad {
+                tasks: Vec::new(),
+                stats: LoopRunnerQueueStats::default(),
+                replay: RuntimeReplayHealth {
+                    ok: false,
+                    task_count: 0,
+                    message,
+                },
+            }
+        }
+    }
 }
 
 fn build_runtime_status_with_loop_stats(
     state: &GatewayState,
+    loop_tasks: &[LoopTaskRecord],
     loop_stats: LoopRunnerQueueStats,
+    loop_replay: RuntimeReplayHealth,
 ) -> GatewayRuntimeStatus {
     let triggers = state.trigger_store.list();
     let runs = state.trigger_run_store.list();
@@ -1389,18 +2131,48 @@ fn build_runtime_status_with_loop_stats(
         .count();
     let runtime_tasks = state.runtime_tasks();
     let loop_runner = loop_runner_status(&runtime_tasks).to_string();
+    let degraded_mode = gateway_degraded_mode_status(&runtime_tasks);
+    let active_sessions = state.active_sessions();
+    let pending_session_inputs = state.session_input_store.list().len();
+    let observed_runtime_tasks = observed_runtime_tasks(&runtime_tasks);
+    let runtime_health = RuntimeHealthSnapshot::from_gateway_input(RuntimeHealthSnapshotInput {
+        generated_at_ms: now_millis(),
+        active_sessions,
+        loop_tasks,
+        loop_stats,
+        pending_triggers,
+        claimed_triggers,
+        pending_session_inputs,
+        dead_letter_runs,
+        runtime_tasks: &observed_runtime_tasks,
+        last_replay: loop_replay,
+    });
+    let message = if degraded_mode.active {
+        format!(
+            "Gateway runtime is reachable, but degraded mode is active: {}",
+            degraded_mode.reason
+        )
+    } else {
+        "Gateway runtime is reachable.".to_string()
+    };
 
     GatewayRuntimeStatus {
         ok: true,
-        message: "Gateway runtime is reachable.".to_string(),
+        message,
+        ownership: default_gateway_ownership_capability(),
+        degraded_mode,
+        runtime_health,
         uptime_seconds: state.uptime_seconds(),
-        active_sessions: state.active_sessions(),
+        active_sessions,
         pending_triggers,
-        pending_session_inputs: state.session_input_store.list().len(),
+        pending_session_inputs,
         loop_runner,
         pending_loop_tasks: loop_stats.pending_loop_tasks,
         running_loop_tasks: loop_stats.running_loop_tasks,
         stale_loop_task_leases: loop_stats.stale_loop_task_leases,
+        orphaned_loop_tasks: loop_stats.orphaned_loop_tasks,
+        interrupted_loop_tasks: loop_stats.interrupted_loop_tasks,
+        recoverable_loop_tasks: loop_stats.recoverable_loop_tasks,
         dry_run_headless_owner_runs: loop_stats.dry_run_headless_owner_runs,
         waiting_headless_owner_runs: loop_stats.waiting_headless_owner_runs,
         denied_headless_owner_runs: loop_stats.denied_headless_owner_runs,
@@ -1411,6 +2183,45 @@ fn build_runtime_status_with_loop_stats(
         recent_session_inputs: state.session_input_store.recent_completions(20),
         runtime_tasks,
     }
+}
+
+fn observed_runtime_tasks(tasks: &[GatewayRuntimeTaskStatus]) -> Vec<RuntimeObservedTask> {
+    tasks
+        .iter()
+        .map(|task| RuntimeObservedTask {
+            name: task.name.clone(),
+            running: task.running,
+            failed: task.last_error.is_some(),
+        })
+        .collect()
+}
+
+fn gateway_degraded_mode_status(
+    runtime_tasks: &[GatewayRuntimeTaskStatus],
+) -> GatewayDegradedModeStatus {
+    let Some(reason) = runtime_task_failure_reason(runtime_tasks) else {
+        return default_gateway_degraded_mode_status();
+    };
+
+    GatewayDegradedModeStatus {
+        active: true,
+        reason,
+        fallback: "desktop_runtime".to_string(),
+        input_policy:
+            "Queued session input stays pending until the owning desktop runtime accepts it."
+                .to_string(),
+        confirmation_policy: "Pending confirmations stay with the owning desktop runtime."
+            .to_string(),
+        recovery_command: default_gateway_degraded_recovery_command(),
+    }
+}
+
+fn runtime_task_failure_reason(runtime_tasks: &[GatewayRuntimeTaskStatus]) -> Option<String> {
+    runtime_tasks.iter().find_map(|task| {
+        task.last_error
+            .as_ref()
+            .map(|error| format!("runtime task '{}' failed: {}", task.name, error.trim()))
+    })
 }
 
 fn loop_runner_status(runtime_tasks: &[GatewayRuntimeTaskStatus]) -> &'static str {
@@ -1426,6 +2237,22 @@ fn loop_runner_status(runtime_tasks: &[GatewayRuntimeTaskStatus]) -> &'static st
         "started"
     } else {
         "stopped"
+    }
+}
+
+fn push_unique(values: &mut Vec<String>, value: impl Into<String>) {
+    let value = value.into();
+    if !values.iter().any(|existing| existing == &value) {
+        values.push(value);
+    }
+}
+
+fn gateway_session_attach_status_label(status: GatewaySessionAttachStatus) -> &'static str {
+    match status {
+        GatewaySessionAttachStatus::Live => "live",
+        GatewaySessionAttachStatus::Restored => "restored",
+        GatewaySessionAttachStatus::Stale => "stale",
+        GatewaySessionAttachStatus::Missing => "missing",
     }
 }
 
@@ -1543,6 +2370,52 @@ fn clean_optional_string(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn recovery_reason_for_action(action: RecoveryActionKind, reason: Option<String>) -> String {
+    match action {
+        RecoveryActionKind::MarkInterrupted => clean_optional_string(reason)
+            .unwrap_or_else(|| "manual recovery marked task interrupted".to_string()),
+        RecoveryActionKind::AbandonOrphan => clean_optional_string(reason)
+            .map(ensure_orphan_recovery_reason)
+            .unwrap_or_else(|| "orphaned loop task abandoned by operator".to_string()),
+        RecoveryActionKind::RetryWaitingTask => clean_optional_string(reason)
+            .unwrap_or_else(|| "waiting loop task requeued by operator for safe retry".to_string()),
+        RecoveryActionKind::ExportEvidence => clean_optional_string(reason)
+            .unwrap_or_else(|| "recovery evidence export requested".to_string()),
+    }
+}
+
+fn ensure_orphan_recovery_reason(reason: String) -> String {
+    let normalized = reason.to_ascii_lowercase();
+    if normalized.contains("orphan") || normalized.contains("stale lease") {
+        reason
+    } else {
+        format!("orphaned task abandoned: {reason}")
+    }
+}
+
+fn recovery_action_evidence(
+    journal: &LoopEventJournal,
+    task: &LoopTaskRecord,
+) -> Result<RecoveryActionEvidence, String> {
+    let event_count = journal
+        .load_all()?
+        .iter()
+        .filter(|event| event.task_id == task.id)
+        .count();
+    let recovery = task.recovery_state.as_ref();
+    Ok(RecoveryActionEvidence {
+        task_id: task.id.clone(),
+        status: task.status,
+        recovery_kind: recovery.map(|state| state.kind),
+        recovery_reason: recovery.map(|state| state.reason.clone()),
+        latest_event_id: task.latest_event_id.clone(),
+        event_count,
+        evidence_count: task.evidence.len(),
+        policy_decision_count: task.policy_decisions.len(),
+        open_gate_count: task.open_gates.len(),
+    })
+}
+
 fn clean_session_ids(session_ids: Vec<String>) -> Vec<String> {
     let mut cleaned = Vec::new();
     for session_id in session_ids {
@@ -1559,6 +2432,13 @@ fn cancel_idempotency_key(task_id: &str, reason: Option<&str>) -> String {
     format!(
         "cancel:{task_id}:{}",
         stable_text_fingerprint(reason.unwrap_or(""))
+    )
+}
+
+fn recover_idempotency_key(action: RecoveryActionKind, task_id: &str, reason: &str) -> String {
+    format!(
+        "recover:{action:?}:{task_id}:{}",
+        stable_text_fingerprint(reason)
     )
 }
 
@@ -1714,6 +2594,8 @@ fn session_attach_control(
     match status {
         GatewaySessionAttachStatus::Live => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRuntimeRequired,
+            ownership_mode: GatewayOwnershipMode::LocalDefault,
+            gateway_can_own_session: false,
             gateway_can_stream: true,
             gateway_can_send_input: true,
             gateway_can_resume: false,
@@ -1724,6 +2606,8 @@ fn session_attach_control(
         },
         GatewaySessionAttachStatus::Restored => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
+            ownership_mode: GatewayOwnershipMode::LocalDefault,
+            gateway_can_own_session: false,
             gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
@@ -1734,6 +2618,8 @@ fn session_attach_control(
         },
         GatewaySessionAttachStatus::Stale => GatewaySessionControl {
             control_plane: GatewaySessionControlPlane::DesktopRestoreRequired,
+            ownership_mode: GatewayOwnershipMode::LocalDefault,
+            gateway_can_own_session: false,
             gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
@@ -1747,6 +2633,8 @@ fn session_attach_control(
             } else {
                 GatewaySessionControlPlane::Unavailable
             },
+            ownership_mode: GatewayOwnershipMode::LocalDefault,
+            gateway_can_own_session: false,
             gateway_can_stream: gateway_can_read_snapshot,
             gateway_can_send_input: false,
             gateway_can_resume: false,
@@ -2746,6 +3634,265 @@ mod tests {
     }
 
     #[test]
+    fn recover_loop_task_marks_running_task_interrupted_and_recoverable() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-recover",
+                    "recover me",
+                ),
+            )
+            .unwrap();
+        journal
+            .append(loop_task_started_event(
+                "loop-recover",
+                "lease-recover",
+                1,
+                2,
+            ))
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let request = || GatewayRequest {
+            id: "recover-loop".into(),
+            method: "recover_loop_task".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-recover",
+                "reason": "stale lease recovered by operator"
+            })),
+        };
+
+        let first = dispatch(&state, request());
+        let second = dispatch(&state, request());
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse first recover");
+                assert!(result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Interrupted
+                );
+                let recovery = result.task.recovery_state.expect("recovery state");
+                assert_eq!(
+                    recovery.kind,
+                    crate::loop_runtime::LoopTaskRecoveryKind::Orphaned
+                );
+                assert!(recovery.recoverable);
+                assert!(result.notice.contains("orphaned"));
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse second recover");
+                assert!(!result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Interrupted
+                );
+            }
+            _ => panic!("expected second Ok reply"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn recover_loop_task_export_evidence_is_read_only() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-evidence",
+                    "export evidence",
+                ),
+            )
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "recover-export".into(),
+                method: "recover_loop_task".into(),
+                params: Some(serde_json::json!({
+                    "task_id": "loop-evidence",
+                    "action": "export_evidence"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse export evidence");
+                assert_eq!(
+                    result.action,
+                    crate::gateway::protocol::RecoveryActionKind::ExportEvidence
+                );
+                assert!(!result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Pending
+                );
+                let evidence = result.evidence.expect("recovery evidence");
+                assert_eq!(evidence.task_id, "loop-evidence");
+                assert_eq!(
+                    evidence.status,
+                    crate::loop_runtime::LoopTaskStatus::Pending
+                );
+                assert_eq!(evidence.event_count, 1);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn recover_loop_task_abandon_orphan_records_orphan_recovery() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-orphan",
+                    "abandon orphan",
+                ),
+            )
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "recover-orphan".into(),
+                method: "recover_loop_task".into(),
+                params: Some(serde_json::json!({
+                    "task_id": "loop-orphan",
+                    "action": "abandon_orphan"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse abandon orphan");
+                assert_eq!(
+                    result.action,
+                    crate::gateway::protocol::RecoveryActionKind::AbandonOrphan
+                );
+                assert!(result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Interrupted
+                );
+                let recovery = result.task.recovery_state.expect("recovery state");
+                assert_eq!(
+                    recovery.kind,
+                    crate::loop_runtime::LoopTaskRecoveryKind::Orphaned
+                );
+                assert!(recovery.reason.contains("orphaned"));
+                assert!(result.notice.contains("orphaned"));
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn recover_loop_task_retry_waiting_task_requeues_to_pending_idempotently() {
+        let dir = tempfile::tempdir().unwrap();
+        let journal = Arc::new(crate::loop_runtime::LoopEventJournal::persistent_at(
+            dir.path().join("loop-events.jsonl"),
+        ));
+        let projection = Arc::new(crate::loop_runtime::LoopTaskProjectionStore::persistent_at(
+            dir.path().join("loop-tasks.json"),
+        ));
+        journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-waiting",
+                    "retry safe waiting task",
+                ),
+            )
+            .unwrap();
+        journal
+            .append(loop_task_waiting_for_input_event(
+                "loop-waiting",
+                "waiting for desktop owner",
+                2,
+            ))
+            .unwrap();
+        let state = GatewayState::new_with_loop_runtime_stores(journal.clone(), projection);
+
+        let request = || GatewayRequest {
+            id: "recover-retry-waiting".into(),
+            method: "recover_loop_task".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-waiting",
+                "action": "retry_waiting_task",
+                "reason": "operator requested safe retry"
+            })),
+        };
+
+        let first = dispatch(&state, request());
+        let second = dispatch(&state, request());
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse retry waiting result");
+                assert_eq!(
+                    result.action,
+                    crate::gateway::protocol::RecoveryActionKind::RetryWaitingTask
+                );
+                assert!(result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Pending
+                );
+                assert!(result.task.outcome.is_none());
+                assert!(result.notice.contains("requeued"));
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::RecoverLoopTaskResult =
+                    serde_json::from_value(resp.result).expect("parse idempotent retry waiting");
+                assert!(!result.changed);
+                assert_eq!(
+                    result.task.status,
+                    crate::loop_runtime::LoopTaskStatus::Pending
+                );
+            }
+            _ => panic!("expected second Ok reply"),
+        }
+        assert_eq!(journal.load_all().unwrap().len(), 3);
+    }
+
+    #[test]
     fn dispatch_list_trigger_runs_returns_records() {
         let state = test_gateway_state();
         state
@@ -2819,6 +3966,22 @@ mod tests {
         state
             .loop_event_journal
             .append(loop_task_started_event("loop-running", "lease-stale", 1, 2))
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-orphaned",
+                    "orphaned loop task",
+                ),
+            )
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(task_interrupted_event(
+                "loop-orphaned",
+                "stale lease recovered by operator",
+            ))
             .unwrap();
         state
             .loop_event_journal
@@ -2910,11 +4073,35 @@ mod tests {
                 assert_eq!(status.pending_triggers, 1);
                 assert_eq!(status.claimed_triggers, 1);
                 assert_eq!(status.dead_letter_runs, 1);
+                assert_eq!(
+                    status.ownership.ownership_mode,
+                    crate::gateway::protocol::GatewayOwnershipMode::LocalDefault
+                );
+                assert!(!status.ownership.gateway_default_enabled);
+                assert!(!status.ownership.gateway_can_own_sessions);
+                assert!(status.ownership.requires_opt_in);
+                assert_eq!(status.ownership.parity_gate, "pending");
+                assert_eq!(status.ownership.recovery_gate, "pending");
+                assert!(!status.degraded_mode.active);
+                assert_eq!(status.degraded_mode.fallback, "desktop_runtime");
                 assert_eq!(status.pending_session_inputs, 0);
                 assert_eq!(status.loop_runner, "stopped");
                 assert_eq!(status.pending_loop_tasks, 1);
                 assert_eq!(status.running_loop_tasks, 1);
                 assert_eq!(status.stale_loop_task_leases, 1);
+                assert_eq!(status.orphaned_loop_tasks, 1);
+                assert_eq!(status.interrupted_loop_tasks, 0);
+                assert_eq!(status.recoverable_loop_tasks, 1);
+                assert_eq!(status.runtime_health.loop_tasks.pending, 1);
+                assert_eq!(status.runtime_health.loop_tasks.running, 1);
+                assert_eq!(status.runtime_health.loop_tasks.stale_leases, 1);
+                assert_eq!(status.runtime_health.loop_tasks.orphaned, 1);
+                assert_eq!(status.runtime_health.loop_tasks.recoverable, 1);
+                assert_eq!(status.runtime_health.gateway_queue.pending_triggers, 1);
+                assert_eq!(
+                    status.runtime_health.gateway_queue.pending_session_inputs,
+                    0
+                );
                 assert_eq!(status.dry_run_headless_owner_runs, 1);
                 assert_eq!(status.waiting_headless_owner_runs, 1);
                 assert_eq!(status.denied_headless_owner_runs, 0);
@@ -2951,6 +4138,518 @@ mod tests {
             }
             _ => panic!("expected Ok reply"),
         }
+    }
+
+    #[test]
+    fn gateway_local_parity_fixture_projects_backend_facts_without_taking_ownership() {
+        #[derive(Debug, PartialEq, Eq)]
+        struct BackendParityFacts {
+            turn_prepared_summary: String,
+            policy_decisions: Vec<String>,
+            memory_audit: String,
+            transcript_events: String,
+            usage: String,
+            runtime_projection: String,
+            completion_evidence: String,
+            ownership: String,
+        }
+
+        let state = test_gateway_state();
+        state.register_session(test_session("session-1", "deepseek"));
+        let task = crate::loop_runtime::LoopTaskRecord::new_for_test(
+            "loop-parity",
+            "fix visible button feedback",
+        )
+        .with_completion_contract(crate::loop_runtime::LoopCompletionContract {
+            required_checks: vec!["build:desktop".to_string()],
+            max_gitnexus_risk: None,
+            require_docs: false,
+            require_commit: false,
+            require_review_decision: false,
+            stop_on_budget_exceeded: true,
+        });
+        state
+            .loop_event_journal
+            .append(crate::loop_runtime::LoopEventEnvelope::task_created(
+                task,
+                Some("parity-create".into()),
+                Some("parity:create".into()),
+            ))
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(policy_decision_event_for_test("loop-parity"))
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(usage_ledger_event("loop-parity"))
+            .unwrap();
+        state
+            .loop_event_journal
+            .append(crate::loop_runtime::LoopEventEnvelope::evidence_recorded(
+                "loop-parity".to_string(),
+                crate::loop_runtime::EvidenceRecord::command_for_test("build:desktop", true),
+                Some("parity-evidence".into()),
+                Some("parity:evidence".into()),
+            ))
+            .unwrap();
+
+        let enqueue = dispatch(
+            &state,
+            GatewayRequest {
+                id: "parity-enqueue-input".into(),
+                method: "enqueue_session_input".into(),
+                params: Some(serde_json::json!({
+                    "input_id": "input-parity-1",
+                    "session_id": "session-1",
+                    "message": "continue with the minimal fix"
+                })),
+            },
+        );
+        assert!(matches!(enqueue, GatewayReply::Ok(_)));
+
+        let listed_inputs = match dispatch(
+            &state,
+            GatewayRequest {
+                id: "parity-list-input".into(),
+                method: "list_session_inputs".into(),
+                params: Some(serde_json::json!({
+                    "session_ids": ["session-1"],
+                    "limit": 8
+                })),
+            },
+        ) {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::ListSessionInputsResult =
+                    serde_json::from_value(resp.result).expect("parse listed input");
+                result.inputs
+            }
+            _ => panic!("expected list input Ok reply"),
+        };
+        let attach = match dispatch(
+            &state,
+            GatewayRequest {
+                id: "parity-attach".into(),
+                method: "attach_session".into(),
+                params: Some(serde_json::json!({ "session_id": "session-1" })),
+            },
+        ) {
+            GatewayReply::Ok(resp) => {
+                serde_json::from_value::<crate::gateway::protocol::AttachSessionResult>(resp.result)
+                    .expect("parse attach")
+            }
+            _ => panic!("expected attach Ok reply"),
+        };
+        let dashboard = match dispatch(
+            &state,
+            GatewayRequest {
+                id: "parity-dashboard".into(),
+                method: "dashboard_snapshot".into(),
+                params: None,
+            },
+        ) {
+            GatewayReply::Ok(resp) => {
+                serde_json::from_value::<GatewayDashboardSnapshot>(resp.result)
+                    .expect("parse dashboard")
+            }
+            _ => panic!("expected dashboard Ok reply"),
+        };
+        let completion = match dispatch(
+            &state,
+            GatewayRequest {
+                id: "parity-completion".into(),
+                method: "evaluate_loop_task_completion".into(),
+                params: Some(serde_json::json!({ "task_id": "loop-parity" })),
+            },
+        ) {
+            GatewayReply::Ok(resp) => serde_json::from_value::<
+                crate::gateway::protocol::EvaluateLoopTaskCompletionResult,
+            >(resp.result)
+            .expect("parse completion"),
+            _ => panic!("expected completion Ok reply"),
+        };
+
+        let input = listed_inputs.first().expect("queued input");
+        let task = dashboard
+            .loop_tasks
+            .iter()
+            .find(|task| task.id == "loop-parity")
+            .expect("projected loop task");
+        let usage = task.latest_usage_ledger.as_ref().expect("usage ledger");
+        let gateway_facts = BackendParityFacts {
+            turn_prepared_summary: format!("{}:{}:{}", input.session_id, input.id, input.message),
+            policy_decisions: task
+                .policy_decisions
+                .iter()
+                .map(|decision| format!("{}:{}", decision.allowed, decision.reason))
+                .collect(),
+            memory_audit: if !dashboard.status.ownership.gateway_can_own_sessions {
+                "desktop_owner_memory_audit".to_string()
+            } else {
+                "gateway_owner_memory_audit".to_string()
+            },
+            transcript_events: if attach.control.gateway_can_stream
+                && !attach.control.gateway_can_own_session
+            {
+                "gateway_tail_read_only".to_string()
+            } else {
+                "gateway_tail_unavailable".to_string()
+            },
+            usage: format!(
+                "provider={:?} model={:?} input={:?} output={:?} cost={:?}",
+                usage.provider_id,
+                usage.model,
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.estimated_cost_micros
+            ),
+            runtime_projection: format!(
+                "pending={} running={} inputs={}",
+                dashboard.status.pending_loop_tasks,
+                dashboard.status.running_loop_tasks,
+                dashboard.status.pending_session_inputs
+            ),
+            completion_evidence: format!(
+                "{:?}:{:?}",
+                completion.result.status, completion.result.reasons
+            ),
+            ownership: format!(
+                "{:?}:{}:{}",
+                dashboard.status.ownership.ownership_mode,
+                dashboard.status.ownership.gateway_default_enabled,
+                dashboard.status.ownership.gateway_can_own_sessions
+            ),
+        };
+        let local_owner_facts = BackendParityFacts {
+            turn_prepared_summary:
+                "session-1:input-parity-1:continue with the minimal fix".to_string(),
+            policy_decisions: vec!["true:allowed_by_background_task_policy".to_string()],
+            memory_audit: "desktop_owner_memory_audit".to_string(),
+            transcript_events: "gateway_tail_read_only".to_string(),
+            usage:
+                "provider=Some(\"deepseek\") model=Some(\"deepseek-v4-flash\") input=Some(111) output=Some(22) cost=Some(7)"
+                    .to_string(),
+            runtime_projection: "pending=1 running=0 inputs=1".to_string(),
+            completion_evidence: "Complete:[]".to_string(),
+            ownership: "LocalDefault:false:false".to_string(),
+        };
+
+        assert_eq!(gateway_facts, local_owner_facts);
+        assert!(!dashboard.status.ownership.gateway_default_enabled);
+        assert!(!dashboard.status.ownership.gateway_can_own_sessions);
+        assert_eq!(completion.task.evidence.len(), 1);
+    }
+
+    #[test]
+    fn gateway_ownership_eligibility_dry_run_denies_without_side_effects() {
+        let state = test_gateway_state();
+        state.register_session(test_session("session-1", "deepseek"));
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-gateway-owner",
+                    "summarize runtime status",
+                ),
+            )
+            .unwrap();
+        let enqueue = dispatch(
+            &state,
+            GatewayRequest {
+                id: "eligibility-enqueue".into(),
+                method: "enqueue_session_input".into(),
+                params: Some(serde_json::json!({
+                    "input_id": "input-eligibility-1",
+                    "session_id": "session-1",
+                    "message": "summarize only"
+                })),
+            },
+        );
+        assert!(matches!(enqueue, GatewayReply::Ok(_)));
+        let before_events = state.loop_event_journal.load_all().unwrap().len();
+        let before_inputs = state.session_input_store.list().len();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "eligibility".into(),
+                method: "evaluate_gateway_ownership_eligibility".into(),
+                params: Some(serde_json::json!({
+                    "session_id": "session-1",
+                    "task_id": "loop-gateway-owner",
+                    "requested_mode": "gateway_read_only_owner"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GatewayOwnershipEligibilityResult =
+                    serde_json::from_value(resp.result).expect("parse eligibility result");
+                assert!(result.ok);
+                assert_eq!(
+                    result.decision,
+                    crate::gateway::protocol::GatewayOwnershipEligibilityDecision::Deny
+                );
+                assert_eq!(
+                    result.requested_mode,
+                    crate::gateway::protocol::GatewayOwnershipMode::GatewayReadOnlyOwner
+                );
+                assert_eq!(result.session_id.as_deref(), Some("session-1"));
+                assert_eq!(result.task_id.as_deref(), Some("loop-gateway-owner"));
+                assert!(result
+                    .reasons
+                    .contains(&"gateway_ownership_disabled".to_string()));
+                assert!(result
+                    .missing_evidence
+                    .contains(&"memory_recall_audit".to_string()));
+                assert!(result
+                    .missing_evidence
+                    .contains(&"permission_decision_ledger".to_string()));
+                assert!(result
+                    .missing_evidence
+                    .contains(&"recovery_evidence".to_string()));
+                assert!(!result.would_execute_provider);
+                assert!(!result.would_execute_tools);
+                assert!(!result.would_write_files);
+                assert!(!result.changes_task_state);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        assert_eq!(
+            state.loop_event_journal.load_all().unwrap().len(),
+            before_events
+        );
+        assert_eq!(state.session_input_store.list().len(), before_inputs);
+        let projection = state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+            .unwrap();
+        let task = projection.find("loop-gateway-owner").expect("task");
+        assert_eq!(task.status, crate::loop_runtime::LoopTaskStatus::Pending);
+    }
+
+    #[test]
+    fn gateway_patch_proposal_owner_gate_is_proposal_only_and_read_only() {
+        let state = test_gateway_state();
+        state.register_session(test_session("session-1", "deepseek"));
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-patch-proposal-owner",
+                    "propose a patch without applying it",
+                ),
+            )
+            .unwrap();
+        let before_events = state.loop_event_journal.load_all().unwrap().len();
+        let before_inputs = state.session_input_store.list().len();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "patch-proposal-owner-gate".into(),
+                method: "evaluate_gateway_ownership_eligibility".into(),
+                params: Some(serde_json::json!({
+                    "session_id": "session-1",
+                    "task_id": "loop-patch-proposal-owner",
+                    "requested_mode": "gateway_patch_proposal_owner"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result = resp.result;
+                assert_eq!(result["ok"], true);
+                assert_eq!(result["decision"], "deny");
+                assert_eq!(result["requested_mode"], "gateway_patch_proposal_owner");
+                assert_eq!(result["proposal_only"], true);
+                assert_eq!(result["would_generate_patch_proposal"], true);
+                assert_eq!(result["would_apply_patch"], false);
+                assert_eq!(result["would_write_files"], false);
+                assert_eq!(result["would_execute_tools"], false);
+                assert_eq!(result["changes_task_state"], false);
+                let reasons = result["reasons"].as_array().expect("reasons array");
+                assert!(reasons
+                    .iter()
+                    .any(|reason| reason == "gateway_ownership_disabled"));
+                assert!(reasons
+                    .iter()
+                    .any(|reason| reason == "patch_proposal_owner_requires_gate"));
+                let missing = result["missing_evidence"]
+                    .as_array()
+                    .expect("missing evidence array");
+                assert!(missing
+                    .iter()
+                    .any(|evidence| evidence == "patch_proposal_review_gate"));
+                assert!(missing
+                    .iter()
+                    .any(|evidence| evidence == "diff_evidence_contract"));
+            }
+            _ => panic!("expected Ok reply"),
+        }
+
+        assert_eq!(
+            state.loop_event_journal.load_all().unwrap().len(),
+            before_events
+        );
+        assert_eq!(state.session_input_store.list().len(), before_inputs);
+        let projection = state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+            .unwrap();
+        let task = projection.find("loop-patch-proposal-owner").expect("task");
+        assert_eq!(task.status, crate::loop_runtime::LoopTaskStatus::Pending);
+    }
+
+    #[test]
+    fn gateway_read_only_owner_diagnostics_requires_explicit_allow_without_appending() {
+        let state = test_gateway_state();
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-readonly-denied",
+                    "inspect projection only",
+                ),
+            )
+            .unwrap();
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "readonly-denied".into(),
+                method: "run_gateway_read_only_owner_diagnostics".into(),
+                params: Some(serde_json::json!({
+                    "task_id": "loop-readonly-denied",
+                    "session_id": "desktop-session-1",
+                    "requested_at_ms": 10,
+                    "expires_at_ms": 60_010,
+                    "idempotency_key": "readonly:loop-readonly-denied"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GatewayReadOnlyOwnerDiagnosticsResult =
+                    serde_json::from_value(resp.result).expect("parse readonly owner result");
+                assert!(!result.ok);
+                assert!(!result.started);
+                assert!(!result.completed);
+                assert!(!result.gateway_can_resume);
+                assert!(result.owner_run.is_none());
+                assert!(result.message.contains("requires explicit human approval"));
+                assert_eq!(result.task.id, "loop-readonly-denied");
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert_eq!(state.loop_event_journal.load_all().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn gateway_read_only_owner_diagnostics_records_completed_owner_run_idempotently() {
+        let state = test_gateway_state();
+        state
+            .loop_event_journal
+            .append(
+                crate::loop_runtime::LoopEventEnvelope::task_created_for_test(
+                    "loop-readonly-owner",
+                    "summarize projection",
+                ),
+            )
+            .unwrap();
+
+        let request = |id: &str| GatewayRequest {
+            id: id.to_string(),
+            method: "run_gateway_read_only_owner_diagnostics".into(),
+            params: Some(serde_json::json!({
+                "task_id": "loop-readonly-owner",
+                "session_id": "desktop-session-1",
+                "dev_only_allow": true,
+                "requested_at_ms": 10,
+                "expires_at_ms": 60_010,
+                "idempotency_key": "readonly:loop-readonly-owner"
+            })),
+        };
+
+        let first = dispatch(&state, request("readonly-owner-1"));
+        let second = dispatch(&state, request("readonly-owner-2"));
+
+        match first {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GatewayReadOnlyOwnerDiagnosticsResult =
+                    serde_json::from_value(resp.result).expect("parse readonly owner result");
+                assert!(result.ok);
+                assert!(result.started);
+                assert!(result.completed);
+                assert!(result.gateway_can_resume);
+                assert!(result.summary.contains("Read-only diagnostics"));
+                assert!(result.summary.contains(
+                    "no provider, tool, shell, file, confirmation, or commit side effects"
+                ));
+                assert!(!result.side_effects.provider);
+                assert!(!result.side_effects.tools);
+                assert!(!result.side_effects.shell);
+                assert!(!result.side_effects.write_files);
+                assert!(!result.side_effects.confirmations);
+                assert!(!result.side_effects.commits);
+                let owner_run = result.owner_run.expect("owner run");
+                assert_eq!(
+                    owner_run.executor_kind,
+                    crate::loop_runtime::HeadlessOwnerExecutorKind::DryRun
+                );
+                assert_eq!(
+                    owner_run.state,
+                    crate::loop_runtime::HeadlessOwnerRunState::Completed
+                );
+                assert_eq!(owner_run.session_id.as_deref(), Some("desktop-session-1"));
+                assert_eq!(owner_run.heartbeat_at_ms, Some(11));
+                assert!(owner_run
+                    .evidence_refs
+                    .iter()
+                    .any(|evidence| evidence == "gateway_read_only_diagnostics"));
+            }
+            _ => panic!("expected first Ok reply"),
+        }
+        match second {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::GatewayReadOnlyOwnerDiagnosticsResult =
+                    serde_json::from_value(resp.result).expect("parse duplicate readonly result");
+                assert!(result.ok);
+                assert!(result.completed);
+                assert_eq!(
+                    result.owner_run.as_ref().unwrap().owner_run_id,
+                    "gateway-readonly-owner:loop-readonly-owner:1"
+                );
+            }
+            _ => panic!("expected duplicate Ok reply"),
+        }
+
+        let events = state.loop_event_journal.load_all().unwrap();
+        assert_eq!(events.len(), 4);
+        let state_events = events
+            .iter()
+            .filter(|event| {
+                matches!(
+                    event.event,
+                    crate::loop_runtime::LoopRuntimeEvent::HeadlessOwnerRunStateRecorded { .. }
+                )
+            })
+            .count();
+        assert_eq!(state_events, 2);
+        let projection = state
+            .loop_task_projection_store
+            .load_or_rebuild(&state.loop_event_journal)
+            .expect("projection");
+        let task = projection.find("loop-readonly-owner").expect("task");
+        assert_eq!(task.headless_owner_runs.len(), 1);
+        assert_eq!(
+            task.headless_owner_runs[0].state,
+            crate::loop_runtime::HeadlessOwnerRunState::Completed
+        );
     }
 
     #[test]
@@ -3002,6 +4701,10 @@ mod tests {
             .expect("append loop task");
         state
             .loop_event_journal
+            .append(usage_ledger_event("loop-dashboard"))
+            .expect("append usage ledger");
+        state
+            .loop_event_journal
             .append(headless_owner_run_requested_event(
                 "loop-dashboard",
                 "lease-dashboard",
@@ -3046,6 +4749,13 @@ mod tests {
                 assert_eq!(snapshot.status.expired_headless_owner_runs, 0);
                 assert_eq!(snapshot.loop_tasks.len(), 1);
                 assert_eq!(snapshot.loop_tasks[0].id, "loop-dashboard");
+                assert_eq!(
+                    snapshot.loop_tasks[0]
+                        .latest_usage_ledger
+                        .as_ref()
+                        .and_then(|usage| usage.input_tokens),
+                    Some(111)
+                );
                 assert_eq!(snapshot.sessions.len(), 1);
                 assert_eq!(snapshot.sessions[0].session_id, "session-1");
                 assert_eq!(snapshot.queued_triggers.len(), 2);
@@ -3138,6 +4848,11 @@ mod tests {
                             == crate::gateway::protocol::GatewaySessionAttachStatus::Live
                     );
                     assert!(!result.control.gateway_can_resume);
+                    assert_eq!(
+                        result.control.ownership_mode,
+                        crate::gateway::protocol::GatewayOwnershipMode::LocalDefault
+                    );
+                    assert!(!result.control.gateway_can_own_session);
                     assert!(!result.control.gateway_can_read_snapshot);
                     assert_eq!(
                         result.control.control_plane,
@@ -3175,6 +4890,11 @@ mod tests {
         );
         assert!(control.gateway_can_stream);
         assert!(control.gateway_can_send_input);
+        assert_eq!(
+            control.ownership_mode,
+            crate::gateway::protocol::GatewayOwnershipMode::LocalDefault
+        );
+        assert!(!control.gateway_can_own_session);
         assert!(!control.gateway_can_resume);
         assert!(control.gateway_can_read_snapshot);
     }
@@ -3191,6 +4911,7 @@ mod tests {
             crate::gateway::protocol::GatewaySessionControlPlane::DesktopRestoreRequired
         );
         assert!(control.gateway_can_stream);
+        assert!(!control.gateway_can_own_session);
         assert!(control.gateway_can_read_snapshot);
         assert!(control.required_action.contains("snapshot"));
     }
@@ -3221,6 +4942,13 @@ mod tests {
         assert!(trigger.running);
         assert!(trigger.last_started_at_ms.is_some());
         assert!(trigger.last_error.is_none());
+        assert!(status.degraded_mode.active);
+        assert!(status.degraded_mode.reason.contains("webhook_listener"));
+        assert_eq!(status.degraded_mode.fallback, "desktop_runtime");
+        assert_eq!(
+            status.degraded_mode.recovery_command,
+            "forge service restart"
+        );
     }
 
     #[test]
@@ -3423,6 +5151,53 @@ mod tests {
                 assert!(result.removed);
                 assert_eq!(result.input_id, "input-1");
                 assert_eq!(result.pending_inputs, 0);
+            }
+            _ => panic!("expected Ok reply"),
+        }
+        assert!(state.session_input_store.list().is_empty());
+    }
+
+    #[test]
+    fn dispatch_clear_stale_session_input_removes_record_with_recovery_evidence() {
+        let state = test_gateway_state();
+        state
+            .session_input_store
+            .push(crate::gateway::session_input::SessionInputRecord {
+                id: "input-stale".into(),
+                session_id: "session-1".into(),
+                message: "continue".into(),
+                received_at_ms: 10,
+            });
+
+        let reply = dispatch(
+            &state,
+            GatewayRequest {
+                id: "clear-stale-input".into(),
+                method: "clear_stale_session_input".into(),
+                params: Some(serde_json::json!({
+                    "input_id": " input-stale ",
+                    "reason": "operator cleared stale queued input"
+                })),
+            },
+        );
+
+        match reply {
+            GatewayReply::Ok(resp) => {
+                let result: crate::gateway::protocol::ClearStaleSessionInputResult =
+                    serde_json::from_value(resp.result).expect("parse clear stale input result");
+                assert!(result.ok);
+                assert!(result.cleared);
+                assert_eq!(result.input_id, "input-stale");
+                assert_eq!(result.pending_inputs, 0);
+                let evidence = result.evidence.expect("clear evidence");
+                assert_eq!(
+                    evidence.action,
+                    crate::gateway::session_input::SessionInputCompletionAction::ClearedStale
+                );
+                assert_eq!(
+                    evidence.reason.as_deref(),
+                    Some("operator cleared stale queued input")
+                );
             }
             _ => panic!("expected Ok reply"),
         }
@@ -3985,6 +5760,121 @@ mod tests {
             causation_id: None,
             idempotency_key: None,
             created_at_ms: acquired_at_ms,
+        }
+    }
+
+    fn loop_task_waiting_for_input_event(
+        task_id: &str,
+        reason: &str,
+        waiting_at_ms: u64,
+    ) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-waiting"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::TaskWaitingForInput {
+                task_id: task_id.to_string(),
+                reason: reason.to_string(),
+                waiting_at_ms,
+            },
+            actor: crate::loop_runtime::LoopActor::Runner {
+                runner_id: "test-loop-runner".to_string(),
+            },
+            lease_id: None,
+            attempt: Some(1),
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: waiting_at_ms,
+        }
+    }
+
+    fn usage_ledger_event(task_id: &str) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-usage"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::UsageLedgerRecorded {
+                task_id: task_id.to_string(),
+                usage: crate::loop_runtime::LoopUsageLedger {
+                    provider_id: Some("deepseek".to_string()),
+                    model: Some("deepseek-v4-flash".to_string()),
+                    input_tokens: Some(111),
+                    output_tokens: Some(22),
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                    reasoning_tokens: None,
+                    estimated_cost_micros: Some(7),
+                    pricing_source: Some("test".to_string()),
+                    has_unknown_input_tokens: false,
+                    has_unknown_output_tokens: false,
+                    has_unknown_cost: false,
+                    turn_count: 2,
+                    tool_call_count: 4,
+                    elapsed_ms: 3_000,
+                },
+            },
+            actor: crate::loop_runtime::LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: 3,
+        }
+    }
+
+    fn policy_decision_event_for_test(task_id: &str) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-policy"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::PolicyDecisionRecorded {
+                task_id: task_id.to_string(),
+                decision: crate::loop_runtime::PolicyDecisionRecord {
+                    decision_id: format!("policy-{task_id}"),
+                    intent: crate::loop_runtime::LoopActionIntent::ReadWorkspace {
+                        path: "/repo".to_string(),
+                    },
+                    allowed: true,
+                    reason: "allowed_by_background_task_policy".to_string(),
+                    actor: crate::loop_runtime::LoopActor::Gateway,
+                    created_at_ms: 2,
+                },
+            },
+            actor: crate::loop_runtime::LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: 2,
+        }
+    }
+
+    fn task_interrupted_event(
+        task_id: &str,
+        reason: &str,
+    ) -> crate::loop_runtime::LoopEventEnvelope {
+        crate::loop_runtime::LoopEventEnvelope {
+            schema_version: crate::loop_runtime::LOOP_RUNTIME_SCHEMA_VERSION,
+            event_id: format!("event-{task_id}-interrupted"),
+            task_id: task_id.to_string(),
+            sequence: 0,
+            event: crate::loop_runtime::LoopRuntimeEvent::TaskInterrupted {
+                task_id: task_id.to_string(),
+                reason: reason.to_string(),
+            },
+            actor: crate::loop_runtime::LoopActor::Gateway,
+            lease_id: None,
+            attempt: None,
+            correlation_id: None,
+            causation_id: None,
+            idempotency_key: None,
+            created_at_ms: 4,
         }
     }
 

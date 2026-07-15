@@ -1,0 +1,83 @@
+{
+  "schema_version": 1,
+  "task": {
+    "id": "memory-recall-wrong-profile",
+    "title": "Memory recall filters wrong-profile fact",
+    "prompt": "Evaluate memory recall evidence and confirm profile-scoped memory facts for another profile are not injected.",
+    "fixture_path": null,
+    "context_files": [],
+    "verification_command": "memory recall quality: wrong profile filtered",
+    "expected_success": true,
+    "expected_files_changed": [],
+    "forbidden_files_changed": [
+      ".env",
+      "src"
+    ],
+    "tags": [
+      "memory",
+      "memory-eval-pack",
+      "forge-runtime-evidence",
+      "contract"
+    ],
+    "metadata": {
+      "contract_only": true,
+      "mock": {
+        "changed_files": [],
+        "model_rounds": 1,
+        "confirm_requests": 0,
+        "duration_ms": 100,
+        "input_tokens": 132,
+        "output_tokens": 22,
+        "forge_run_evidence": {
+          "session_id": "memory-wrong-profile-session",
+          "loop_task_id": "memory-wrong-profile-task",
+          "prepared_context": {
+            "turn_prepared": {
+              "context_estimate": {
+                "sources": [
+                  {
+                    "kind": "memory",
+                    "source_id": "memory-profile-current",
+                    "label": "Current profile preference",
+                    "visibility": "hidden"
+                  }
+                ]
+              }
+            }
+          },
+          "memory_audit": {
+            "selected_memory_audit": [
+              {
+                "memory_id": "memory-profile-current",
+                "source": "memory_fact",
+                "decision": "injected",
+                "status": "active",
+                "scope": "profile",
+                "profile_match": true
+              },
+              {
+                "memory_id": "memory-profile-other",
+                "source": "memory_fact",
+                "decision": "filtered",
+                "status": "active",
+                "scope": "profile",
+                "profile_match": false,
+                "filter_reason": "wrong_profile"
+              }
+            ]
+          },
+          "changed_files": [],
+          "verification": {
+            "command": "memory recall quality: wrong profile filtered",
+            "passed": true
+          },
+          "provider_usage": {
+            "input_tokens": 132,
+            "output_tokens": 22
+          },
+          "failure_category": "none"
+        }
+      }
+    }
+  }
+}

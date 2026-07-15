@@ -8,6 +8,7 @@ pub(crate) mod event_sink;
 pub(crate) mod goal_state;
 pub(crate) mod loop_guard;
 pub(crate) mod manual_compact;
+pub mod prepared_turn;
 pub(crate) mod provider_capabilities;
 pub(crate) mod recovery;
 pub(crate) mod retry_policy;
