@@ -1,39 +1,138 @@
 # Forge
 
-Eval CLI release runs now return success only for trusted, threshold-passing evidence; use `--report-only` to inspect incomplete evidence without turning trust blockers into the process exit gate.
-Eval report artifacts expose score means separately from evidence coverage, so missing feature-specific evidence cannot masquerade as a complete release signal.
-The Eval runner independently observes workspace effects instead of trusting agent-reported paths, with bounded process groups, sandbox scrub evidence, and fresh-fixture patch replay in the R2/R3 gate.
-The desktop runtime now enforces an explicit production CSP, a localhost-only development CSP, frozen JavaScript prototypes, and a minimal main-window capability covering only folder selection and session event subscription.
+Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一个可审计、可恢复、可持续的本地桌面工作台，并用一套以可信证据为核心的 eval 与验收体系为它护航。
 
-Forge is a local-first AI Agent Workbench product.
+这份 README 同时是仓库的作品导览：
 
-This monorepo keeps the three main product lines together:
+- 想在 30 秒了解全貌 → [仓库地图](#仓库地图)与[架构总览](#架构总览)
+- 想直接读核心代码 → [技术导览：值得读的代码](#技术导览值得读的代码)
+- 想跑起来验证 → [三条演示路径](#三条演示路径)
+- 想知道哪些是真实能力、哪些是明确边界 → [诚实边界](#诚实边界当前状态)
 
-- `apps/desktop` - the Forge Tauri desktop app.
-- `apps/eval-runner` - backtest, continuity, and agent trace evaluation tooling.
-- `apps/website` - the Forge product website prototype.
+## 仓库地图
 
-The first migration keeps each existing project mostly intact. Shared packages and crates should only be extracted once the dependency boundary is real.
+| 目录 | 内容 | 技术栈 |
+| --- | --- | --- |
+| `apps/desktop` | Forge 桌面应用：自研 agent runtime + 工作台 UI | Tauri 2 / Rust（约 12.6 万行）+ React / TypeScript（约 4.9 万行） |
+| `apps/eval-runner` | Agent 轨迹评测与回测服务：结构化 trace、分层打分、fail-closed trust gate | Python / FastAPI（约 2.4 万行，230+ 测试） |
+| `apps/website` | 产品网站原型 | Vite + React |
+| `scripts/` | 验收矩阵、发布置信度、迁移与证据脚本（几乎一对一配 `.test.mjs` 契约测试） | Node.js |
+| `release/` + `docs/` | 发布 gate profile / manifest schema、执行计划、运行手册 | — |
 
-## Development
+三个应用保持独立可运行；共享包只在真实复用出现后才抽取。
+
+三个关键事实（截至 2026-07）：
+
+- **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
+- **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 78 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+
+## 架构总览
+
+```mermaid
+flowchart LR
+  subgraph Desktop["apps/desktop（Tauri 2）"]
+    UI["React UI<br/>Zustand + React Query"]
+    Protocol["StreamEvent 双端协议<br/>protocol/events.rs ↔ lib/protocol.ts"]
+    subgraph Runtime["Rust runtime"]
+      Loop["Agent loop<br/>agent/session/loop.rs"]
+      Exec["ToolExecutor + 确认门<br/>executor/"]
+      Perm["权限策略 + 决策账本<br/>harness/permissions.rs"]
+      Journal["Journal / Projection / Replay<br/>loop_runtime/"]
+      Mem["统一 Memory + Context Budget<br/>memory/ · agent/context_builder.rs"]
+      A2A["A2A 子代理 + 审阅门<br/>agent/a2a/"]
+    end
+    Adapters["Provider 适配器（手写 HTTP）<br/>adapters/"]
+  end
+  Providers["Anthropic / Kimi / GLM / DeepSeek<br/>OpenAI 兼容 / Gemini / Ollama"]
+  Evidence["ForgeRunEvidence V2<br/>forge_session export-eval"]
+  subgraph Eval["apps/eval-runner（Python）"]
+    Scoring["30+ 维度 scoring<br/>app/scoring.py"]
+    Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
+  end
+  Accept["验收矩阵 78 gates<br/>scripts/acceptance.sh"]
+  Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
+
+  UI <--> Protocol
+  Protocol <--> Loop
+  Loop --> Exec
+  Exec --> Perm
+  Loop --> Journal
+  Loop --> Mem
+  Loop --> A2A
+  Loop --> Adapters
+  Adapters --> Providers
+  Journal --> Evidence
+  Evidence --> Scoring
+  Scoring --> Trust
+  Trust --> Confidence
+  Accept --> Confidence
+```
+
+## 技术导览：值得读的代码
+
+| 想看什么 | 从哪读 |
+| --- | --- |
+| 前后端事件协议如何保持单一真相 | `apps/desktop/src-tauri/src/protocol/events.rs` ↔ `apps/desktop/src/lib/protocol.ts`，由 `check:protocol` 脚本锁同步 |
+| Agent loop 的真实工程问题 | `apps/desktop/src-tauri/src/agent/session/loop.rs`：setup → 单轮执行 → finalize；上下文溢出重试、自动压缩、取消传播、循环卫兵（轮数上限 / 工具循环 / 无进展检测）与恢复建议 |
+| 工具执行与人机确认 | `apps/desktop/src-tauri/src/executor/`：高风险操作发 ConfirmAsk 事件并阻塞在 oneshot 上等用户决策 |
+| 权限模型 | `apps/desktop/src-tauri/src/harness/permissions.rs`：Allow / Ask / Deny 三态，Manual Confirm / Trust Project / Full Access 三档模式，决策进入可回放账本 |
+| 可恢复的运行时 | `apps/desktop/src-tauri/src/loop_runtime/`：append-only journal、投影重建、replay 回归测试、策略与预算 preflight、类型化完成证据 |
+| Provider 适配 | `apps/desktop/src-tauri/src/adapters/`：`anthropic.rs` 与 `openai_compatible.rs` 两族手写流式 HTTP，`provider_registry.rs` 注册目录与 transport 路由 |
+| 子代理协作 | `apps/desktop/src-tauri/src/agent/a2a/`：worktree 隔离的子任务、父子事件胶囊、审阅门 |
+| 记忆与上下文预算 | `apps/desktop/src-tauri/src/memory/`、`agent/prepared_turn.rs`：统一记忆视图、召回计划与 token 预算分桶；模型用量与上下文余量在 UI 上是两个独立指标 |
+| eval 打分与信任门 | `apps/eval-runner/app/scoring.py`、`app/trust_gates.py`、`app/execution.py`：completed 不等于 trusted，缺证据是 UNKNOWN 不是 pass |
+
+## 三条演示路径
+
+### 1. 风险操作的人机确认门
+
+```bash
+cd apps/desktop
+npm install
+npm run tauri dev
+```
+
+选择一个本地项目，让 agent 写文件或执行 shell 命令：文件写入、项目脚本、未知命令会弹出确认卡，卡片展示受影响的工作区、动作和后端权限证据；决策进入权限账本，历史可回放。即使在 Full Access 模式下，外部写入与灾难性命令仍然 fail-closed。
+
+没有桌面环境时，可以跑 mock IPC 的产品契约冒烟：
+
+```bash
+npm --prefix apps/desktop run test:e2e -- e2e/acceptance.spec.ts -g "permission|confirmation|full access|trust"
+```
+
+### 2. 可重放的运行时账本（journal → projection）
+
+```bash
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::journal --lib
+cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml loop_runtime::replay_tests --lib
+# 或一次跑完 runtime 权威 gate：
+scripts/acceptance.sh --only "runtime authority fast gate"
+```
+
+看点：崩溃或中断后由事件流重建循环状态；`recover_loop_task` 提供类型化恢复动作（mark-interrupted、只读 export-evidence、abandon-orphan、retry-waiting-task）；操作员可用 `forge_trigger clear-stale-session-input --input-id <id>` 清理滞留的网关输入，并留下 `cleared_stale` 证据而不是伪装成正常接收。
+
+### 3. 可信证据的 eval 门禁
+
+```bash
+npm run eval:forge:smoke:dry-run   # 无需 API key 的干跑
+npm run eval:forge:smoke:real      # 有 key 时的真实端到端 smoke
+npm run test:eval                  # eval-runner 完整 pytest
+npm run eval:report:latest         # 查看最近一次报告
+```
+
+看点：Forge 跑次导出 ForgeRunEvidence 后，eval-runner 按确认正确性、上下文重复、验证存在性、改动文件范围、恢复证据、用量一致性等 30+ 维度打分；trust gate 区分 UNTRUSTED（明确失败）与 UNKNOWN（缺证据），changed-file 以独立文件系统快照为权威而不信任 agent 自报，emitted diff 在全新 fixture 里 replay 验证。
+
+## 开发
 
 ```bash
 npm run build:desktop
 npm run build:website
 npm run test:eval
+scripts/acceptance.sh --dry-run
 ```
 
-The public-beta eval release slice has four stable acceptance labels:
-
-```text
-eval execution identity baseline
-eval independent workspace evidence baseline
-eval trusted execution baseline
-eval authenticated fenced worker baseline
-```
-
-Run any one with `scripts/acceptance.sh --only "<label>"`. The fixed eval quality
-commands used by the matrix are:
+eval 固定质量套件：
 
 ```bash
 cd apps/eval-runner
@@ -44,58 +143,64 @@ uv run ruff format --check .
 uv run mypy app
 ```
 
-For the current desktop acceptance sweep, run:
+本地 GitNexus CLI 或索引刷新命令用 `node scripts/gitnexus-safe.mjs -- <command>` 包裹（60 秒超时并打印 fallback impact-report 模板；`--print-template` 单独打印模板）。
 
-```bash
-scripts/acceptance.sh
+## 质量门禁与发布纪律
+
+**验收矩阵**（`scripts/acceptance.sh`）：78 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+
+| 命令 | 用途 |
+| --- | --- |
+| `scripts/acceptance.sh --dry-run` | 打印 gate 计划而不执行 |
+| `scripts/acceptance.sh --list-json` | 机读 gate 元数据（域 / 层级 / 运行成本 / 人工证据标记） |
+| `scripts/acceptance.sh --only "<label>"` / `--grep "<text>"` | 精确或模糊运行一个 / 一组 gate |
+| `scripts/acceptance.sh --ci-default` | 只跑 CI 默认子集 |
+| `scripts/acceptance.sh --results-json gate-results.json` | 输出带域 / 层级元数据的 gate 执行结果 |
+
+矩阵、帮助文本与 JSON 输出由 `node --test scripts/acceptance.test.mjs` 契约测试锁定，防止 gate 清单漂移。
+
+**发布置信度**（`node scripts/release-confidence-summary.mjs --markdown --gate-results gate-results.json`）：把验收矩阵、gate 结果与 eval 报告聚合成 PR-ready 的发布置信度报告，包括：
+
+- verified capability evidence：能力声明必须指向真实通过的验收 gate 与 eval 分数；指向缺失或失败的 gate / 分数会报 capability evidence gap。
+- gate-results execution completeness 与 execution reason evidence：未执行的 gate 必须带原因。
+- acceptance domain/tier breakdowns 与失败 / 人工 / 未知 gate 的 gate detail metadata。
+- `--out-dir` 生成 dashboard artifact output；`--ci-default-only` 忽略未提供结果的非 CI gate；`--no-acceptance-matrix` 允许自描述 gate-results 作为唯一验收来源；`--fail-on-attention` 让报告本身表现为门禁并以非零退出。
+
+**eval 发布 gate**：4 个稳定验收标签，任一可用 `scripts/acceptance.sh --only "<label>"` 运行：
+
+```text
+eval execution identity baseline
+eval independent workspace evidence baseline
+eval trusted execution baseline
+eval authenticated fenced worker baseline
 ```
 
-Use `scripts/acceptance.sh --dry-run` to print the gate plan without running it, `scripts/acceptance.sh --list-json` for machine-readable gate metadata, `scripts/acceptance.sh --only "<label>"` to run one exact gate, `scripts/acceptance.sh --grep "<text>"` to filter gates by case-insensitive label substring, or `scripts/acceptance.sh --results-json gate-results.json` to write executed gate statuses plus domain/tier metadata for release confidence reports.
-Full acceptance starts with `node --test scripts/acceptance.test.mjs` so the executable gate matrix, generated help text, JSON output, domain/tier/runtime-cost/manual-evidence metadata, exact-label runner, and gate-result JSON output stay in sync. Backend gates are tagged by authority domain: runtime, permission, usage/context, memory, gateway, eval, and UI evidence; release tiers are `fast-contract`, `runtime-core`, `desktop-ui`, `manual-evidence`, and `full-release`, with `fast-contract` plus `runtime-core` marked as CI-default tiers. Use `scripts/acceptance.sh --ci-default` to run or dry-run that same CI-default subset. `node scripts/release-confidence-summary.mjs --markdown --gate-results gate-results.json` can turn the matrix plus optional gate-result, eval-report, and boundary evidence into a PR-ready release confidence summary, including task-level failing eval scores when a report does not provide `score_summary`, gate-results execution completeness and execution reason evidence, dashboard artifact output with `--out-dir`, CI-default gate totals/pass/fail/unknown counts beside the full matrix, acceptance domain/tier breakdowns, gate detail metadata for failed/manual/unknown gates, verified capability evidence when referenced gates and scores pass, and capability evidence gaps when a declared capability points at a missing acceptance gate, missing acceptance result, failing acceptance gate, missing eval score, or failing eval score; add `--ci-default-only` when the report should ignore non-CI gates without supplied results, add `--no-acceptance-matrix` when a self-describing gate-results file should be the only acceptance source, and add `--fail-on-attention` when the report should behave like a gate and exit nonzero for `attention_required` or `failed`.
+eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-only` 可在不把 trust blocker 变成退出门禁的情况下检查不完整证据。
 
-For local GitNexus CLI or index refresh commands, use `node scripts/gitnexus-safe.mjs -- <command>`. It applies a 60 second timeout and prints the fallback impact-report template; `node scripts/gitnexus-safe.mjs --print-template` prints the template without running a command.
+**记忆迁移设计门**：`scripts/memory-migration-dry-run.mjs` 输出只读的 physical store migration dry-run 报告（记录 id 稳定性、archive/forget 语义、召回结果、隐藏体脱敏与回滚计划）；物理迁移明确未开始。
 
-## Desktop Runtime Surfaces
+**发布候选**：`release/release-gates.v1.json` 定义 R1–R4 gate profile；`npm run release:candidate` 产出与 commit 绑定的候选 manifest，`npm run release:validate` 校验；schema 与校验逻辑各配契约测试。
 
-The desktop app now includes the Hermes-parity runtime scaffolding that is being hardened in Phase 7:
+## 诚实边界（当前状态）
 
-- Session History: search, provider filtering, resume, delete, rename, JSON export, and conservative pruning.
-- Settings: models with config-defined provider profiles surfaced in the desktop catalog, compact provider metadata rendering, current Kimi/GLM coding defaults, custom provider profile templates and add/edit/delete, no-auth local provider support, provider-aware start readiness with dated cached evidence checks and targeted Settings recovery, manual provider compatibility probes with persisted redacted evidence and summary, live/static model catalog refresh including native Anthropic and Anthropic-compatible `/v1/models`, native Gemini `/v1beta/models`, and Ollama `/api/tags` with dated persisted source labeling and model selection/default saving, workspace, tools, unified memory overview with archive/forget actions, data, diagnostics, scheduler, and general service/autostart surfaces.
-- Diagnostics: doctor checks, gateway runtime status, current session health alerts that ignore idle/completed turns, repair actions, trigger/session queues, and runtime loop visibility.
-- Permissions: per-tool allow, deny, reset, default policy states, visible Composer permission modes for Manual Confirm, Trust Project, and Full Access, runtime workspace-scoped inheritance in the same project, pending same-workspace confirmation takeover when enabling broader access, confirmation cards that show the affected workspace/action plus backend permission evidence for write, edit, shell, MCP, and ask-user operations, replayable confirmation response events for approved/declined history state, and backend permission-decision evidence merged into tool details for auto-approved or blocked steps. Full Access skips routine non-shell confirmation prompts, but project-defined scripts/builds/tests, unknown shell execution, and external reads still require an explicit per-command decision; external writes, catastrophic commands, and explicit deny rules remain blocked in every mode.
-- Credentials and logs: a reference-only credential-store abstraction uses macOS Keychain in production and fails closed where the system store is unavailable; startup and headless execution atomically migrate legacy Settings/profile plaintext secrets only after store write/readback verification, provider paths resolve through the injected store, and API-key status IPC never returns secret previews. Both plain and structured persistent logs apply central secret/header/JSON/URL redaction before file persistence, suppress entries when redaction fails, and keep OpenAI-compatible request logging body-free.
-- Project checkpoints: V2 snapshots preserve full Git HEAD identity, staged and unstaged binary patches, rename/delete state, arbitrary untracked bytes, and executable modes. Restore preflights schema/path/size/HEAD constraints, refuses unsupported or legacy snapshots before mutation, and rolls back to the exact pre-call state on any later failure without broad `git clean` deletion.
-- Gateway run evidence: diagnostics include recent trigger-run executor, failure-category, and lease facts; ask-user cards state the current continue/cancel response limit.
-- Review and background work: Agent Workbench review queue/history, severity-calibrated `/code-review` guidance, derived A2A parent/child lineage badges, completion/review-to-commit eligibility facts, plus a global background status bar and task list.
-- Acceptance: browser smoke coverage for resume, diagnostics, provider probes/model catalog refresh, static fallback catalogs, selection/default saving, compact provider metadata rendering, provider evidence start readiness, custom provider profile templates/add/edit/delete, permissions including confirmation replay, Trust Project, and Composer Full Access evidence, scheduler, A2A review, background task UI, current health alerts, stale-banner scoping, and preview ownership details, plus an acceptance matrix contract gate, runtime ownership gates for mocked restart evidence, provider usage, transcript usage hydration, state consistency map status, post-shell file effects, persisted A2A lineage, A2A child runtime events/capsules, A2A review gate V2/recovery suggestions, review-to-commit eligibility, runtime journal authority/recovery, gated headless policy/approval checks, and the real Rust `run_worktree_worker` harness.
-- Phase 8 desktop UI evidence helpers now surface normalized recovery commands and `permissionScope` from preflight through the disposable loop status/runbook summaries, including nested `not_checked` summaries when UI preflight is skipped, make clear that Forge Trust/Full Access does not grant macOS Screen Recording or Accessibility, have preflight/status/runbook/doctor recovery paths point back to the strict preflight and `--require-live-ready` hard gate after local permission recovery or skipped UI checks, add a doctor `--run-checks` command that reruns both gates after permission recovery, expose shared `liveReadyGate.pass/reason` diagnostics for the hard gate in status/runbook output, the acceptance matrix runs `--require-live-ready` as a hard gate that requires a checked UI preflight, and archived rows require validation/evidence/markdown sidecars before they are treated as complete.
+- Forge 处于 internal beta；CHANGELOG 尚未切正式版本号。
+- 桌面 e2e 是 mock IPC 的产品契约冒烟，不是真实模型端到端；真实模型路径走 eval smoke（`eval:forge:smoke:real`）。
+- eval 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性，不是大规模模型排行榜；red-team 检查是启发式规则。
+- gateway 默认 local ownership：`gateway_can_resume` 保持 false，只读 owner 切片需要显式人工批准或 dev-only flag；commit / merge / push 始终人工把关。
+- 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、billing 级用量核算（provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
 
-## Level 3 Runtime Evidence
+## 文档地图
 
-Forge Level 3 Runtime backs long-running agent work with an append-only loop event journal, rebuildable projections, durable human gates, policy and budget preflight, typed completion evidence, crash/replay regression coverage, gateway runner leases, projected usage ledgers, a backend runtime health snapshot, and typed recovery state for interrupted or orphaned loop tasks.
-
-The current acceptance suite advertises and runs those runtime gates before the desktop smoke tests, so product claims about durable loop state are backed by replay, policy, gate, completion, review-to-commit eligibility, runtime health snapshot smoke coverage, gateway status, gateway/local parity plus degraded fallback smoke coverage, subagent projection, mocked desktop restart evidence as partial macOS proof, an explicit desktop restart harness preflight plus contract and blocker-documentation gates that report the current macOS official WKWebView WebDriver support gap and require a desktop restart harness launch command before non-macOS can claim official readiness, provider usage known/unknown telemetry, transcript usage hydration, state consistency map status, bounded post-shell file-effect evidence, persisted A2A lineage, runtime journal authority/recovery smoke coverage for the `recover_loop_task` action family, confirmation ledger snapshot consistency, Completion Contract V2 eligibility facts, acceptance tier metadata, desktop eval-promotion evidence via `ForgeRunEvidence` V2 and `forge_session export-eval`, memory recall/archive coverage status, memory physical store migration dry-run report coverage, release confidence summary contract coverage, gated headless ownership policy/approval checks, A2A child runtime events, parent child capsules, A2A review gate V2/recovery suggestions, A2A child evidence completeness scoring, memory recall quality scoring, memory recall audit scoring, context budget bucket scoring, schema identity scoring, permission decision evidence scoring, verification evidence quality scoring, gateway runtime safety scoring, runtime recovery quality scoring, completion eligibility evidence scoring, A2A child runtime file-IO facts, direct ToolExecutor file-IO stream smoke coverage, and a real Rust `run_worktree_worker` harness using the mock adapter/harness. `scripts/acceptance.sh --grep runtime` now includes a `runtime authority fast gate` that bundles journal, projection replay, completion, diagnostics, recovery, and desktop helper smoke coverage. Gateway runtime status, diagnostics, CLI output, dashboard snapshots, background loop summaries, and eval traces now read loop usage/recovery facts from the backend projection instead of reconstructing them locally; gateway status also includes one nested runtime health payload for loop tasks, gateway queue state, scheduler/runtime task state, replay status, and latest recovery evidence while preserving legacy flat counters; degraded gateway mode includes the desktop-runtime fallback target and `forge service restart` recovery command in both CLI and Settings diagnostics; `recover_loop_task` supports compatible mark-interrupted recovery, read-only evidence export, orphan abandon, and retry-safe waiting-task requeue through typed `RecoveryActionResult`; gateway session input recovery supports explicit single-input stale clearing with `cleared_stale` evidence and the `forge_trigger clear-stale-session-input --input-id <id>` operator command while successful desktop-owner acceptance remains `accepted`; confirmation tests cover descriptor/sender consistency without treating UI cards as authority; loop completion results now expose typed eligibility buckets and mark unavailable changed-file, permission, or eval authorities as unknown; memory records now expose V2 authority metadata for source ownership, storage, visibility, provenance, archive/forget policy, and recall eligibility while keeping the existing physical stores in place, the unified memory action API now returns typed evidence/errors for archive, restore, forget, pin, unpin, quality marks, and memory-fact-only edit, `turn_prepared` now includes a body-free recall plan with candidate decisions and injection budget evidence, and `scripts/memory-migration-dry-run.mjs` provides a physical store migration dry-run with id/action/recall/redaction invariants plus a rollback plan while keeping real migration not started; gateway status also advertises local-default ownership, opt-in gateway ownership gates, visible degraded-mode fallback to the desktop runtime, and a gateway eligibility dry-run that explains owner denial/missing evidence without changing task or queue state; `forge_trigger ownership-eligibility --session-id <id> --task-id <id>` prints the same read-only decision, missing evidence, side-effect flags, and required action for operator checks; eval-runner can also score Forge runtime evidence for confirmation, context, verification, scope, recovery, usage consistency, A2A child evidence completeness, memory recall quality, memory recall audit, context budget buckets, schema identity, permission decision evidence, verification evidence quality, gateway runtime safety, runtime recovery quality, and completion eligibility consistency when that evidence is present; explicit V1 evidence remains importable and missing V2 completion eligibility stays `unknown`.
-
-The backend reliability gates also publish gateway session-host run evidence and a backend restart-smoke dry-run.
-
-Eval-runner now also includes prepared-turn evidence scoring for prompt/context-source quality, file effects evidence scoring for changed-file duplicates, trace/evidence alignment, and file diff completeness when ForgeRunEvidence file effects are present, tool/shell evidence scoring for replay identity, command/tool facts, exit-code consistency, trace alignment, and secret-like output leakage, usage unknown conflict scoring for explicit unknown reasons and non-invented token/cost values, provider usage value validation for malformed token/cost facts, failure evidence scoring for category/reason alignment, continuity lessons scoring for formed lesson metadata, plus memory recall audit scoring for candidate reason and token-budget evidence.
-
-`run_gateway_read_only_owner_diagnostics` is the first gated gateway read-only diagnostics owner slice. It requires explicit approval or a dev-only flag, records replayable requested/lease/completed owner evidence, returns `gateway_can_resume=true` only for that read-only diagnostics result, and keeps provider/tool/shell/file/confirmation/commit side effects false. Operators can invoke the same slice with `forge_trigger read-only-owner-diagnostics --task-id <id> --approved-by <name>` or the dev-only local flag.
-
-`forge_trigger ownership-eligibility --mode gateway_patch_proposal_owner` now exercises the gateway patch proposal owner gate. It reports proposal-only patch generation intent plus required review/diff evidence, while `would_apply_patch=false`, `would_write_files=false`, and direct-write gateway ownership remains blocked by default.
-
-Forge separates model usage from context-window status. Provider usage rows show the model call's reported tokens/cost, while the Composer context indicator shows estimated context used and true remaining context; `turn_prepared` now gives that indicator a backend pre-dispatch estimate plus recall audit metadata and context budget buckets for visible input, hidden system context, memory, files, project records, compacted transcript, connector context, and reserved output without hidden memory bodies before provider usage later reconciles the count, and the auto-compact threshold distance stays in the tooltip so it is not confused with provider context remaining. The local session snapshot persists cumulative cost alongside the usage ledger so reloads do not reset visible cost when older provider usage blocks are unavailable; Tauri transcript replay also recovers legacy `usage` events that predate `provider_usage`, replayed provider usage refreshes the Composer context label over stale persisted metadata, and restored compacted-context blocks keep the Composer label on the post-compact local estimate even when older session metadata still contains the pre-compaction count.
-
-The 4C.4 fake headless owner executor fixture is currently backed by focused runner, journal, projection, and replay tests. It proves runner-only orchestration state chains for completed, pending-confirmation, pending-tool-call, interrupted, cancelled, expired, and stale pending-view idempotency paths through the same journal/projection/envelope path; it is not a new acceptance-matrix or e2e autonomous resume gate.
-
-The live file-IO evidence covers successful direct executor file-ish tools (`read`, `write`, `edit`, `diff`, `list`, and `search`), A2A child file-ish tool facts, and bounded post-shell worktree deltas with `source: "post_shell_delta"`. Boundary language stays explicit: commit remains human-gated; shell-internal tracing is not claimed; unknown provider token/cost remains unknown when adapters omit usage; gateway autonomous resume requires explicit policy and human approval. Gateway session input is only acknowledged after the desktop owner successfully accepts the local turn, so gateway failures keep queued input visible instead of silently dropping it; stale input can be cleared only by explicit input id through `forge_trigger clear-stale-session-input` and records `cleared_stale` evidence instead of pretending the desktop owner accepted it. The current headless gate records and replays approval intent, safe coordinator dry-run facts, and a test-only fake executor fixture, and Forge still does not claim Tauri/WebDriver force-quit coverage, syscall/file-descriptor tracing, full non-git workspace enumeration, billing-grade usage accounting, exact cost when usage/pricing is unknown, automatic creation of parent-session context, fuzzy parent/root-task selection, real headless `AgentSession` execution, model/tool/file side effects, `gateway_can_resume=true`, pending confirmation/tool auto-acceptance, or automatic commit/merge/push behavior.
-
-Gateway trigger runs retain explicit executor, retry/dead-letter, failure-category, lease, and restart-smoke evidence. This proves backend-visible ownership and persistence, not unattended autonomous continuation or official Tauri/WebDriver force-quit recovery.
-
-The desktop loop task panel also displays derived headless readiness and lease-pending status for waiting tasks; `gateway_can_resume` remains false, and commit/merge/push stays human-gated.
+| 文档 | 内容 |
+| --- | --- |
+| [`apps/desktop/README.md`](apps/desktop/README.md) | 桌面产品定位、承诺与体验（含英文版链接） |
+| [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
+| [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
+| [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
+| [`CHANGELOG.md`](CHANGELOG.md) | 全部用户可见运行时变更 |
 
 ## Product Tracking
 
-Roadmap items live in the private GitHub Project:
+Roadmap 项在私有 GitHub Project 中跟踪：
 
 https://github.com/users/Cabbos/projects/3
