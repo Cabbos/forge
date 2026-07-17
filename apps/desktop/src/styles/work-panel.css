@@ -3,6 +3,7 @@
     min-width: 0;
     height: 100%;
     overflow: hidden;
+    background: var(--forge-work-panel-canvas);
   }
 
   .forge-work-panel-layout [data-panel] {
@@ -34,9 +35,13 @@
     height: 100%;
     min-width: 0;
     flex-direction: column;
+    margin: 10px 10px 10px 0;
     overflow: hidden;
-    background: var(--forge-bg-depth);
+    border: 1px solid var(--forge-work-panel-border);
+    border-radius: 12px;
+    background: var(--forge-work-panel-sheet);
     color: var(--forge-text-primary);
+    box-shadow: var(--forge-work-panel-shadow);
   }
 
   .forge-work-panel-tabs {
@@ -48,10 +53,10 @@
   .forge-work-panel-object-bar {
     display: flex;
     min-width: 0;
-    min-height: var(--forge-work-panel-tabs-height);
+    min-height: var(--forge-work-panel-objectbar-height);
     align-items: stretch;
-    border-bottom: 1px solid var(--forge-border-subtle);
-    background: var(--forge-bg-surface);
+    border-bottom: 1px solid var(--forge-work-panel-border);
+    background: var(--forge-work-panel-context);
   }
 
   .forge-work-panel-tab-list {
@@ -59,7 +64,7 @@
     flex: 1;
     justify-content: flex-start;
     overflow-x: auto;
-    padding: 0 0.25rem;
+    padding: 0 10px;
   }
 
   .forge-work-panel-tab-wrap {
@@ -209,8 +214,8 @@
   }
 
   .forge-work-panel-command [data-slot="input-group"] {
-    border-color: var(--forge-border-subtle);
-    background: var(--forge-bg-surface);
+    border-color: var(--forge-work-panel-border);
+    background: var(--forge-work-panel-context);
   }
 
   .forge-work-panel-launcher-action > svg:last-child,
@@ -319,19 +324,19 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
-    background: var(--forge-bg-surface);
+    background: var(--forge-work-panel-sheet);
   }
 
   .forge-work-panel-content-toolbar {
     display: flex;
-    min-height: 42px;
+    min-height: 32px;
     flex-shrink: 0;
     align-items: center;
     justify-content: space-between;
-    gap: 0.75rem;
-    border-bottom: 1px solid var(--forge-border-subtle);
-    padding: 0.375rem 0.625rem;
-    background: var(--forge-bg-depth);
+    gap: 0.5rem;
+    border-bottom: 1px solid var(--forge-work-panel-border);
+    padding: 0 10px;
+    background: var(--forge-work-panel-context);
   }
 
   .forge-work-panel-content-title {
@@ -339,8 +344,8 @@
     min-width: 0;
     align-items: center;
     gap: 0.4rem;
-    font-size: 11px;
-    font-weight: 600;
+    font-size: 12px;
+    font-weight: 500;
   }
 
   .forge-work-panel-content-title > span,
@@ -358,11 +363,20 @@
     font-weight: 400;
   }
 
+  .forge-work-panel-file-path {
+    font-family: var(--font-mono);
+  }
+
+  .forge-work-panel-content-toolbar button {
+    border-color: transparent;
+    box-shadow: none;
+  }
+
   .forge-work-panel-file-body {
     min-height: 0;
     flex: 1;
     overflow: auto;
-    background: var(--forge-code-bg);
+    background: var(--forge-work-panel-sheet);
   }
 
   .forge-work-panel-unavailable {
@@ -393,8 +407,8 @@
 
   .forge-work-panel-file-view > :last-child {
     flex-shrink: 0;
-    border-color: var(--forge-border-subtle);
-    background: var(--forge-bg-depth);
+    border-color: var(--forge-work-panel-border);
+    background: var(--forge-work-panel-context);
   }
 
   .forge-work-panel-inline-error {
@@ -428,8 +442,8 @@
     flex: 1;
     justify-content: center;
     overflow: auto;
-    padding: 0.75rem;
-    background: var(--forge-bg-depth);
+    padding: 0;
+    background: var(--forge-work-panel-sheet);
   }
 
   .forge-work-panel-preview-viewport {
@@ -437,10 +451,10 @@
     height: 100%;
     min-height: 100%;
     overflow: hidden;
-    border: 1px solid var(--forge-border-subtle);
-    border-radius: calc(var(--radius) - 2px);
+    border: 0;
+    border-radius: 0;
     background: white;
-    box-shadow: var(--forge-shadow-card);
+    box-shadow: none;
     transition: width 160ms ease;
   }
 
@@ -467,7 +481,7 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
-    background: var(--forge-bg-surface);
+    background: var(--forge-work-panel-sheet);
   }
 
   .forge-work-panel-review-notice {
@@ -489,9 +503,9 @@
   .forge-work-panel-review-files {
     min-width: 0;
     overflow: auto;
-    border-right: 1px solid var(--forge-border-subtle);
+    border-right: 1px solid var(--forge-work-panel-border);
     padding: 0.375rem;
-    background: var(--forge-bg-depth);
+    background: var(--forge-work-panel-context);
   }
 
   .forge-work-panel-review-files button {
@@ -624,7 +638,7 @@
     align-items: center;
     justify-content: center;
     gap: 5px;
-    border: 1px solid var(--forge-border-subtle);
+    border: 0;
     border-radius: calc(var(--radius) - 2px);
     background: var(--forge-bg-surface);
     padding: 0 9px;
@@ -688,13 +702,13 @@
     min-height: 0;
     height: 100%;
     flex-direction: column;
-    background: #171817;
+    background: var(--forge-work-panel-sheet);
   }
 
   .forge-work-panel-terminal .forge-work-panel-content-toolbar {
-    border-bottom-color: #303230;
-    background: #202120;
-    color: #e9e8e5;
+    border-bottom-color: var(--forge-work-panel-border);
+    background: var(--forge-work-panel-context);
+    color: var(--forge-text-primary);
   }
 
   .forge-work-panel-terminal .forge-work-panel-content-title small {
@@ -705,7 +719,7 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
-    border: 1px solid #3a3d3a;
+    border: 0;
     border-radius: calc(var(--radius) - 2px);
     padding: 4px 8px;
     color: #b8bab6;
@@ -789,8 +803,39 @@
       transition: none;
     }
 
+    .forge-work-panel,
+    .forge-work-panel-launcher,
+    .forge-work-panel-tab-content {
+      transform: none !important;
+    }
+
     .forge-work-panel-launcher-action:hover {
       transform: none;
+    }
+  }
+
+  @container (max-width: 460px) {
+    .forge-work-panel-review-body {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .forge-work-panel-review-files {
+      max-height: 132px;
+      border-right: 0;
+      border-bottom: 1px solid var(--forge-work-panel-border);
+    }
+  }
+
+  @media (max-width: 719px) {
+    .forge-work-panel-layout [data-panel="work-panel"] {
+      position: fixed;
+      z-index: 40;
+      inset: var(--forge-titlebar-height) 0 0;
+    }
+
+    .forge-work-panel {
+      margin: 0;
+      border-radius: 0;
     }
   }
 }

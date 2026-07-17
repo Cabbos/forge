@@ -162,6 +162,12 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByRole("button", { name: "新建工作面板标签" })).toBeVisible();
     await expect(panel.getByRole("tab", { name: /localhost:1420/ })).toBeVisible();
     await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
+    const panelSurface = panel;
+    const viewport = panel.locator(".forge-work-panel-preview-viewport");
+    await expect(panelSurface).toHaveCSS("border-radius", "12px");
+    await expect(panelSurface).toHaveCSS("box-shadow", /0px (?:18px 42px|16px 38px)/);
+    await expect(viewport).toHaveCSS("border-top-width", "0px");
+    await expect(viewport).toHaveCSS("box-shadow", "none");
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
     await panel.getByRole("option", { name: /^打开文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
