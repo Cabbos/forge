@@ -140,6 +140,10 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
     await page.keyboard.press("ArrowDown");
+    await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("data-selected", "true");
+    await expect(panel.getByRole("option", { name: /^审阅/ })).toHaveAttribute("aria-selected", "false");
+    await expect(panel.getByRole("option", { name: /^审阅/ })).toHaveAttribute("data-selected", "false");
     await page.keyboard.press("Enter");
     await expect(panel.getByTestId("work-panel-terminal")).toBeVisible();
   });
