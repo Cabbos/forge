@@ -4,7 +4,7 @@ import type { PreviewTarget, WorkPanelTab, WorkPanelTaskState } from "./workPane
 export const WORK_PANEL_STORAGE_KEY = "forge-work-panel-v1";
 
 export interface WorkPanelStorage {
-  version: 1;
+  version: 2;
   tasks: Record<string, WorkPanelTaskState>;
 }
 
@@ -16,14 +16,15 @@ export function loadWorkPanelTasks(storage: StorageLike): Record<string, WorkPan
 
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (!isRecord(parsed) || parsed.version !== 1 || !isRecord(parsed.tasks)) return {};
+    if (!isRecord(parsed) || (parsed.version !== 1 && parsed.version !== 2) || !isRecord(parsed.tasks)) return {};
 
     return Object.entries(parsed.tasks).reduce<Record<string, WorkPanelTaskState>>((tasks, [key, value]) => {
       if (!key.trim() || !isRecord(value) || !Array.isArray(value.tabs)) return tasks;
       const tabs = value.tabs.filter(isWorkPanelTab);
       const requestedActiveId = typeof value.activeTabId === "string" ? value.activeTabId : null;
       const launcherOpen = value.launcherOpen === true;
-      tasks[key] = restoreTaskPanelState({ tabs, activeTabId: requestedActiveId, launcherOpen });
+      const widthPercent = typeof value.widthPercent === "number" ? value.widthPercent : undefined;
+      tasks[key] = restoreTaskPanelState({ tabs, activeTabId: requestedActiveId, launcherOpen, widthPercent: widthPercent ?? 40 });
       return tasks;
     }, {});
   } catch {
@@ -35,7 +36,7 @@ export function saveWorkPanelTask(storage: StorageLike, taskKey: string, state: 
   if (!taskKey.trim()) return;
   const tasks = loadWorkPanelTasks(storage);
   tasks[taskKey] = restoreTaskPanelState(state);
-  storage.setItem(WORK_PANEL_STORAGE_KEY, JSON.stringify({ version: 1, tasks } satisfies WorkPanelStorage));
+  storage.setItem(WORK_PANEL_STORAGE_KEY, JSON.stringify({ version: 2, tasks } satisfies WorkPanelStorage));
 }
 
 function isWorkPanelTab(value: unknown): value is WorkPanelTab {

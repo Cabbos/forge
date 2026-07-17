@@ -20,6 +20,7 @@ describe("work panel tab state", () => {
       tabs: [],
       activeTabId: null,
       launcherOpen: true,
+      widthPercent: 40,
     });
   });
 
@@ -82,10 +83,11 @@ describe("work panel tab state", () => {
 
     assert.equal(afterSecondClose.activeTabId, "file:a.ts");
     assert.equal(afterSecondClose.launcherOpen, false);
-    assert.deepEqual(closeWorkPanelTab(afterSecondClose, "file:a.ts"), {
+    assert.deepEqual(closeWorkPanelTab({ ...afterSecondClose, widthPercent: 52 }, "file:a.ts"), {
       tabs: [],
       activeTabId: null,
       launcherOpen: true,
+      widthPercent: 52,
     });
   });
 });
@@ -114,8 +116,22 @@ describe("work panel persistence", () => {
         tabs: [{ kind: "file", id: "file:README.md", label: "README.md", path: "README.md" }],
         activeTabId: "file:README.md",
         launcherOpen: false,
+        widthPercent: 40,
       },
     });
+  });
+
+  it("migrates v1 task records with the default width", () => {
+    const storage = memoryStorage({
+      [WORK_PANEL_STORAGE_KEY]: JSON.stringify({
+        version: 1,
+        tasks: {
+          "task-1": { tabs: [], activeTabId: null, launcherOpen: true },
+        },
+      }),
+    });
+
+    assert.equal(loadWorkPanelTasks(storage)["task-1"]?.widthPercent, 40);
   });
 
   it("falls back safely for malformed JSON and saves one task without losing siblings", () => {
@@ -126,6 +142,7 @@ describe("work panel persistence", () => {
       tabs: [{ kind: "terminal", id: "terminal:task-1", label: "终端", taskId: "task-1" }],
       activeTabId: "terminal:task-1",
       launcherOpen: false,
+      widthPercent: 40,
     };
     saveWorkPanelTask(storage, "task-1", task);
     saveWorkPanelTask(storage, "task-2", restoreTaskPanelState(null));

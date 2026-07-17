@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { WorkPanelShell } from "./WorkPanelShell";
 import { closeWorkPanelTab, focusWorkPanelTab, openWorkPanelLauncher, openWorkPanelTab, restoreTaskPanelState } from "./workPanelState";
+import { getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MAX_WORK_PANEL_WIDTH_PX, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
 import { loadWorkPanelTasks, saveWorkPanelTask } from "./workPanelPersistence";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
-
-const WIDTH_STORAGE_KEY = "forge-work-panel-width-v1";
-const DEFAULT_PANEL_WIDTH = 45;
 
 interface WorkPanelLayoutProps {
   children: ReactNode;
@@ -16,14 +14,16 @@ interface WorkPanelLayoutProps {
 
 export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayoutProps) {
   const panelRef = usePanelRef();
-  const lastWidthRef = useRef(readStoredWidth());
   const [open, setOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
+  const [viewportWidth, setViewportWidth] = useState(() => typeof window === "undefined" ? 1200 : window.innerWidth);
   const [taskStates, setTaskStates] = useState<Record<string, WorkPanelTaskState>>(() => {
     if (typeof window === "undefined") return {};
     return loadWorkPanelTasks(window.localStorage);
   });
   const state = taskStates[taskKey] ?? restoreTaskPanelState(null);
+  const mode = getWorkPanelViewportMode(viewportWidth);
+  const bounds = getWorkPanelBounds(getWorkbenchWidth(viewportWidth));
 
   const updateState = useCallback((update: (current: WorkPanelTaskState) => WorkPanelTaskState) => {
     setTaskStates((current) => {
@@ -33,53 +33,60 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
     });
   }, [taskKey]);
 
+  const setWidthPercent = useCallback((widthPercent: number) => {
+    updateState((current) => ({ ...current, widthPercent: normalizeWorkPanelWidthPercent(widthPercent) }));
+  }, [updateState]);
+
   useEffect(() => {
     const toggle = () => setOpen((current) => !current);
     const show = () => setOpen(true);
+    const resize = () => setViewportWidth(window.innerWidth);
     window.addEventListener("toggle-work-panel", toggle);
     window.addEventListener("open-work-panel", show);
+    window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("toggle-work-panel", toggle);
       window.removeEventListener("open-work-panel", show);
+      window.removeEventListener("resize", resize);
     };
   }, []);
 
   const toggleMaximize = () => {
     if (maximized) {
-      panelRef.current?.resize(`${lastWidthRef.current}%`);
+      panelRef.current?.resize(`${state.widthPercent}%`);
       setMaximized(false);
       return;
     }
-    const currentWidth = panelRef.current?.getSize().asPercentage;
-    if (currentWidth) lastWidthRef.current = currentWidth;
     setMaximized(true);
     requestAnimationFrame(() => panelRef.current?.resize("100%"));
   };
 
+  const isSplit = mode === "split";
+  const panelSize = isSplit ? `${state.widthPercent}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%";
+
   return (
-    <Group orientation="horizontal" className="forge-work-panel-layout">
-      <Panel id="conversation" minSize={maximized ? "0%" : "35%"} groupResizeBehavior="preserve-relative-size">
+    <Group orientation="horizontal" className="forge-work-panel-layout" data-viewport-mode={mode}>
+      <Panel id="conversation" minSize={mode === "overlay" || maximized ? "0%" : "35%"} groupResizeBehavior="preserve-relative-size">
         {children}
       </Panel>
-      {open ? (
+      {open && mode !== "overlay" ? (
         <Separator
           id="work-panel-separator"
           className="forge-work-panel-separator"
           aria-label="调整工作面板宽度"
+          onDoubleClick={() => setWidthPercent(40)}
         />
       ) : null}
       {open ? (
         <Panel
           id="work-panel"
           panelRef={panelRef}
-          defaultSize={`${lastWidthRef.current}%`}
-          minSize={maximized ? "100%" : "30%"}
-          maxSize={maximized ? "100%" : "70%"}
+          defaultSize={panelSize}
+          minSize={maximized ? "100%" : isSplit ? `${bounds.min}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
+          maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MAX_WORK_PANEL_WIDTH_PX}px` : "100%"}
           groupResizeBehavior="preserve-relative-size"
           onResize={(size) => {
-            if (maximized) return;
-            lastWidthRef.current = size.asPercentage;
-            window.localStorage.setItem(WIDTH_STORAGE_KEY, String(size.asPercentage));
+            if (!maximized && isSplit) setWidthPercent(size.asPercentage);
           }}
         >
           <WorkPanelShell
@@ -87,21 +94,18 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
             state={state}
             taskKey={taskKey}
             taskLabel={taskLabel}
+            viewportMode={mode}
             onClose={() => setOpen(false)}
             onCloseTab={(tabId) => updateState((current) => closeWorkPanelTab(current, tabId))}
             onFocusTab={(tabId) => updateState((current) => focusWorkPanelTab(current, tabId))}
             onOpenLauncher={() => updateState(openWorkPanelLauncher)}
             onOpenTab={(tab: WorkPanelTab) => updateState((current) => openWorkPanelTab(current, tab))}
             onToggleMaximize={toggleMaximize}
+            onDecreaseWidth={() => setWidthPercent(state.widthPercent - 2)}
+            onIncreaseWidth={() => setWidthPercent(state.widthPercent + 2)}
           />
         </Panel>
       ) : null}
     </Group>
   );
-}
-
-function readStoredWidth() {
-  if (typeof window === "undefined") return DEFAULT_PANEL_WIDTH;
-  const width = Number.parseFloat(window.localStorage.getItem(WIDTH_STORAGE_KEY) ?? "");
-  return Number.isFinite(width) && width >= 30 && width <= 70 ? width : DEFAULT_PANEL_WIDTH;
 }
