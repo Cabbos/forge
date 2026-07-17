@@ -65,7 +65,8 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   };
 
   const isSplit = mode === "split";
-  const panelSize = isSplit ? `${state.widthPercent}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%";
+  // The overlay itself is fixed, so it must not consume PanelGroup width and hide the workbench.
+  const panelSize = isSplit ? `${state.widthPercent}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "0%";
 
   return (
     <Group
@@ -94,8 +95,8 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
           id="work-panel"
           panelRef={panelRef}
           defaultSize={panelSize}
-          minSize={maximized ? "100%" : isSplit ? `${bounds.min}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
-          maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
+          minSize={maximized ? "100%" : isSplit ? `${bounds.min}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "0%"}
+          maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "0%"}
           groupResizeBehavior="preserve-relative-size"
         >
           <WorkPanelShell

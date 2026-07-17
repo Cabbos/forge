@@ -179,6 +179,28 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel).toHaveCount(0);
   });
 
+  test("work panel restores its default split width and keeps the narrow overlay usable", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    const separator = page.getByRole("separator", { name: "调整工作面板宽度" });
+    const reviewOption = panel.getByRole("option", { name: /^审阅/ });
+
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
+    await expect(reviewOption).toHaveCSS("border-top-width", "0px");
+    await expect(reviewOption).toHaveCSS("transform", "none");
+
+    await separator.dblclick();
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
+    await panel.getByRole("button", { name: "关闭工作面板" }).click();
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
+
+    await page.setViewportSize({ width: 700, height: 900 });
+    await expect(panel).toHaveAttribute("data-viewport-mode", "overlay");
+    await expect(page.getByTestId("main-workbench")).toBeVisible();
+  });
+
   test("work panel terminal keeps toolbar text at accessible contrast in light theme", async ({ page }) => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });

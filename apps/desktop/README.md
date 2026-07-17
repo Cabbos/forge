@@ -49,7 +49,7 @@ Forge 希望用户只需要理解三个产品层级：
 | 层级 | 含义 |
 | --- | --- |
 | 当前任务 | Forge 当前判断用户正在推进的具体目标。 |
-| 工作面板 | 用户按需打开的审阅、临时终端、预览、文件或具体子任务；打开什么就是什么，不按内部分类暴露。 |
+| 工作面板 | 首次打开是无标题选择器：用户按需选择审阅、临时终端、预览、文件或具体子任务五类对象；打开什么就是什么，不按内部分类暴露。 |
 | 交付 | 预览状态、检查点、验证结果、风险提示和下一步动作。 |
 
 内部能力，例如 Workflow Router、Context Activation、Memory、Auto Compact、Wiki Storage、MCP、Hooks 和 Skills，不应该成为用户理解产品的负担。它们是 Forge 背后的能力层，不是用户必须学习的新概念。
@@ -62,7 +62,7 @@ Forge 希望用户只需要理解三个产品层级：
 - 支持 `@file` 引用当前项目文件，并把选中文件作为隐藏上下文带入本轮任务。
 - 读取项目级说明文件，例如 `AGENTS.md`、`CLAUDE.md`、`GEMINI.md`。
 - 将保存背景、项目记录、连接资料和最近对话历史组成每轮任务的隐藏上下文；记忆、continuity 和 recall audit 是底层能力，不出现在工作面板导航中，用户事实仍在 Settings 维护。
-- 工作面板首次打开停在选择器，基于 Base UI Tabs、cmdk、react-resizable-panels 与成熟 diff 组件组织审阅、临时命令验证、显式预览、文件和聚焦子任务；用户选择后才打开对应对象，并按当前任务分别恢复 Tab。
+- 工作面板首次打开停在无标题选择器，基于 Base UI Tabs、cmdk、react-resizable-panels 与成熟 diff 组件将审阅、临时命令验证、显式预览、文件和聚焦子任务五类用户明确选择的对象放入一个融合且去重的对象栏 Tab；用户选择后才打开对应对象，并按当前任务分别恢复 Tab。默认宽度为 40%，分屏可在 34–62% 间调整，窄窗口改为 overlay；既有 light/dark 主题由整个工作台消费。临时终端只显示当前任务最近输出用于验证，不是嵌入式终端管理器；记忆与 continuity 始终保持为隐藏实现上下文。
 - 支持 MCP Resources、Prompts、Tools，以及本地 Hooks、Skills 和能力管理。
 - 对危险命令、文件写入和外部连接动作进行确认拦截；确认卡会显示项目路径、影响文件、单次确认范围和后端权限依据，批准/取消响应会作为可回放事件写入历史。Composer 输入框旁现在提供 `手动确认`、`信任项目` 和 `完全访问` 模式入口；`信任项目` 会在当前运行期按项目继承到新对话并接管当前项目里已挂起的写入确认，`完全访问` 会接管当前项目里已挂起的确认并跳过常规非 Shell 写入、MCP 和工具确认，但项目定义的脚本/构建/测试、未知 Shell 执行和项目外读取仍要求对当前命令做一次显式决定，批准只绑定这一条规范化命令的一次执行；项目外写入、灾难命令和显式拒绝规则在所有模式下始终阻断。自动批准、手动确认、阻断和用户批准/取消都会带 workspace、操作、风险、权限模式和原因等后端 ledger 证据，工具详情会显示自动批准/阻断依据而不是生成额外噪音卡片。这些模式可从 Composer 或 Settings 调整，并可切回 `手动确认`。ask-user 卡会说明当前只能继续或取消，具体偏好应作为新消息补充。
 - 记录任务状态、上下文来源、工具证据、预览归属、检查点、验证结果和恢复状态。
@@ -205,7 +205,7 @@ scripts/acceptance.sh --results-json gate-results.json
 node scripts/release-confidence-summary.mjs --markdown
 ```
 
-当前 acceptance smoke 先验证 gate matrix 契约，再覆盖 runtime journal/replay、策略与预算、权限确认、Gateway、恢复、eval 证据、隐藏记忆召回、调度、A2A 与桌面产品流程。工作面板验收覆盖 launcher-first、动态 Tab、显式本机预览、文件、当前 Diff 审阅反馈、聚焦子任务、任务级临时终端、恢复、键盘导航和对象不可用隔离；记忆与 continuity 只由 `memory recall and hidden context coverage status` 的后端测试验证，不再作为工作面板入口。`scripts/acceptance.sh --list-json`、`--ci-default`、`--only`、`--grep` 与 `--results-json` 仍由同一份 gate matrix 驱动。
+当前 acceptance smoke 先验证 gate matrix 契约，再覆盖 runtime journal/replay、策略与预算、权限确认、Gateway、恢复、eval 证据、隐藏记忆召回、调度、A2A 与桌面产品流程。工作面板验收覆盖 launcher-first、五类显式对象的融合去重 Tab、默认 40% 且任务级恢复的 34–62% split 宽度、窄窗口 overlay、light/dark 工作台主题、显式本机预览、文件、当前 Diff 审阅反馈、聚焦子任务、最近输出验证用任务级临时终端、键盘导航和对象不可用隔离；记忆与 continuity 只由 `memory recall and hidden context coverage status` 的后端测试验证，不再作为工作面板入口。`scripts/acceptance.sh --list-json`、`--ci-default`、`--only`、`--grep` 与 `--results-json` 仍由同一份 gate matrix 驱动。
 
 Eval-runner 现在也包含 prepared-turn evidence scoring，用来检查 prompt/context-source 质量；file effects evidence scoring 会在 ForgeRunEvidence file effects 存在时检查 changed-file 重复、trace/evidence 对齐，以及 file diff 的 path/change-type/diff 完整性；tool/shell evidence scoring 会检查 replay identity、工具/命令事实、exit-code 一致性、trace 对齐和 secret-like 输出泄漏；usage unknown conflict scoring 会检查未知 provider usage 保持 explicit unknown reason 且不携带伪造 token/cost 数字；provider usage value validation 会拒绝负数或畸形 token/cost facts；failure evidence scoring 会检查失败 category/reason 与 trace 对齐；continuity lessons scoring 会检查 formed lesson metadata；memory recall audit scoring 会检查 recall candidate 的 decision reason 和 injected token/budget evidence。
 
