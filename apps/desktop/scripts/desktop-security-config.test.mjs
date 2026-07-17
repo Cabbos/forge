@@ -59,3 +59,17 @@ test("unused shell plugin is absent from desktop frontend and backend", async ()
   assert.doesNotMatch(cargoToml, /tauri-plugin-shell/);
   assert.doesNotMatch(rustEntry, /tauri_plugin_shell/);
 });
+
+test("work panel terminal stays compatible with the frozen JavaScript prototype", async () => {
+  const config = await readJson("src-tauri/tauri.conf.json");
+  const packageJson = await readJson("package.json");
+  const terminalSource = await readFile(
+    new URL("src/components/workpanel/WorkPanelTerminal.tsx", desktopRoot),
+    "utf8",
+  );
+
+  assert.equal(config.app?.security?.freezePrototype, true);
+  assert.doesNotMatch(terminalSource, /@xterm\//);
+  assert.equal(packageJson.dependencies?.["@xterm/xterm"], undefined);
+  assert.equal(packageJson.dependencies?.["@xterm/addon-fit"], undefined);
+});

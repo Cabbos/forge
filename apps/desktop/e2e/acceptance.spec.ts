@@ -235,9 +235,10 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(terminal).toBeVisible();
     await expect(terminal).toContainText("临时验证终端");
 
-    await terminal.locator(".xterm-helper-textarea").focus();
-    await page.keyboard.type("printf 'verification passed'\n");
-    await expect(terminal.locator(".xterm-screen")).toContainText("verification passed");
+    const command = terminal.getByRole("textbox", { name: "临时验证命令" });
+    await command.fill("printf 'verification passed'");
+    await terminal.getByRole("button", { name: "运行验证命令" }).click();
+    await expect(terminal.getByRole("log")).toContainText("verification passed");
 
     await panel.getByRole("button", { name: "关闭 终端" }).click();
     await expect.poll(() => page.evaluate(() => {
