@@ -3,6 +3,7 @@ use crate::continuity::ContinuityService;
 use crate::credential_store::{system_credential_store, CredentialStore};
 use crate::forge_wiki::storage::ForgeWikiStore;
 use crate::harness::Harness;
+use crate::ipc::workspace_terminal::WorkspaceTerminalStore;
 use crate::memory::facts::MemoryFactStore;
 use crate::memory::WikiMemoryStore;
 use crate::profile::ProfileStore;
@@ -39,6 +40,7 @@ pub struct AppState {
     pub workflow_states: Arc<RwLock<HashMap<String, WorkflowState>>>,
     pub delivery_states: Arc<RwLock<HashMap<String, DeliverySummary>>>,
     pub scheduler: Arc<SchedulerStore>,
+    pub workspace_terminals: Arc<WorkspaceTerminalStore>,
     pub(crate) credential_store: Arc<dyn CredentialStore>,
 }
 
@@ -67,6 +69,7 @@ impl AppState {
             workflow_states: Arc::new(RwLock::new(HashMap::new())),
             delivery_states: Arc::new(RwLock::new(HashMap::new())),
             scheduler: Arc::new(SchedulerStore::new(SchedulerStore::default_path())),
+            workspace_terminals: Arc::new(WorkspaceTerminalStore::default()),
             credential_store,
         }
     }

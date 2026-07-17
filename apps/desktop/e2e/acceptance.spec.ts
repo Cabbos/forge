@@ -211,6 +211,36 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(composer).toBeFocused();
   });
 
+  test("work panel terminal is temporary and scoped to the current task", async ({ page }) => {
+    const sessionId = "work-panel-terminal-session";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+
+    await panel.getByRole("option", { name: /^终端/ }).click();
+    await expect(panel.getByRole("tab", { name: "终端" })).toBeVisible();
+    const terminal = panel.getByTestId("work-panel-terminal");
+    await expect(terminal).toBeVisible();
+    await expect(terminal).toContainText("临时验证终端");
+
+    await terminal.locator(".xterm-helper-textarea").focus();
+    await page.keyboard.type("printf 'verification passed'\n");
+    await expect(terminal.locator(".xterm-screen")).toContainText("verification passed");
+
+    await panel.getByRole("button", { name: "关闭 终端" }).click();
+    await expect.poll(() => page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      const startedId = window.__mockStartedTerminal?.terminalId;
+      // @ts-expect-error acceptance mock
+      return window.__mockClosedTerminalIds?.includes(startedId) ?? false;
+    })).toBe(true);
+    await expect(panel.getByTestId("work-panel-launcher")).toBeVisible();
+  });
+
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     await expect

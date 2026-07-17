@@ -12,6 +12,7 @@ export * from "./ipc/permissions";
 export * from "./ipc/mcp";
 export * from "./ipc/files";
 export * from "./ipc/review";
+export * from "./ipc/terminal";
 export * from "./ipc/project";
 export * from "./ipc/memory";
 export * from "./ipc/memoryFacts";

@@ -31,3 +31,4 @@ pub mod workflow_handlers;
 pub mod workspace;
 pub mod workspace_files;
 pub mod workspace_review;
+pub mod workspace_terminal;

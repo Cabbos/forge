@@ -1542,6 +1542,45 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             files: [{ path: "README.md", status: "modified", additions: 1, deletions: 0 }],
             truncated: false,
           };
+        case "start_workspace_terminal": {
+          const terminalId = `mock-terminal-${String(args.taskId ?? "task")}`;
+          // @ts-expect-error acceptance mock
+          window.__mockStartedTerminal = { ...args, terminalId };
+          return {
+            terminal_id: terminalId,
+            task_id: String(args.taskId ?? "task"),
+            working_dir: String(args.workingDir ?? sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir),
+          };
+        }
+        case "write_workspace_terminal": {
+          const data = String(args.data ?? "");
+          if (data.includes("\n") || data.includes("\r")) {
+            setTimeout(() => {
+              // @ts-expect-error acceptance mock
+              for (const listener of window.__tauriListeners?.["work-panel-terminal-output"] ?? []) {
+                listener({
+                  payload: {
+                    terminal_id: String(args.terminalId ?? ""),
+                    task_id: String(args.taskId ?? ""),
+                    chunk: "\r\nverification passed\r\n$ ",
+                    exited: false,
+                  },
+                });
+              }
+            }, 0);
+          }
+          return undefined;
+        }
+        case "resize_workspace_terminal":
+          // @ts-expect-error acceptance mock
+          window.__mockLastTerminalResize = args;
+          return undefined;
+        case "close_workspace_terminal":
+          // @ts-expect-error acceptance mock
+          if (!Array.isArray(window.__mockClosedTerminalIds)) window.__mockClosedTerminalIds = [];
+          // @ts-expect-error acceptance mock
+          window.__mockClosedTerminalIds.push(String(args.terminalId ?? ""));
+          return undefined;
         case "open_file":
           // @ts-expect-error mock
           window.__lastOpenFileArgs = args;
