@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { WorkPanelShell } from "./WorkPanelShell";
 import { closeWorkPanelTab, focusWorkPanelTab, openWorkPanelLauncher, openWorkPanelTab, restoreTaskPanelState } from "./workPanelState";
@@ -23,6 +23,9 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   const state = taskStates[taskKey] ?? restoreTaskPanelState(null);
   const mode = getWorkPanelViewportMode(viewportWidth);
   const bounds = getWorkPanelBounds(getWorkbenchWidth(viewportWidth));
+  const modeRef = useRef(mode);
+  const suppressLayoutPersistenceRef = useRef(false);
+  const restoreWidthAfterOverlayRef = useRef(false);
 
   const updateState = useCallback((update: (current: WorkPanelTaskState) => WorkPanelTaskState, persist = true) => {
     setTaskStates((current) => {
@@ -43,7 +46,14 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   useEffect(() => {
     const toggle = () => setOpen((current) => !current);
     const show = () => setOpen(true);
-    const resize = () => setViewportWidth(window.innerWidth);
+    const resize = () => {
+      const nextMode = getWorkPanelViewportMode(window.innerWidth);
+      if (modeRef.current === "overlay" && nextMode === "split") {
+        suppressLayoutPersistenceRef.current = true;
+        restoreWidthAfterOverlayRef.current = true;
+      }
+      setViewportWidth(window.innerWidth);
+    };
     window.addEventListener("toggle-work-panel", toggle);
     window.addEventListener("open-work-panel", show);
     window.addEventListener("resize", resize);
@@ -53,6 +63,23 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
       window.removeEventListener("resize", resize);
     };
   }, []);
+
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
+
+  useEffect(() => {
+    if (!restoreWidthAfterOverlayRef.current || mode !== "split" || !open || maximized) return;
+    const target = clampWorkPanelWidthPercent(state.widthPercent, bounds);
+    const restore = requestAnimationFrame(() => {
+      panelRef.current?.resize(`${target}%`);
+      requestAnimationFrame(() => {
+        restoreWidthAfterOverlayRef.current = false;
+        suppressLayoutPersistenceRef.current = false;
+      });
+    });
+    return () => cancelAnimationFrame(restore);
+  }, [bounds, maximized, mode, open, panelRef, state.widthPercent]);
 
   const toggleMaximize = () => {
     if (maximized) {
@@ -75,7 +102,7 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
       data-viewport-mode={mode}
       onLayoutChanged={(layout) => {
         const widthPercent = layout["work-panel"];
-        if (!isSplit || maximized || typeof widthPercent !== "number") return;
+        if (!isSplit || maximized || suppressLayoutPersistenceRef.current || typeof widthPercent !== "number") return;
         updateState((current) => ({ ...current, widthPercent: clampWorkPanelWidthPercent(widthPercent, bounds) }));
       }}
     >
