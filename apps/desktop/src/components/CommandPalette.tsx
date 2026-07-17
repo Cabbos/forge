@@ -95,9 +95,9 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
     }
   };
 
-  const handleOpenProjectArchive = () => {
+  const handleOpenWorkPanel = () => {
     onOpenChange(false);
-    window.dispatchEvent(new Event("open-hub"));
+    window.dispatchEvent(new Event("open-work-panel"));
   };
 
   const handleOpenSettings = () => {
@@ -135,7 +135,7 @@ export function CommandPalette({ open, onOpenChange }: CommandPaletteProps) {
           activeSessionId={activeSessionId}
           theme={theme}
           onCreate={handleCreate}
-          onOpenProjectArchive={handleOpenProjectArchive}
+        onOpenWorkPanel={handleOpenWorkPanel}
           onOpenSettings={handleOpenSettings}
           onWorkflowOverride={handleWorkflowOverride}
           onSelectSession={handleSelectSession}

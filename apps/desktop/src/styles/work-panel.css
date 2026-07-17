@@ -29,6 +29,7 @@
   }
 
   .forge-work-panel {
+    container-type: inline-size;
     display: flex;
     height: 100%;
     min-width: 0;
@@ -158,7 +159,7 @@
     flex: 1;
     align-items: center;
     overflow: auto;
-    padding: clamp(2rem, 10vh, 7rem) clamp(1rem, 5vw, 4.5rem) 15vh;
+    padding: clamp(2rem, 10vh, 7rem) clamp(1rem, 8cqw, 4.5rem) 15vh;
   }
 
   .forge-work-panel-launcher-actions {
@@ -244,7 +245,7 @@
     flex: 1;
     flex-direction: column;
     overflow: hidden;
-    padding: 1rem clamp(1rem, 5vw, 4rem) 2rem;
+    padding: 1rem clamp(1rem, 8cqw, 4rem) 2rem;
   }
 
   .forge-work-panel-picker-heading {

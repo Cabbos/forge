@@ -11,7 +11,7 @@
 @import "./messages.css";
 @import "./process.css";
 @import "./markdown.css";
-@import "./archive.css";
+@import "./project-status.css";
 @import "./work-panel.css";
 @import "./diff.css";
 @import "./titlebar.css";
@@ -303,19 +303,6 @@
     border-color: var(--forge-material-border-hover);
     background: var(--forge-hover);
     color: var(--forge-text-primary);
-  }
-
-  @media (min-width: 860px) {
-    :root[data-project-archive-open="true"] .forge-main-workbench {
-      padding-right: var(--forge-inspector-width);
-    }
-  }
-
-  @media (min-width: 860px) and (max-width: 1120px) {
-    :root[data-project-archive-open="true"] .forge-empty-entry-grid {
-      width: min(100%, 340px);
-      grid-template-columns: 1fr;
-    }
   }
 
   .forge-session-operating-surface {

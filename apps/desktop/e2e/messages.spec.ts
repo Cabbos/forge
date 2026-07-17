@@ -2139,7 +2139,7 @@ test.beforeEach(async ({ page }) => {
     expect(metrics!.whiteSpace).toBe("normal");
   });
 
-  test("project archive disclosure rows use inspector rhythm tokens", async ({ page }) => {
+  test("work panel launcher uses the shared compact desktop rhythm", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.setViewportSize({ width: 900, height: 720 });
     await page.addInitScript((sessionId) => {
@@ -2150,68 +2150,52 @@ test.beforeEach(async ({ page }) => {
     await page.goto("http://localhost:1420");
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
-    await page.keyboard.down("Control");
-    await page.keyboard.press("i");
-    await page.keyboard.up("Control");
+    await page.getByRole("button", { name: "打开工作面板" }).click();
 
-    const archive = page.getByRole("complementary", { name: "项目档案" });
-    await expect(archive).toBeVisible();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByTestId("work-panel-launcher")).toBeVisible();
 
     const metrics = await page.evaluate(() => {
       const root = document.documentElement;
-      const archive = document.querySelector<HTMLElement>("[data-testid='project-archive-panel']");
-      const body = document.querySelector<HTMLElement>("[data-testid='project-archive-body']");
-      const disclosure = document.querySelector<HTMLElement>("[data-testid='archive-disclosure-records'] button");
-      const main = document.querySelector<HTMLElement>("[data-testid='main-workbench']");
+      const panel = document.querySelector<HTMLElement>("aside.forge-work-panel");
+      const header = panel?.querySelector<HTMLElement>(".forge-work-panel-header");
+      const launcher = panel?.querySelector<HTMLElement>(".forge-work-panel-launcher");
+      const actions = Array.from(panel?.querySelectorAll<HTMLElement>(".forge-work-panel-launcher-action") ?? []);
       const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
       const modelChip = document.querySelector<HTMLElement>("[data-testid='composer-model-chip']");
-      const title = document.querySelector<HTMLElement>(".forge-inspector-title");
-      const subtitle = document.querySelector<HTMLElement>(".forge-inspector-subtitle");
-      const summaryLabel = document.querySelector<HTMLElement>(".forge-archive-summary-label");
-      const summaryValue = document.querySelector<HTMLElement>(".forge-archive-summary-value");
-      if (!archive || !body || !disclosure || !main || !composer || !modelChip || !title || !subtitle || !summaryLabel || !summaryValue) return null;
-      const archiveRect = archive.getBoundingClientRect();
+      const title = panel?.querySelector<HTMLElement>(".forge-work-panel-title");
+      const task = panel?.querySelector<HTMLElement>(".forge-work-panel-task");
+      if (!panel || !header || !launcher || actions.length !== 5 || !composer || !modelChip || !title || !task) return null;
+      const panelRect = panel.getBoundingClientRect();
       const composerRect = composer.getBoundingClientRect();
       const modelChipRect = modelChip.getBoundingClientRect();
-      const archiveStyle = getComputedStyle(archive);
       return {
-        widthToken: getComputedStyle(root).getPropertyValue("--forge-inspector-width").trim(),
-        gapToken: getComputedStyle(root).getPropertyValue("--forge-inspector-gap").trim(),
-        rowToken: getComputedStyle(root).getPropertyValue("--forge-disclosure-row-height").trim(),
-        width: Math.round(archiveRect.width),
-        background: archiveStyle.backgroundColor,
-        backdropFilter: archiveStyle.backdropFilter,
-        bodyGap: Math.round(Number.parseFloat(getComputedStyle(body).rowGap)),
-        rowHeight: Math.round(disclosure.getBoundingClientRect().height),
-        archiveLeft: Math.round(archiveRect.left),
+        headerToken: getComputedStyle(root).getPropertyValue("--forge-work-panel-header-height").trim(),
+        tabsToken: getComputedStyle(root).getPropertyValue("--forge-work-panel-tabs-height").trim(),
+        width: Math.round(panelRect.width),
+        headerHeight: Math.round(header.getBoundingClientRect().height),
+        actionGap: Math.round(Number.parseFloat(getComputedStyle(actions[0].parentElement!).rowGap)),
+        actionHeights: actions.map((action) => Math.round(action.getBoundingClientRect().height)),
+        panelLeft: Math.round(panelRect.left),
         composerRight: Math.round(composerRect.right),
         modelChipRight: Math.round(modelChipRect.right),
-        mainPaddingRight: getComputedStyle(main).paddingRight,
         titleFontSize: getComputedStyle(title).fontSize,
-        subtitleFontSize: getComputedStyle(subtitle).fontSize,
-        subtitleColor: getComputedStyle(subtitle).color,
-        summaryLabelFontSize: getComputedStyle(summaryLabel).fontSize,
-        summaryValueColor: getComputedStyle(summaryValue).color,
+        taskFontSize: getComputedStyle(task).fontSize,
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.widthToken).toBe("300px");
-    expect(metrics!.gapToken).toBe("10px");
-    expect(metrics!.rowToken).toBe("28px");
-    expect(metrics!.width).toBe(300);
-    expect(metrics!.background).toBe("rgb(236, 226, 212)");
-    expect(metrics!.backdropFilter).toBe("none");
-    expect(metrics!.bodyGap).toBe(10);
-    expect(metrics!.rowHeight).toBe(28);
-    expect(metrics!.mainPaddingRight).toBe(metrics!.widthToken);
-    expect(metrics!.composerRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
-    expect(metrics!.modelChipRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
-    expect(metrics!.titleFontSize).toBe("14px");
-    expect(metrics!.subtitleFontSize).toBe("11px");
-    expect(metrics!.subtitleColor).toBe("rgb(95, 93, 85)");
-    expect(metrics!.summaryLabelFontSize).toBe("11px");
-    expect(metrics!.summaryValueColor).toBe("rgb(36, 42, 36)");
+    expect(metrics!.headerToken).toBe("44px");
+    expect(metrics!.tabsToken).toBe("38px");
+    expect(metrics!.width).toBeGreaterThanOrEqual(240);
+    expect(metrics!.headerHeight).toBe(44);
+    expect(metrics!.actionGap).toBe(8);
+    expect(metrics!.actionHeights.every((height) => height >= 58)).toBe(true);
+    expect(metrics!.composerRight).toBeLessThanOrEqual(metrics!.panelLeft);
+    expect(metrics!.modelChipRight).toBeLessThanOrEqual(metrics!.panelLeft);
+    expect(metrics!.titleFontSize).toBe("13px");
+    expect(metrics!.taskFontSize).toBe("11px");
   });
 
   test("global new conversation shortcut starts from the active workspace", async ({ page }) => {

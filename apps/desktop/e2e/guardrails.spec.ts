@@ -14,7 +14,8 @@ test.describe("Frontend maintainability guardrails", () => {
   test("brand theme styles avoid pre-brand warm gray literals", () => {
     const styleFiles = [
       "src/styles/answer-index.css",
-      "src/styles/archive.css",
+      "src/styles/project-status.css",
+      "src/styles/work-panel.css",
       "src/styles/capabilities.css",
       "src/styles/command.css",
       "src/styles/composer.css",
@@ -137,7 +138,7 @@ test.describe("Frontend maintainability guardrails", () => {
 
   test("brand metaphors avoid fire, magic spectacle, and raw agent framing", () => {
     const checkedFiles = [
-      "src/components/context/ProjectOverviewCard.tsx",
+      "src/components/workpanel/WorkPanelShell.tsx",
       "src/components/layout/Sidebar.tsx",
       "src/lib/capability-icons.ts",
       "src/styles/tokens.css",
@@ -163,7 +164,8 @@ test.describe("Frontend maintainability guardrails", () => {
   test("brand surfaces avoid decorative radial glows", () => {
     const checkedFiles = [
       "src/styles/answer-index.css",
-      "src/styles/archive.css",
+      "src/styles/project-status.css",
+      "src/styles/work-panel.css",
       "src/styles/capabilities.css",
       "src/styles/command.css",
       "src/styles/composer.css",
@@ -225,9 +227,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(globals).not.toContain(".forge-empty-composer::before");
   });
 
-  test("project archive scan rows avoid low-alpha helper text", () => {
+  test("current work surfaces avoid low-alpha helper text", () => {
     const checkedFiles = [
-      "src/components/context/ProjectOverviewCard.tsx",
+      "src/components/workpanel/WorkPanelLauncher.tsx",
       "src/components/context/FirstLoopCard.tsx",
       "src/components/context/ActiveContextSection.tsx",
       "src/components/context/WikiSections.tsx",
@@ -312,10 +314,8 @@ test.describe("Frontend maintainability guardrails", () => {
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8")).join("\n");
     const currentTask = readFileSync(resolve(process.cwd(), "src/components/workflow/CurrentTaskCard.tsx"), "utf8");
     const diffActions = readFileSync(resolve(process.cwd(), "src/components/messages/DiffHeaderActions.tsx"), "utf8");
-    const projectOverview = readFileSync(resolve(process.cwd(), "src/components/context/ProjectOverviewCard.tsx"), "utf8");
     const activeContext = readFileSync(resolve(process.cwd(), "src/components/context/ActiveContextSection.tsx"), "utf8");
     const firstLoop = readFileSync(resolve(process.cwd(), "src/components/context/FirstLoopCard.tsx"), "utf8");
-    const archiveMaterials = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterials.tsx"), "utf8");
     const startReadiness = readFileSync(resolve(process.cwd(), "src/components/session/StartReadinessView.tsx"), "utf8");
     const wikiSections = [
       "src/components/context/WikiProjectRecordsSection.tsx",
@@ -324,12 +324,7 @@ test.describe("Frontend maintainability guardrails", () => {
       "src/components/context/WikiRecordRows.tsx",
       "src/components/context/WikiSectionChrome.tsx",
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8")).join("\n");
-    const hubPanel = [
-      "src/components/layout/HubPanel.tsx",
-      "src/components/layout/HubPanelShell.tsx",
-    ].filter((path) => existsSync(resolve(process.cwd(), path)))
-      .map((path) => readFileSync(resolve(process.cwd(), path), "utf8"))
-      .join("\n");
+    const workPanelShell = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelShell.tsx"), "utf8");
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
 
     expect(projectStatus).toContain("@/components/primitives/surface");
@@ -350,13 +345,6 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(diffActions).toContain("ForgeIconButton");
     expect(diffActions).not.toContain("className=\"forge-icon-button size-6\"");
 
-    expect(projectOverview).toContain("@/components/primitives/surface");
-    expect(projectOverview).toContain("@/components/primitives/action");
-    expect(projectOverview).toContain("ForgeSurface");
-    expect(projectOverview).toContain("ForgeActionButton");
-    expect(projectOverview).not.toContain("className=\"forge-surface space-y-3 px-3 py-3\"");
-    expect(projectOverview).not.toContain("className=\"forge-action\"");
-
     expect(activeContext).toContain("@/components/primitives/surface");
     expect(activeContext).toContain("@/components/primitives/pill");
     expect(activeContext).toContain("ForgeSurface");
@@ -366,13 +354,6 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(firstLoop).toContain("@/components/primitives/surface");
     expect(firstLoop).toContain("ForgeSurface");
     expect(firstLoop).not.toContain("className=\"forge-surface px-3 py-3\"");
-
-    expect(archiveMaterials).toContain("@/components/primitives/surface");
-    expect(archiveMaterials).toContain("@/components/primitives/action");
-    expect(archiveMaterials).toContain("ForgeSurface");
-    expect(archiveMaterials).toContain("ForgeActionButton");
-    expect(archiveMaterials).not.toContain("className=\"forge-surface overflow-hidden\"");
-    expect(archiveMaterials).not.toContain("className=\"forge-action\"");
 
     expect(startReadiness).toContain("@/components/primitives/action");
     expect(startReadiness).toContain("@/components/primitives/icon-button");
@@ -391,9 +372,10 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(wikiSections).not.toContain("className=\"forge-action h-8");
     expect(wikiSections).not.toContain("className=\"forge-icon-button focus-visible:outline-none");
 
-    expect(hubPanel).toContain("@/components/primitives/icon-button");
-    expect(hubPanel).toContain("ForgeIconButton");
-    expect(hubPanel).not.toContain("className=\"forge-icon-button\"");
+    expect(workPanelShell).toContain("@/components/primitives/icon-button");
+    expect(workPanelShell).toContain("ForgeIconButton");
+    expect(workPanelShell).toContain("ButtonPrimitive");
+    expect(workPanelShell).not.toContain("<button");
 
     expect(messageList).toContain("@/components/primitives/control-button");
     expect(messageList).toContain("ForgeControlButton");
@@ -470,9 +452,6 @@ test.describe("Frontend maintainability guardrails", () => {
     const providerRows = readFileSync(resolve(process.cwd(), "src/components/settings/SettingsProviderRows.tsx"), "utf8");
     const filePreviewSheet = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewSheet.tsx"), "utf8");
     const filePreviewActions = readFileSync(resolve(process.cwd(), "src/components/messages/FilePreviewActions.tsx"), "utf8");
-    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
-    const hubPanelShell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
-    const hubPanelContent = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
 
     expect(settings).toContain("ForgeDialog");
     expect(settings).toContain("ForgeDialogContent");
@@ -486,10 +465,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(filePreviewActions).toContain("ForgeButton");
     expect(filePreviewActions).not.toContain("import { Button } from \"@/components/primitives/button\"");
 
-    expect(hubPanel).toContain("HubPanelShell");
-    expect(hubPanelShell).toContain("HubPanelContent");
-    expect(hubPanelContent).toContain("ForgeScrollArea");
-    expect(hubPanel).not.toContain("import { ScrollArea } from \"@/components/primitives/scroll-area\"");
+    expect(existsSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"))).toBe(false);
+    expect(existsSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"))).toBe(false);
   });
 
   test("forge command and collapsible primitives expose product semantic wrappers", () => {
@@ -572,8 +550,6 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(model).toContain("knownProviderStatuses");
     expect(providerRows).toContain("forge-settings-provider-mark");
     expect(providerRows).not.toContain("text-muted-foreground/60");
-    const hubPanel = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
-    expect(hubPanel).not.toContain("border-t border-border pt-3 first:border-t-0 first:pt-0");
     expect(settingsCss).toContain(".forge-settings-summary-strip");
     expect(settingsCss).toContain("grid-template-columns: repeat(3, minmax(0, 1fr))");
     expect(settingsCss).toContain(".forge-settings-provider-mark[data-configured=\"true\"]");
@@ -721,113 +697,56 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(content).toContain("data-forge-motion=\"command-entry\"");
   });
 
-  test("project archive opens with a compact inspector summary and scoped motion", () => {
-    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
-    const shell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
-    const content = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
-    const summaryStrip = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveSummaryStrip.tsx"), "utf8");
-    const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
+  test("work panel composes mature interaction libraries with scoped motion", () => {
+    const layout = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelLayout.tsx"), "utf8");
+    const shell = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelShell.tsx"), "utf8");
+    const launcher = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelLauncher.tsx"), "utf8");
+    const packageJson = readFileSync(resolve(process.cwd(), "package.json"), "utf8");
 
-    expect(summaryStrip).toContain("project-archive-summary-strip");
-    expect(summaryStrip).toContain("ArchiveSummaryStrip");
-    expect(hub).toContain("HubPanelShell");
-    expect(shell).toContain("HubPanelContent");
-    expect(content).toContain("data-forge-motion=\"archive-section\"");
-    expect(hub).toContain("gsap.timeline");
-    expect(hub).toContain("[data-forge-motion='archive-section']");
-    expect(archiveStyles).toContain(".forge-archive-summary-strip");
-    expect(archiveStyles).toContain(".forge-inspector-title-block");
+    expect(layout).toContain("react-resizable-panels");
+    expect(shell).toContain("@/components/ui/tabs");
+    expect(shell).toContain("@base-ui/react/button");
+    expect(launcher).toContain("@/components/ui/command");
+    expect(shell).toContain("useGSAP");
+    expect(shell).toContain("prefersReducedMotion");
+    expect(packageJson).toContain("react-resizable-panels");
+    expect(packageJson).toContain("cmdk");
+    expect(packageJson).toContain("@xterm/xterm");
+    expect(packageJson).toContain("react-diff-viewer-continued");
   });
 
-  test("project archive body rendering is owned by a focused subview", () => {
-    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
-    const shell = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx"), "utf8");
-    const content = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanelContent.tsx"), "utf8");
+  test("work panel content routing is owned by focused object views", () => {
+    const content = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelContent.tsx"), "utf8");
 
-    expect(hub).toContain("HubPanelShell");
-    expect(shell).toContain("HubPanelContent");
-    expect(hub).not.toContain("ProjectOverviewCard");
-    expect(hub).not.toContain("ArchiveDisclosure");
-    expect(hub).not.toContain("ContextFilesSection");
-    expect(content).toContain("ProjectOverviewCard");
-    expect(content).toContain("ArchiveDisclosure");
-    expect(content).toContain("ContextFilesSection");
-    expect(content).toContain("ProjectStatusCard");
-    expect(content).toContain("ForgeScrollArea");
+    for (const view of ["WorkPanelReview", "WorkPanelPreview", "WorkPanelFiles", "WorkPanelSubtask", "WorkPanelTerminal"]) {
+      expect(content).toContain(view);
+    }
+    expect(content).not.toContain("ProjectOverviewCard");
+    expect(content).not.toContain("UnifiedMemorySection");
+    expect(content).not.toContain("ContinuityExperiencesSection");
   });
 
-  test("project archive shell and data queries are owned by focused modules", () => {
-    const shellPath = resolve(process.cwd(), "src/components/layout/HubPanelShell.tsx");
-    const dataPath = resolve(process.cwd(), "src/components/layout/useHubPanelData.ts");
-    const hub = readFileSync(resolve(process.cwd(), "src/components/layout/HubPanel.tsx"), "utf8");
+  test("legacy project archive presentation modules stay removed", () => {
+    const removedPaths = [
+      "src/components/layout/HubPanel.tsx",
+      "src/components/layout/HubPanelShell.tsx",
+      "src/components/layout/HubPanelContent.tsx",
+      "src/components/layout/useHubPanelData.ts",
+      "src/components/context/ProjectOverviewCard.tsx",
+      "src/components/layout/archive/ArchiveSummaryStrip.tsx",
+      "src/components/layout/archive/ArchiveContextMaterials.tsx",
+    ];
 
-    expect(existsSync(shellPath), "HubPanelShell should own inspector chrome").toBe(true);
-    expect(existsSync(dataPath), "useHubPanelData should own archive data queries").toBe(true);
-
-    const shell = existsSync(shellPath) ? readFileSync(shellPath, "utf8") : "";
-    const data = existsSync(dataPath) ? readFileSync(dataPath, "utf8") : "";
-
-    expect(hub).toContain("HubPanelShell");
-    expect(hub).toContain("useHubPanelData");
-    expect(hub).not.toContain("getProjectRuntimeStatus");
-    expect(hub).not.toContain("listMcpContextSources");
-    expect(hub).not.toContain("deriveProjectArchiveOverview");
-    expect(hub).not.toContain("buildContextMaterials");
-    expect(hub).not.toContain("<aside");
-    expect(hub).not.toContain("forge-inspector-header");
-
-    expect(shell).toContain("ForgeIconButton");
-    expect(shell).toContain("project-archive-panel");
-    expect(shell).toContain("forge-inspector-header");
-    expect(shell).toContain("HubPanelContent");
-
-    expect(data).toContain("useProjectRuntimeStatusQuery");
-    expect(data).toContain("useMcpContextSourcesQuery");
-    expect(data).toContain("deriveProjectArchiveOverview");
-    expect(data).toContain("buildContextMaterials");
-    expect(data).toContain("getActiveContextItems");
-  });
-
-  test("project archive context material rows and prompt arguments are owned by focused modules", () => {
-    const archiveMaterials = readFileSync(resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterials.tsx"), "utf8");
-    const rowsPath = resolve(process.cwd(), "src/components/layout/archive/ArchiveContextMaterialRows.tsx");
-    const promptFormPath = resolve(process.cwd(), "src/components/layout/archive/ArchivePromptArgumentForm.tsx");
-
-    expect(existsSync(rowsPath), "ArchiveContextMaterialRows should own material row rendering").toBe(true);
-    expect(existsSync(promptFormPath), "ArchivePromptArgumentForm should own prompt argument editing").toBe(true);
-
-    const rows = existsSync(rowsPath) ? readFileSync(rowsPath, "utf8") : "";
-    const promptForm = existsSync(promptFormPath) ? readFileSync(promptFormPath, "utf8") : "";
-
-    expect(archiveMaterials).toContain("ContextMaterialRows");
-    expect(archiveMaterials).not.toContain("function ContextFileRow");
-    expect(archiveMaterials).not.toContain("function ContextPromptRow");
-    expect(archiveMaterials).not.toContain("useState");
-    expect(archiveMaterials).not.toContain("@base-ui/react/button");
-    expect(archiveMaterials).not.toContain("statusClass");
-    expect(archiveMaterials).not.toContain("statusLabel");
-
-    expect(rows).toContain("function ContextMaterialRows");
-    expect(rows).toContain("function ContextFileRow");
-    expect(rows).toContain("ArchivePromptMaterialRow");
-    expect(rows).toContain("@base-ui/react/button");
-    expect(rows).toContain("statusClass");
-    expect(rows).toContain("statusLabel");
-    expect(rows).not.toContain("useState");
-    expect(rows).not.toContain("ForgeTextInput");
-
-    expect(promptForm).toContain("function ArchivePromptArgumentForm");
-    expect(promptForm).toContain("function ArchivePromptMaterialRow");
-    expect(promptForm).toContain("useState");
-    expect(promptForm).toContain("ForgeTextInput");
-    expect(promptForm).toContain("加入本轮");
+    for (const path of removedPaths) {
+      expect(existsSync(resolve(process.cwd(), path)), `${path} should remain removed`).toBe(false);
+    }
   });
 
   test("project delivery status uses compact inspector motion", () => {
     const projectStatus = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusCard.tsx"), "utf8");
     const projectStatusView = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusView.tsx"), "utf8");
     const summary = readFileSync(resolve(process.cwd(), "src/components/layout/ProjectStatusSummary.tsx"), "utf8");
-    const archiveStyles = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
+    const projectStatusStyles = readFileSync(resolve(process.cwd(), "src/styles/project-status.css"), "utf8");
 
     expect(projectStatusView).toContain("data-testid=\"project-status-card\"");
     expect(projectStatusView).toContain("ProjectStatusSummary");
@@ -836,9 +755,9 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(projectStatus).toContain("scope: cardRef");
     expect(projectStatus).toContain("prefersReducedMotion");
     expect(summary).toContain("forge-project-status-summary");
-    expect(archiveStyles).toContain(".forge-project-status");
-    expect(archiveStyles).toContain(".forge-project-status-metric");
-    expect(archiveStyles).toContain("[data-forge-motion=\"project-status-entry\"]");
+    expect(projectStatusStyles).toContain(".forge-project-status");
+    expect(projectStatusStyles).toContain(".forge-project-status-metric");
+    expect(projectStatusStyles).toContain("[data-forge-motion=\"project-status-entry\"]");
   });
 
   test("project delivery card rendering is owned by a focused subview", () => {
@@ -1022,19 +941,19 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(markdown).not.toContain("linear-gradient(var(--forge-code-grid-line)");
   });
 
-  test("project archive inspector styles are owned by the archive stylesheet", () => {
+  test("work panel and project status styles are owned by focused stylesheets", () => {
     const globals = readFileSync(resolve(process.cwd(), "src/styles/globals.css"), "utf8");
-    const archive = readFileSync(resolve(process.cwd(), "src/styles/archive.css"), "utf8");
+    const workPanel = readFileSync(resolve(process.cwd(), "src/styles/work-panel.css"), "utf8");
+    const projectStatus = readFileSync(resolve(process.cwd(), "src/styles/project-status.css"), "utf8");
 
-    expect(globals).toContain('@import "./archive.css";');
-    for (const selector of [
-      ".forge-inspector",
-      ".forge-inspector-header",
-      ".forge-inspector-body",
-      ".forge-disclosure-row",
-      ".forge-project-status",
-    ]) {
-      expect(archive).toContain(selector);
+    expect(globals).toContain('@import "./work-panel.css";');
+    expect(globals).toContain('@import "./project-status.css";');
+    for (const selector of [".forge-work-panel", ".forge-work-panel-launcher", ".forge-work-panel-tab-rail"]) {
+      expect(workPanel).toContain(selector);
+      expect(globals).not.toContain(selector);
+    }
+    for (const selector of [".forge-project-status", ".forge-project-status-header", ".forge-project-status-metric"]) {
+      expect(projectStatus).toContain(selector);
       expect(globals).not.toContain(selector);
     }
   });

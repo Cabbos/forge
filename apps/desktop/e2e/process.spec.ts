@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { setup, holdSendInput, expectHeldSendInput, releaseHeldSendInput, openProjectArchive, projectArchive } from "./fixtures/app";
+import { setup, holdSendInput, expectHeldSendInput, releaseHeldSendInput, openWorkPanel, workPanel } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
 
 async function forceDarkWorkbench(page: import("@playwright/test").Page) {
@@ -686,7 +686,7 @@ test.beforeEach(async ({ page }) => {
     expect(shellSurface?.shellPreOverflowWrap).toBe("anywhere");
   });
 
-  test("desktop material baseline covers composer, process detail, popover, and archive", async ({ page }) => {
+  test("desktop material baseline covers composer, process detail, popover, and work panel", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -707,7 +707,7 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_end", session_id: sessionId, block_id: "material-shell", exit_code: 0 },
     ], 1);
     await page.getByTestId("shell-card-trigger").click();
-    await openProjectArchive(page);
+    await openWorkPanel(page);
     await page.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ }).click();
     await expect(page.getByRole("menu")).toBeVisible();
     await expect.poll(async () => page.evaluate(() => {
@@ -749,14 +749,15 @@ test.beforeEach(async ({ page }) => {
       const composer = document.querySelector<HTMLElement>("[data-testid='composer-surface']");
       const detail = document.querySelector<HTMLElement>("[data-testid='log-detail-surface']");
       const menu = document.querySelector<HTMLElement>(".forge-composer-model-menu");
-      const archive = document.querySelector<HTMLElement>("[data-testid='project-archive-panel']");
-      const archiveHeader = archive?.querySelector<HTMLElement>(".forge-inspector-header");
-      if (!composer || !detail || !menu || !archive || !archiveHeader) return null;
+      const panel = document.querySelector<HTMLElement>("aside.forge-work-panel");
+      const panelHeader = panel?.querySelector<HTMLElement>(".forge-work-panel-header");
+      const separator = document.querySelector<HTMLElement>(".forge-work-panel-separator");
+      if (!composer || !detail || !menu || !panel || !panelHeader || !separator) return null;
       const composerStyle = getComputedStyle(composer);
       const detailStyle = getComputedStyle(detail);
       const menuStyle = getComputedStyle(menu);
-      const archiveStyle = getComputedStyle(archive);
-      const archiveHeaderStyle = getComputedStyle(archiveHeader);
+      const panelStyle = getComputedStyle(panel);
+      const panelHeaderStyle = getComputedStyle(panelHeader);
       return {
         materialBorder,
         materialBorderColor,
@@ -777,10 +778,11 @@ test.beforeEach(async ({ page }) => {
         detailBackground: detailStyle.backgroundColor,
         menuBorder: menuStyle.borderTopColor,
         menuBackground: menuStyle.backgroundColor,
-        archiveBorder: archiveStyle.borderLeftColor,
-        archiveBackground: archiveStyle.backgroundColor,
-        archiveHeaderHeight: Math.round(archiveHeader.getBoundingClientRect().height),
-        archiveHeaderBorder: archiveHeaderStyle.borderBottomColor,
+        panelBackground: panelStyle.backgroundColor,
+        panelDepth: resolveColor(root.getPropertyValue("--forge-bg-depth").trim()),
+        panelHeaderHeight: Math.round(panelHeader.getBoundingClientRect().height),
+        panelHeaderBorder: panelHeaderStyle.borderBottomColor,
+        separatorWidth: Math.round(separator.getBoundingClientRect().width),
       };
     });
 
@@ -794,10 +796,10 @@ test.beforeEach(async ({ page }) => {
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
     expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.menuBackground).toBe(metrics!.materialPopover);
-    expect(metrics!.archiveBorder).toBe(metrics!.materialBorderColor);
-    expect(metrics!.archiveBackground).toBe("rgb(236, 226, 212)");
-    expect(metrics!.archiveHeaderHeight).toBe(42);
-    expect(metrics!.archiveHeaderBorder).toBe(metrics!.materialBorderColor);
+    expect(metrics!.panelBackground).toBe(metrics!.panelDepth);
+    expect(metrics!.panelHeaderHeight).toBe(44);
+    expect(metrics!.panelHeaderBorder).toBe(metrics!.materialBorderColor);
+    expect(metrics!.separatorWidth).toBe(1);
   });
 
   test("core shell surfaces keep a restrained product radius", async ({ page }) => {
@@ -811,15 +813,13 @@ test.beforeEach(async ({ page }) => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.locator("textarea")).toBeVisible();
 
-    await page.getByTitle("打开项目档案").click();
-    const archive = projectArchive(page);
-    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
+    await openWorkPanel(page);
+    await expect(workPanel(page).getByTestId("work-panel-launcher")).toBeVisible();
 
     const radii = await page.evaluate(() => {
       const composer = document.querySelector("[data-testid='composer-lane'] > div:last-child");
-      const archivePanel = [...document.querySelectorAll("aside:last-of-type section div")]
-        .find((node) => node.textContent?.includes("项目概览"));
-      return [composer, archivePanel]
+      const launcherAction = document.querySelector(".forge-work-panel-launcher-action");
+      return [composer, launcherAction]
         .filter(Boolean)
         .map((node) => Number.parseFloat(getComputedStyle(node as Element).borderTopLeftRadius));
     });
@@ -1065,7 +1065,7 @@ test.beforeEach(async ({ page }) => {
     expect(metrics.chipMaxWidth).toBe("100%");
   });
 
-  test("pending project record delivery opens project archive", async ({ page }) => {
+  test("pending background records stay hidden from the delivery surface", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -1098,11 +1098,11 @@ test.beforeEach(async ({ page }) => {
     ], 5);
 
     const card = page.getByTestId("message-panel").filter({ hasText: "本轮交付" });
-    await expect(card.getByText("自动记录")).toBeVisible();
-    await card.getByRole("button", { name: "查看记录" }).click();
-
-    await expect(page.getByRole("complementary", { name: "项目档案" })).toBeVisible();
-    await expect(projectArchive(page).getByTestId("archive-disclosure-records").getByRole("button", { name: /项目记录/ }).first()).toHaveAttribute("aria-expanded", "true");
+    await expect(card.getByText("自动记录")).toHaveCount(0);
+    await expect(card.getByText("建议更新项目记录")).toHaveCount(0);
+    await expect(card.getByRole("button", { name: "检查这版" })).toBeVisible();
+    await card.getByRole("button", { name: "检查这版" }).click();
+    await expect(page.locator("textarea")).toHaveValue(/检查当前版本/);
   });
 
   test("diff views read like a professional patch surface", async ({ page }) => {

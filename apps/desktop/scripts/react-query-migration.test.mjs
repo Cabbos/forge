@@ -134,9 +134,9 @@ test("Migrated components no longer directly call IPC read functions", () => {
   const capabilityManager = read("src/components/settings/CapabilityManager.tsx");
   assert.doesNotMatch(capabilityManager, /listCapabilities\(/);
 
-  const hubPanel = read("src/components/layout/useHubPanelData.ts");
-  assert.doesNotMatch(hubPanel, /listMcpContextSources\(/);
-  assert.doesNotMatch(hubPanel, /getProjectRuntimeStatus\(/);
+  const workPanelLauncher = read("src/components/workpanel/WorkPanelLauncher.tsx");
+  assert.doesNotMatch(workPanelLauncher, /searchWorkspaceFiles\(/);
+  assert.match(workPanelLauncher, /useSearchWorkspaceFilesQuery/);
 
   const continuity = read("src/components/context/ContinuityExperiencesSection.tsx");
   assert.doesNotMatch(continuity, /listContinuityExperiences\(/);

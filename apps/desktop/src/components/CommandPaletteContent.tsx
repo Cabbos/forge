@@ -20,7 +20,7 @@ interface CommandPaletteContentProps {
   activeSessionId: string | null;
   theme: "light" | "dark";
   onCreate: () => void;
-  onOpenProjectArchive: () => void;
+  onOpenWorkPanel: () => void;
   onOpenSettings: () => void;
   onWorkflowOverride: (action: WorkflowOverrideAction) => void;
   onSelectSession: (sessionId: string) => void;
@@ -34,7 +34,7 @@ export function CommandPaletteContent({
   activeSessionId,
   theme,
   onCreate,
-  onOpenProjectArchive,
+  onOpenWorkPanel,
   onOpenSettings,
   onWorkflowOverride,
   onSelectSession,
@@ -65,9 +65,9 @@ export function CommandPaletteContent({
             <span className="min-w-0 flex-1 truncate">{activeWorkspace ? "新建对话" : "先选择项目"}</span>
             {activeWorkspace && <ShortcutHint keys="⌘N" />}
           </ForgeCommandItem>
-          <ForgeCommandItem onSelect={onOpenProjectArchive}>
+          <ForgeCommandItem onSelect={onOpenWorkPanel}>
             <ForgeIcon icon={PanelRightOpen} tone="context" />
-            <span className="min-w-0 flex-1 truncate">打开项目档案</span>
+            <span className="min-w-0 flex-1 truncate">打开工作面板</span>
             <ShortcutHint keys="⌘I" />
           </ForgeCommandItem>
           <ForgeCommandItem onSelect={onOpenSettings}>

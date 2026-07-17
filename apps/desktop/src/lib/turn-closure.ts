@@ -1,12 +1,12 @@
 import type { DeliverySummary } from "@/lib/protocol";
 
 export type DeliveryCardTone = "normal" | "warning" | "danger";
-export type DeliveryPrimaryAction = "continue_fix" | "open_records" | "check_version";
+export type DeliveryPrimaryAction = "continue_fix" | "check_version";
 
 export interface DeliverySummaryItem {
   label: string;
   value: string;
-  kind: "preview" | "checkpoint" | "verification" | "record" | "next";
+  kind: "preview" | "checkpoint" | "verification" | "next";
 }
 
 export interface DeliveryPrimaryActionView {
@@ -23,17 +23,12 @@ export interface DeliveryCardView {
 
 export function deriveDeliveryCardView(summary: DeliverySummary): DeliveryCardView {
   const verificationFailed = summary.verification_status === "failed" || summary.verification_status === "error";
-  const hasPendingRecord = Boolean(summary.record_label) && summary.record_status === "pending";
-
   const items: DeliverySummaryItem[] = [
     { label: "预览", value: summary.preview_label, kind: "preview" },
     { label: "检查点", value: summary.checkpoint_label, kind: "checkpoint" },
   ];
   if (summary.verification_label) {
     items.push({ label: "检查", value: summary.verification_label, kind: "verification" });
-  }
-  if (summary.record_label) {
-    items.push({ label: "自动记录", value: summary.record_label, kind: "record" });
   }
   items.push({ label: "下一步", value: summary.next_action, kind: "next" });
 
@@ -45,17 +40,6 @@ export function deriveDeliveryCardView(summary: DeliverySummary): DeliveryCardVi
         action: "continue_fix",
         label: "继续修复",
         prompt: repairPrompt(summary),
-      },
-    };
-  }
-
-  if (hasPendingRecord) {
-    return {
-      tone: "warning",
-      items,
-      primaryAction: {
-        action: "open_records",
-        label: "查看记录",
       },
     };
   }

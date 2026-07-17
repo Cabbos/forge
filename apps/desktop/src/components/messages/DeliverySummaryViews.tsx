@@ -1,5 +1,5 @@
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
-import { ArrowUpRight, ClipboardCheck, ExternalLink, FileText, ShieldCheck } from "lucide-react";
+import { ArrowUpRight, ClipboardCheck, ExternalLink, ShieldCheck } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DeliveryPrimaryActionView, DeliverySummaryItem } from "@/lib/turn-closure";
 import { ForgeIcon } from "@/components/primitives/icon";
@@ -52,15 +52,12 @@ function itemIcon(item: DeliverySummaryItem): ReactNode {
       return <ForgeIcon icon={ShieldCheck} tone="safety" contained={false} className="size-3.5" />;
     case "verification":
       return <ForgeIcon icon={ClipboardCheck} tone="safety" contained={false} className="size-3.5" />;
-    case "record":
-      return <ForgeIcon icon={FileText} tone="context" contained={false} className="size-3.5" />;
     case "next":
       return <ForgeIcon icon={ClipboardCheck} tone="reasoning" contained={false} className="size-3.5" />;
   }
 }
 
 function primaryIcon(action: string): ReactNode {
-  if (action === "open_records") return <ForgeIcon icon={FileText} tone="context" contained={false} className="size-3.5" />;
   if (action === "continue_fix") return <ForgeIcon icon={ArrowUpRight} tone="action" contained={false} className="size-3.5" />;
   return <ForgeIcon icon={ShieldCheck} tone="safety" contained={false} className="size-3.5" />;
 }

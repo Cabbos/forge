@@ -1784,7 +1784,7 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
         case "list_forge_wiki_pages":
           return forgeWikiExists ? forgeWikiPages.map((page) => ({ ...page, project_path: projectPath })) : [];
         case "read_forge_wiki_page":
-          return args.pagePath === "tasks.md" ? "# 当前任务\n\n覆盖项目档案面板。" : "# 项目概览\n\n项目记录预览。";
+          return args.pagePath === "tasks.md" ? "# 当前任务\n\n覆盖工作面板。" : "# 项目概览\n\n项目记录预览。";
         case "select_forge_wiki_context":
           return [
             {
@@ -1969,44 +1969,29 @@ export async function releaseHeldSendInput(page: Page) {
   });
 }
 
-export function projectArchive(page: Page) {
-  return page.getByTestId("project-archive-panel");
+export function workPanel(page: Page) {
+  return page.getByRole("complementary", { name: "工作面板" });
 }
 
-export async function openProjectArchive(page: Page, section?: "records") {
-  const archive = projectArchive(page);
-  if (await archive.isVisible().catch(() => false)) return archive;
+export async function openWorkPanel(page: Page) {
+  const panel = workPanel(page);
+  if (await panel.isVisible().catch(() => false)) return panel;
 
-  await page.getByRole("button", { name: "打开项目档案" }).click();
-  if (await archive.isVisible({ timeout: 750 }).catch(() => false)) return archive;
-
-  await page.evaluate((targetSection) => {
-    window.dispatchEvent(new CustomEvent("open-hub", {
-      detail: targetSection ? { section: targetSection } : undefined,
-    }));
-  }, section);
-  await expect(archive).toBeVisible();
-  return archive;
+  await page.getByRole("button", { name: "打开工作面板" }).first().click();
+  await expect(panel).toBeVisible();
+  return panel;
 }
 
-export async function expandArchiveRecords(page: Page) {
-  const archive = projectArchive(page);
-  const records = archive.getByTestId("archive-disclosure-records");
-  const trigger = records.getByRole("button", { name: /项目记录/ }).first();
-  if (await trigger.getAttribute("aria-expanded") !== "true") {
-    await trigger.click();
+export async function openWorkPanelSubtask(page: Page, title: string) {
+  const panel = await openWorkPanel(page);
+  if (!await panel.getByTestId("work-panel-launcher").isVisible().catch(() => false)) {
+    await panel.getByRole("button", { name: "新建工作面板标签" }).click();
   }
-  return records;
-}
-
-export async function expandArchiveFiles(page: Page) {
-  const archive = projectArchive(page);
-  const files = archive.getByTestId("archive-disclosure-files");
-  const trigger = files.getByRole("button", { name: /资料/ }).first();
-  if (await trigger.getAttribute("aria-expanded") !== "true") {
-    await trigger.click();
-  }
-  return files;
+  await panel.getByRole("option", { name: /^子任务/ }).click();
+  await panel.getByRole("option", { name: new RegExp(title) }).click();
+  const subtask = panel.locator(".forge-work-panel-subtask", { hasText: title });
+  await expect(subtask).toBeVisible();
+  return subtask;
 }
 
 const APP_URL = "http://localhost:1420";

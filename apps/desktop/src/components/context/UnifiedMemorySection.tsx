@@ -1,4 +1,5 @@
 import { useCallback, useMemo, useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { Archive, Brain, Search, Trash2 } from "lucide-react";
 import { ForgeSurface } from "@/components/primitives/surface";
 import { queryKeys } from "@/hooks/queries/queryKeys";
@@ -91,7 +92,7 @@ export function UnifiedMemorySection({
             </label>
             <div className="flex h-8 shrink-0 rounded-md border border-border bg-background/70 p-0.5">
               {(["current", "archived"] as const).map((mode) => (
-                <button
+                <ButtonPrimitive
                   key={mode}
                   type="button"
                   onClick={() => setFilter(mode)}
@@ -102,7 +103,7 @@ export function UnifiedMemorySection({
                   }`}
                 >
                   {mode === "current" ? "现用" : "归档"}
-                </button>
+                </ButtonPrimitive>
               ))}
             </div>
           </div>

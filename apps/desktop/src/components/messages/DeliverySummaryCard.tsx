@@ -20,17 +20,6 @@ export function DeliverySummaryCard({ block, sessionId }: { block: BlockState; s
     window.setTimeout(() => setLoadedPrompt(null), 1200);
   };
   const runPrimaryAction = () => {
-    if (view.primaryAction.action === "open_records") {
-      if (document.documentElement.dataset.projectArchiveOpen !== "true") {
-        window.dispatchEvent(new Event("toggle-hub"));
-        window.setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("open-hub", { detail: { section: "records" } }));
-        }, 0);
-        return;
-      }
-      window.dispatchEvent(new CustomEvent("open-hub", { detail: { section: "records" } }));
-      return;
-    }
     if (view.primaryAction.prompt) loadPrompt(view.primaryAction.prompt);
   };
   const loaded = loadedPrompt === view.primaryAction.prompt;

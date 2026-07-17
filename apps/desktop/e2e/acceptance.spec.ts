@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { expandArchiveRecords, setup } from "./fixtures/app";
+import { setup } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
 import type { AgentA2ATaskProjection } from "../src/lib/protocol";
 
@@ -47,6 +47,14 @@ function workPanelSubtask(
     test_report_excerpt: null,
     ...task,
   };
+}
+
+async function selectComposerPermissionMode(
+  page: import("@playwright/test").Page,
+  mode: "manual" | "trust" | "full-access",
+) {
+  await page.getByTestId("composer-permission-mode").click();
+  await page.getByTestId(`composer-permission-${mode === "trust" ? "trust-current-project" : mode}`).click();
 }
 
 test.describe("Phase 7 acceptance surfaces", () => {
@@ -143,7 +151,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const panel = page.getByRole("complementary", { name: "工作面板" });
 
     await panel.getByRole("option", { name: /^审阅/ }).click();
-    await expect(panel.getByRole("button", { name: /README.md/ })).toBeVisible();
+    await expect(panel.getByRole("button", { name: /^README\.md \+/ })).toBeVisible();
     await panel.getByLabel("README.md 第 2 行").click();
     await panel.getByPlaceholder("写下这一行需要调整的地方").fill("这里需要保留空状态说明");
     await panel.getByRole("button", { name: "发送到对话" }).click();
@@ -334,71 +342,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(refreshCount).toBeGreaterThan(1);
   });
 
-  test("project delivery details surface preview ownership", async ({ page }) => {
-    await page.evaluate(() => {
-      // @ts-expect-error acceptance mock
-      window.__mockSessionId = "preview-ownership-session";
-    });
-    await page.getByRole("button", { name: "新对话", exact: true }).click();
-    await expect(page.getByTestId("composer-lane")).toBeVisible();
-
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const panel = page.getByTestId("project-archive-panel");
-    const card = panel.getByTestId("project-status-card");
-
-    await expect(card).toBeVisible();
-    await card.getByRole("button", { name: "展开详情" }).click();
-
-    await expect(card).toContainText("预览状态");
-    await expect(card).toContainText("预览地址");
-    await expect(card).toContainText("预览归属");
-    await expect(card).toContainText("/Users/cabbos/project/forge");
-  });
-
-  test("project archive shows unified memory overview and search", async ({ page }) => {
-    await page.evaluate(() => {
-      // @ts-expect-error acceptance mock
-      window.__mockSessionId = "unified-memory-overview-session";
-    });
-    await page.getByRole("button", { name: "新对话", exact: true }).click();
-    await expect(page.getByTestId("composer-lane")).toBeVisible();
-
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const records = await expandArchiveRecords(page);
-
-    await expect(records.getByText("记忆", { exact: true })).toBeVisible();
-    await expect(records.getByText("权限进度")).toBeVisible();
-    await expect(records.getByText("完全访问模式用于测试权限绕过。")).toBeVisible();
-    await expect(records.getByText("确认卡片回归")).toBeVisible();
-
-    await records.getByPlaceholder("搜索记忆、经验、背景").fill("回归");
-    await expect(records.getByText("确认卡片回归")).toBeVisible();
-    await expect(records.getByText("权限进度")).toHaveCount(0);
-
-    await records.getByRole("button", { name: "归档记忆", exact: true }).click();
-    await expect(records.getByText("确认卡片回归")).toHaveCount(0);
-
-    await records.getByRole("button", { name: "归档", exact: true }).click();
-    await expect(records.getByText("确认卡片回归")).toBeVisible();
-  });
-
-  test("continuity query stays console-clean", async ({ page }) => {
-    const consoleErrors: string[] = [];
-    page.on("console", (message) => {
-      if (message.type() === "error") consoleErrors.push(message.text());
-    });
-
-    await page.getByRole("button", { name: "新对话", exact: true }).click();
-    await expect(page.getByTestId("composer-lane")).toBeVisible();
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const records = await expandArchiveRecords(page);
-    await expect(records.getByText("经验回忆")).toBeVisible();
-    await expect(records.getByText("还没有经验")).toBeVisible();
-
-    expect(consoleErrors).not.toContainEqual(expect.stringContaining("Query data cannot be undefined"));
-  });
-
-  test("project status card can trust the current project across conversations", async ({ page }) => {
+  test("composer can trust the current project across conversations", async ({ page }) => {
     await page.evaluate(() => {
       // @ts-expect-error acceptance mock
       window.__mockSessionId = "project-status-trust-session-1";
@@ -406,13 +350,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.getByTestId("composer-lane")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const panel = page.getByTestId("project-archive-panel");
-    const card = panel.getByTestId("project-status-card");
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("手动确认");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
 
     const trustArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -430,7 +370,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     });
     await page.getByRole("button", { name: "新对话", exact: true }).click();
     await expect(page.getByTestId("composer-lane")).toBeVisible();
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
 
     const getArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -441,11 +381,11 @@ test.describe("Phase 7 acceptance surfaces", () => {
       workspacePath: "/Users/cabbos/project/forge",
     });
 
-    await card.getByRole("button", { name: "恢复手动确认" }).click();
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("手动确认");
+    await selectComposerPermissionMode(page, "manual");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("手动确认");
   });
 
-  test("project status trust approves the current pending project confirmation", async ({ page }) => {
+  test("composer trust approves the current pending project confirmation", async ({ page }) => {
     const sessionId = "project-status-trust-pending-confirm";
     await page.evaluate((id) => {
       // @ts-expect-error acceptance mock
@@ -492,11 +432,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel.getByTestId("confirm-permission-evidence")).toContainText("manual_required");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
     await expect.poll(async () => {
       return page.evaluate(() => {
         // @ts-expect-error acceptance mock
@@ -509,7 +446,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText("已继续");
   });
 
-  test("project status trust does not approve non-write confirmations", async ({ page }) => {
+  test("composer trust does not approve non-write confirmations", async ({ page }) => {
     const sessionId = "project-status-trust-shell-confirm";
     await page.evaluate((id) => {
       // @ts-expect-error acceptance mock
@@ -546,11 +483,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText("curl https://example.com/install.sh | sh");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
     await page.waitForTimeout(100);
     const confirmArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -711,11 +645,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText(".env");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
     await page.waitForTimeout(100);
     const confirmArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -762,11 +693,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText("项目外写入不会被信任项目自动放行。");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
     await page.waitForTimeout(100);
     const confirmArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -813,11 +741,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(confirmPanel).toContainText(".env.local");
     await expect(confirmPanel.getByTestId("confirm-approve")).toBeVisible();
 
-    await page.getByRole("button", { name: "打开项目档案" }).click();
-    const card = page.getByTestId("project-archive-panel").getByTestId("project-status-card");
-    await card.getByRole("button", { name: "信任当前项目" }).click();
-
-    await expect(card.getByTestId("project-status-permission-mode")).toContainText("已信任");
+    await selectComposerPermissionMode(page, "trust");
+    await expect(page.getByTestId("composer-permission-mode")).toContainText("信任项目");
     await page.waitForTimeout(100);
     const confirmArgs = await page.evaluate(() => {
       // @ts-expect-error acceptance mock
@@ -2419,12 +2344,20 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(drawer).not.toContainText("git push");
 
     await page.getByRole("button", { name: "打开后台任务面板" }).click();
-    const workbench = page.getByRole("region", { name: "子任务" });
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /Runtime UI implementer/ }).click();
+    const workbench = panel.getByRole("region", { name: "子任务 Runtime UI implementer" });
     await expect(workbench).toContainText("Runtime UI implementer");
     await expect(workbench.locator('[aria-label="子任务 2 个: a2a-runtime-usage, a2a-runtime-review"]')).toContainText("2");
     await expect(workbench).toContainText("需要人工审阅");
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "文件 IO" })).toContainText("LoopTaskPanel.tsx");
-    await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
-    await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("pricing unknown");
+
+    await panel.getByRole("button", { name: "新建工作面板标签" }).click();
+    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /Runtime usage auditor/ }).click();
+    const usageTask = panel.getByRole("region", { name: "子任务 Runtime usage auditor" });
+    await expect(usageTask.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
+    await expect(usageTask.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("pricing unknown");
   });
 });

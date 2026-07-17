@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { setup, openProjectArchive } from "./fixtures/app";
+import { openWorkPanelSubtask, setup, workPanel } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
 import type { AgentA2ATaskProjection, StreamEvent } from "../src/lib/protocol";
 
@@ -428,7 +428,7 @@ test.describe("A2A runtime surfaces", () => {
     await expect(page.locator("[data-testid='agent-a2a-timeline']")).toHaveCount(0);
   });
 
-  test("hub panel renders detailed A2A workspace with worktree review area", async ({ page }) => {
+  test("work panel opens one selected A2A task with its process", async ({ page }) => {
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
@@ -443,17 +443,15 @@ test.describe("A2A runtime surfaces", () => {
 
     await simulateStream(page, sessionId, a2aEvents(sessionId));
 
-    await openProjectArchive(page, "agents");
+    const task = await openWorkPanelSubtask(page, "Refactor auth module");
 
-    const workspace = page.locator(".forge-a2a-workspace");
-    await expect(workspace).toBeVisible();
-    await expect(workspace).toContainText("Agent Workbench");
-    await expect(workspace).toContainText("子任务");
-    await expect(workspace).toContainText("1 运行");
-    await expect(workspace.locator('[aria-label="子任务 2 个: task-1-child-a, task-1-child-b"]')).toContainText("2");
+    await expect(task).toContainText("运行中");
+    await expect(task).toContainText("Starting worktree worker");
+    await expect(task.locator('[aria-label="子任务 2 个: task-1-child-a, task-1-child-b"]')).toContainText("2");
+    await expect(task).not.toContainText("Auth API patch");
   });
 
-  test("hub panel summarizes review queue and review history", async ({ page }) => {
+  test("work panel keeps review details scoped to the selected task", async ({ page }) => {
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
@@ -467,23 +465,19 @@ test.describe("A2A runtime surfaces", () => {
     });
 
     await simulateStream(page, sessionId, reviewQueueEvents(sessionId));
-    await openProjectArchive(page, "agents");
+    const pending = await openWorkPanelSubtask(page, "Implement settings recovery polish");
 
-    const workspace = page.locator(".forge-a2a-workspace");
-    await expect(workspace).toContainText("审阅队列");
-    await expect(workspace).toContainText("1 个待审阅");
-    await expect(workspace).toContainText("Implement settings recovery polish");
-    await expect(workspace).toContainText("apps/desktop/src/components/settings/RecoveryPanel.tsx");
-    await expect(workspace).toContainText("审阅历史");
-    await expect(workspace).toContainText("审阅拒绝");
-    await expect(workspace).toContainText("Review rejected unsafe permission edit");
-    await expect(workspace).toContainText("文件视图");
-    await expect(workspace).toContainText("2 可见 / 3 报告");
-    await expect(workspace).toContainText("1 未展开");
-    await expect(workspace).toContainText("apps/desktop/src-tauri/src/executor/permissions.rs");
+    await expect(pending).toContainText("需要人工审阅");
+    await expect(pending).toContainText("apps/desktop/src/components/settings/RecoveryPanel.tsx");
+    await expect(pending).not.toContainText("Review rejected unsafe permission edit");
+
+    const rejected = await openWorkPanelSubtask(page, "Review rejected unsafe permission edit");
+    await expect(rejected).toContainText("审阅拒绝");
+    await expect(rejected).toContainText("apps/desktop/src-tauri/src/executor/permissions.rs");
+    await expect(rejected).not.toContainText("Implement settings recovery polish");
   });
 
-  test("hub panel can approve a review queue item", async ({ page }) => {
+  test("work panel can approve the selected review task", async ({ page }) => {
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
       window.__mockSessionId = sessionId;
@@ -497,15 +491,11 @@ test.describe("A2A runtime surfaces", () => {
     });
 
     await simulateStream(page, sessionId, reviewQueueEvents(sessionId));
-    await openProjectArchive(page, "agents");
+    const task = await openWorkPanelSubtask(page, "Implement settings recovery polish");
+    await task.getByRole("button", { name: "通过审阅 Implement settings recovery polish" }).click();
 
-    const workspace = page.locator(".forge-a2a-workspace");
-    await workspace.getByRole("button", { name: "通过审阅 Implement settings recovery polish" }).click();
-
-    await expect(workspace).toContainText("审阅历史");
-    await expect(workspace).toContainText("审阅通过");
-    await expect(workspace).toContainText("Review approved");
-    await expect(workspace).not.toContainText("1 个待审阅");
+    await expect(task).toContainText("审阅通过");
+    await expect(task).toContainText("Review approved");
     await expect.poll(() => page.evaluate(() => {
       // @ts-expect-error mock
       return window.__lastReviewAgentA2ATasksArgs;
@@ -516,7 +506,7 @@ test.describe("A2A runtime surfaces", () => {
     });
   });
 
-  test("hub panel shows mocked A2A worker lifecycle statuses", async ({ page }) => {
+  test("work panel shows lifecycle details for each selected worker", async ({ page }) => {
     const lifecycleSessionId = "a2a-worker-lifecycle-session";
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -531,39 +521,24 @@ test.describe("A2A runtime surfaces", () => {
     });
 
     await simulateStream(page, lifecycleSessionId, workerLifecycleEvents(lifecycleSessionId));
-    await openProjectArchive(page, "agents");
 
-    const workspace = page.locator(".forge-a2a-workspace");
-    await expect(workspace).toBeVisible();
-    await expect(workspace).toContainText("1 运行");
-    await expect(workspace).toContainText("1 失败");
-    await expect(workspace).toContainText("1 中断");
-
-    const running = workspace.locator(".forge-a2a-task-row-wrapper", {
-      hasText: "Lifecycle running worker",
-    });
+    const running = await openWorkPanelSubtask(page, "Lifecycle running worker");
     await expect(running).toContainText("运行中");
     await expect(running).toContainText("正在执行验收脚本");
     await expect(running).toContainText("Worker accepted command");
 
-    const interrupted = workspace.locator(".forge-a2a-task-row-wrapper", {
-      hasText: "Lifecycle interrupted worker",
-    });
+    const interrupted = await openWorkPanelSubtask(page, "Lifecycle interrupted worker");
     await expect(interrupted).toContainText("已中断");
     await expect(interrupted).toContainText("恢复后将从上次进度继续");
     await expect(interrupted).toContainText("Worker paused before writing changes");
 
-    const failed = workspace.locator(".forge-a2a-task-row-wrapper", {
-      hasText: "Lifecycle failed worker",
-    });
+    const failed = await openWorkPanelSubtask(page, "Lifecycle failed worker");
     await expect(failed).toContainText("失败");
     await expect(failed).toContainText("工具错误");
     await expect(failed).toContainText("Shell command exited 1");
     await expect(failed.locator(".forge-a2a-task-retryable[title='可重试']")).toBeVisible();
 
-    const cancelledRow = workspace.locator(".forge-a2a-task-row[data-status='cancelled']", {
-      hasText: "Lifecycle cancelled worker",
-    });
+    const cancelledRow = await openWorkPanelSubtask(page, "Lifecycle cancelled worker");
     await expect(cancelledRow).toBeVisible();
     await expect(cancelledRow).toContainText("用户取消");
     await expect(cancelledRow).toContainText("用户取消了 worker");
@@ -619,8 +594,9 @@ test.describe("A2A runtime surfaces", () => {
     await expect(taskList).toContainText("Daily acceptance check");
 
     await statusBar.getByRole("button", { name: "打开后台任务面板" }).click();
-    await expect(page.locator(".forge-a2a-workspace")).toBeVisible();
-    await expect(page.locator(".forge-a2a-workspace")).toContainText("审阅队列");
+    await expect(workPanel(page)).toBeVisible();
+    await expect(workPanel(page).getByTestId("work-panel-launcher")).toBeVisible();
+    await expect(workPanel(page).getByRole("option", { name: /^子任务/ })).toBeVisible();
   });
 });
 
