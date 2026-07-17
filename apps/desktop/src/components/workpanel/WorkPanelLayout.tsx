@@ -26,6 +26,19 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   const modeRef = useRef(mode);
   const suppressLayoutPersistenceRef = useRef(false);
   const restoreWidthAfterOverlayRef = useRef(false);
+  const restoreResizeFrameRef = useRef<number | null>(null);
+  const restoreReleaseFrameRef = useRef<number | null>(null);
+  const restoreCycleRef = useRef(0);
+
+  const cancelPendingRestore = useCallback(() => {
+    restoreCycleRef.current += 1;
+    if (restoreResizeFrameRef.current !== null) cancelAnimationFrame(restoreResizeFrameRef.current);
+    if (restoreReleaseFrameRef.current !== null) cancelAnimationFrame(restoreReleaseFrameRef.current);
+    restoreResizeFrameRef.current = null;
+    restoreReleaseFrameRef.current = null;
+    restoreWidthAfterOverlayRef.current = false;
+    suppressLayoutPersistenceRef.current = false;
+  }, []);
 
   const updateState = useCallback((update: (current: WorkPanelTaskState) => WorkPanelTaskState, persist = true) => {
     setTaskStates((current) => {
@@ -49,9 +62,13 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
     const resize = () => {
       const nextMode = getWorkPanelViewportMode(window.innerWidth);
       if (modeRef.current === "overlay" && nextMode === "split") {
+        cancelPendingRestore();
         suppressLayoutPersistenceRef.current = true;
         restoreWidthAfterOverlayRef.current = true;
+      } else if (nextMode !== "split") {
+        cancelPendingRestore();
       }
+      modeRef.current = nextMode;
       setViewportWidth(window.innerWidth);
     };
     window.addEventListener("toggle-work-panel", toggle);
@@ -62,23 +79,34 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
       window.removeEventListener("open-work-panel", show);
       window.removeEventListener("resize", resize);
     };
-  }, []);
+  }, [cancelPendingRestore]);
 
   useEffect(() => {
     modeRef.current = mode;
   }, [mode]);
 
+  useEffect(() => cancelPendingRestore, [cancelPendingRestore]);
+
   useEffect(() => {
     if (!restoreWidthAfterOverlayRef.current || mode !== "split" || !open || maximized) return;
+    if (restoreResizeFrameRef.current !== null) cancelAnimationFrame(restoreResizeFrameRef.current);
+    if (restoreReleaseFrameRef.current !== null) cancelAnimationFrame(restoreReleaseFrameRef.current);
+    restoreResizeFrameRef.current = null;
+    restoreReleaseFrameRef.current = null;
+    restoreCycleRef.current += 1;
     const target = clampWorkPanelWidthPercent(state.widthPercent, bounds);
-    const restore = requestAnimationFrame(() => {
+    const cycle = restoreCycleRef.current;
+    restoreResizeFrameRef.current = requestAnimationFrame(() => {
+      if (cycle !== restoreCycleRef.current || modeRef.current !== "split") return;
+      restoreResizeFrameRef.current = null;
       panelRef.current?.resize(`${target}%`);
-      requestAnimationFrame(() => {
+      restoreReleaseFrameRef.current = requestAnimationFrame(() => {
+        if (cycle !== restoreCycleRef.current || modeRef.current !== "split") return;
+        restoreReleaseFrameRef.current = null;
         restoreWidthAfterOverlayRef.current = false;
         suppressLayoutPersistenceRef.current = false;
       });
     });
-    return () => cancelAnimationFrame(restore);
   }, [bounds, maximized, mode, open, panelRef, state.widthPercent]);
 
   const toggleMaximize = () => {
