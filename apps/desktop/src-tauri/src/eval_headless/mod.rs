@@ -66,6 +66,10 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     let continuity_service = continuity_database_path
         .map(ContinuityService::new_with_database_path)
         .unwrap_or_else(ContinuityService::new);
+    let continuity_project_path = workspace_path
+        .to_str()
+        .ok_or_else(|| "headless workspace path is not valid UTF-8".to_string())?;
+    continuity_service.initialize_project(continuity_project_path)?;
 
     // Resolve provider/model from profile when profile_id is set.
     let (effective_provider, effective_model) = resolve::resolve_profile_defaults(
@@ -153,7 +157,14 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     {
         let watchdog =
             runner::spawn_timeout_watchdog(started, timeout_secs, session.clone(), emitter.clone());
-        let result = runner::send_headless_turn(&session, &prompt, emitter.clone()).await;
+        let result = runner::send_headless_turn(
+            &session,
+            &prompt,
+            emitter.clone(),
+            emitter.model_rounds(),
+            max_model_rounds,
+        )
+        .await;
         watchdog.abort();
         raw_events.extend(emitter.drain());
 
@@ -217,8 +228,14 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                 session.clone(),
                 emitter.clone(),
             );
-            let result =
-                runner::send_headless_turn(&session, &repair_prompt, emitter.clone()).await;
+            let result = runner::send_headless_turn(
+                &session,
+                &repair_prompt,
+                emitter.clone(),
+                emitter.model_rounds(),
+                max_model_rounds,
+            )
+            .await;
             watchdog.abort();
             raw_events.extend(emitter.drain());
             repair_attempts_used = attempt + 1;
@@ -1584,6 +1601,39 @@ deleted file mode 100644\n\
             "watchdog should have killed session with zero timeout"
         );
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn headless_turn_budget_uses_only_the_remaining_model_rounds() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let pending_confirms: types::PendingConfirms =
+            Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let (session, _missing_key) = crate::ipc::session_builder::build_agent_session(
+            crate::ipc::session_builder::BuildAgentSessionRequest {
+                session_id: "headless-budget-session".to_string(),
+                provider: "deepseek".to_string(),
+                model: "deepseek-v4-flash".to_string(),
+                api_key: "fake-key-for-test",
+                api_base: None,
+                working_dir: workspace.path(),
+                pending_confirms,
+                existing_context_window_tokens: None,
+            },
+        )
+        .await
+        .expect("session should build");
+
+        runner::configure_headless_model_round_budget(&session, 3, 5);
+
+        let mut guard = crate::agent::session_guards::lock_unpoisoned(&session.loop_guard);
+        assert!(guard.check().is_ok());
+        guard.record_model_round();
+        assert!(guard.check().is_ok());
+        guard.record_model_round();
+        assert_eq!(
+            guard.check(),
+            Err(crate::agent::loop_guard::LoopStopReason::ModelRoundLimit)
+        );
     }
 
     #[tokio::test]
