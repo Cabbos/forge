@@ -202,6 +202,18 @@ test.describe("Phase 7 acceptance surfaces", () => {
       });
     });
     expect(contrast.every((value) => value >= 4.5)).toBeTruthy();
+    const restart = panel.getByRole("button", { name: "重启" });
+    await restart.hover();
+    const hoverContrast = await restart.evaluate((button) => {
+      const parse = (value: string) => value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+      const luminance = (value: string) => parse(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      const [lighter, darker] = [luminance(getComputedStyle(button).color), luminance(getComputedStyle(button.parentElement!).backgroundColor)].sort((a, b) => b - a);
+      return (lighter + 0.05) / (darker + 0.05);
+    });
+    expect(hoverContrast).toBeGreaterThanOrEqual(4.5);
   });
 
   test("work panel preview and file adapters open selected objects as tabs", async ({ page }) => {

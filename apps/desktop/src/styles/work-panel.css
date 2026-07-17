@@ -728,7 +728,7 @@
 
   .forge-work-panel-terminal .forge-work-panel-content-toolbar button:hover {
     border-color: #565a56;
-    color: #f4f3ef;
+    color: var(--forge-text-primary);
   }
 
   .forge-work-panel-terminal-host {
