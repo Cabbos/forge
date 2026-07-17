@@ -48,7 +48,7 @@ export function WorkPanelShell({
       {
         autoAlpha: 1,
         x: 0,
-        duration: forgeMotion.surface.duration,
+        duration: 0.18,
         ease: forgeMotion.surface.ease,
         clearProps: "transform,opacity,visibility",
       },
@@ -68,7 +68,7 @@ export function WorkPanelShell({
       {
         autoAlpha: 1,
         y: 0,
-        duration: forgeMotion.evidence.duration,
+        duration: 0.16,
         ease: forgeMotion.evidence.ease,
         clearProps: "transform,opacity,visibility",
       },
