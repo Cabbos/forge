@@ -22,6 +22,7 @@ export function AppShell() {
   const [activeSidebarPanel, setActiveSidebarPanel] = useState<SidebarPanel | null>(null);
   const activeSessionId = useStore((s) => s.activeSessionId);
   const sessions = useStore((s) => s.sessions);
+  const theme = useStore((s) => s.theme);
   const activeWorkspace = useActiveWorkspace();
   const { emptyWorkbenchProps, startConversation } = useEmptyWorkbenchController();
   const activeSession = activeSessionId ? sessions.get(activeSessionId) ?? null : null;
@@ -60,7 +61,8 @@ export function AppShell() {
   return (
     <div
       data-testid="operating-surface"
-      data-design-version="v3-light-workbench"
+      data-design-version="v4-quiet-native"
+      data-theme={theme}
       className="forge-app-shell h-screen grid bg-background"
     >
       <Sidebar

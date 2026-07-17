@@ -99,6 +99,28 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  test("主题切换会同步工作台与新对话", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "theme-surface-session";
+    });
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+
+    const shell = page.getByTestId("operating-surface");
+    const conversation = page.locator(".forge-session-operating-surface");
+    const initialTheme = await shell.getAttribute("data-theme");
+    expect(initialTheme).toMatch(/^(light|dark)$/);
+    await expect(conversation).toHaveAttribute("data-conversation-theme", initialTheme!);
+
+    await page.keyboard.press("Meta+K");
+    await page.getByRole("option", { name: /切换主题/ }).click();
+
+    const selectedTheme = initialTheme === "dark" ? "light" : "dark";
+    await expect(shell).toHaveAttribute("data-theme", selectedTheme);
+    await expect(conversation).toHaveAttribute("data-conversation-theme", selectedTheme);
+  });
+
   test("work panel opens on a launcher without project archive content", async ({ page }) => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
 

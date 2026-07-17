@@ -9,14 +9,14 @@ async function forceDarkWorkbench(page: import("@playwright/test").Page) {
       document.querySelectorAll<HTMLElement>("[data-conversation-theme='light']").forEach((el) => {
         el.setAttribute("data-conversation-theme", "dark");
       });
-      document.querySelectorAll<HTMLElement>(".forge-app-shell[data-design-version='v3-light-workbench']").forEach((el) => {
-        el.setAttribute("data-design-version", "v3-dark-workbench");
+      document.querySelectorAll<HTMLElement>(".forge-app-shell[data-theme='light']").forEach((el) => {
+        el.setAttribute("data-theme", "dark");
       });
     };
 
     new MutationObserver(apply).observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-conversation-theme", "data-design-version"],
+      attributeFilter: ["data-conversation-theme", "data-theme"],
       childList: true,
       subtree: true,
     });
@@ -2291,7 +2291,7 @@ test.describe("Timeline Messages", () => {
       });
   
       const shell = page.getByTestId("operating-surface");
-      await expect(shell).toHaveAttribute("data-design-version", "v3-light-workbench");
+      await expect(shell).toHaveAttribute("data-design-version", "v4-quiet-native");
   
       const tokens = await page.evaluate(() => {
         const root = getComputedStyle(document.documentElement);
