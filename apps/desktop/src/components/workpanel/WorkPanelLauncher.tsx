@@ -44,11 +44,12 @@ const actionIcons: Record<WorkPanelLauncherAction, LucideIcon> = {
 type PickerAction = Exclude<WorkPanelLauncherAction, "review" | "terminal">;
 
 interface WorkPanelLauncherProps {
+  mode: "empty" | "new";
   taskKey: string;
   onOpenTab: (tab: WorkPanelTab) => void;
 }
 
-export function WorkPanelLauncher({ taskKey, onOpenTab }: WorkPanelLauncherProps) {
+export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLauncherProps) {
   const [selection, setSelection] = useState<PickerAction | null>(null);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
@@ -175,29 +176,26 @@ export function WorkPanelLauncher({ taskKey, onOpenTab }: WorkPanelLauncherProps
   }
 
   return (
-    <div className="forge-work-panel-launcher" data-testid="work-panel-launcher">
+    <div className="forge-work-panel-launcher" data-testid="work-panel-launcher" data-mode={mode}>
       <Command className="forge-work-panel-command forge-work-panel-launcher-command" onKeyDown={handleKeyDown}>
-        <CommandInput autoFocus value={query} onValueChange={setQuery} placeholder="搜索工作面板" />
+        {mode === "new" ? <span className="forge-work-panel-launcher-label">打开新的…</span> : null}
         <CommandList className="forge-work-panel-launcher-actions">
-          <CommandEmpty>没有匹配的操作</CommandEmpty>
-          <CommandGroup>
-            {WORK_PANEL_LAUNCHER_ACTIONS.map((action) => {
-              const Icon = actionIcons[action.id];
-              return (
-                <CommandItem
-                  key={action.id}
-                  role="button"
-                  value={action.label}
-                  className="forge-work-panel-launcher-action"
-                  onSelect={() => handleAction(action.id)}
-                >
-                  <Icon className="size-5" />
-                  <span>{action.label}</span>
-                  {action.shortcut ? <CommandShortcut>{action.shortcut}</CommandShortcut> : null}
-                </CommandItem>
-              );
-            })}
-          </CommandGroup>
+          {WORK_PANEL_LAUNCHER_ACTIONS.map((action) => {
+            const Icon = actionIcons[action.id];
+            return (
+              <CommandItem
+                key={action.id}
+                role="button"
+                value={action.label}
+                className="forge-work-panel-launcher-action"
+                onSelect={() => handleAction(action.id)}
+              >
+                <Icon className="size-5" />
+                <span>{action.label}</span>
+                {action.shortcut ? <CommandShortcut>{action.shortcut}</CommandShortcut> : null}
+              </CommandItem>
+            );
+          })}
         </CommandList>
       </Command>
     </div>

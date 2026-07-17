@@ -132,8 +132,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByRole("option", { name: /^审阅/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^终端/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^预览/ })).toBeVisible();
-    await expect(panel.getByRole("option", { name: /^文件/ })).toBeVisible();
-    await expect(panel.getByRole("option", { name: /^子任务/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^打开文件/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^侧边任务/ })).toBeVisible();
     await expect(panel.locator("iframe")).toHaveCount(0);
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
@@ -154,7 +154,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByRole("tab", { name: /localhost:1420/ })).toBeVisible();
     await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
-    await panel.getByRole("option", { name: /^文件/ }).click();
+    await panel.getByRole("option", { name: /^打开文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
     await panel.getByRole("option", { name: /README.md/ }).click();
 
@@ -162,7 +162,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByTestId("work-panel-file-view")).toContainText("export function Demo()");
 
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
-    await panel.getByRole("option", { name: /^文件/ }).click();
+    await panel.getByRole("option", { name: /^打开文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
     await panel.getByRole("option", { name: /README.md/ }).click();
     await expect(panel.getByRole("tab", { name: /README.md/ })).toHaveCount(1);
@@ -227,7 +227,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await page.getByRole("button", { name: "打开工作面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });
-    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /^侧边任务/ }).click();
     await panel.getByRole("option", { name: /设置诊断/ }).click();
 
     await expect(panel.getByRole("tab", { name: "设置诊断" })).toBeVisible();
@@ -281,6 +281,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
   test("work panel restore keeps tabs and supports keyboard navigation", async ({ page }) => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });
+    const emptyLauncher = panel.getByTestId("work-panel-launcher");
+    await expect(emptyLauncher).toHaveAttribute("data-mode", "empty");
+    await expect(emptyLauncher.getByPlaceholder("搜索工作面板")).toHaveCount(0);
     const separator = page.getByRole("separator", { name: "调整工作面板宽度" });
     await expect(separator).toBeVisible();
     await expect(panel.getByRole("button", { name: "最大化工作面板" })).toBeVisible();
@@ -289,8 +292,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await panel.getByPlaceholder("输入本机网址或搜索文件").fill("http://localhost:1420");
     await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
-    await expect(panel.getByPlaceholder("搜索工作面板")).toBeFocused();
-    await panel.getByRole("option", { name: /^文件/ }).click();
+    await expect(emptyLauncher).toHaveAttribute("data-mode", "new");
+    await expect(emptyLauncher).toContainText("打开新的…");
+    await panel.getByRole("option", { name: /^打开文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
     await panel.getByRole("option", { name: /README.md/ }).click();
 
@@ -2374,7 +2378,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await page.getByRole("button", { name: "打开后台任务面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });
-    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /^侧边任务/ }).click();
     await panel.getByRole("option", { name: /Runtime UI implementer/ }).click();
     const workbench = panel.getByRole("region", { name: "子任务 Runtime UI implementer" });
     await expect(workbench).toContainText("Runtime UI implementer");
@@ -2383,7 +2387,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(workbench.locator(".forge-a2a-runtime-facts", { hasText: "文件 IO" })).toContainText("LoopTaskPanel.tsx");
 
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
-    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /^侧边任务/ }).click();
     await panel.getByRole("option", { name: /Runtime usage auditor/ }).click();
     const usageTask = panel.getByRole("region", { name: "子任务 Runtime usage auditor" });
     await expect(usageTask.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
