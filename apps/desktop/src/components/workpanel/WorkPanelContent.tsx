@@ -1,7 +1,18 @@
 import { FileDiff, FileText, Globe2, ListTree, TerminalSquare } from "lucide-react";
+import { WorkPanelFiles } from "./WorkPanelFiles";
+import { WorkPanelPreview } from "./WorkPanelPreview";
 import type { WorkPanelTab } from "./workPanelTypes";
 
-export function WorkPanelContent({ tab }: { tab: WorkPanelTab }) {
+export function WorkPanelContent({
+  tab,
+  onOpenTab,
+}: {
+  tab: WorkPanelTab;
+  onOpenTab: (tab: WorkPanelTab) => void;
+}) {
+  if (tab.kind === "preview") return <WorkPanelPreview tab={tab} />;
+  if (tab.kind === "file") return <WorkPanelFiles tab={tab} onOpenTab={onOpenTab} />;
+
   const content = placeholderForTab(tab);
   return (
     <div className="forge-work-panel-placeholder" data-testid={`work-panel-content-${tab.kind}`}>
