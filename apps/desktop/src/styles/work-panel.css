@@ -39,51 +39,13 @@
     color: var(--forge-text-primary);
   }
 
-  .forge-work-panel-header {
-    display: flex;
-    min-height: var(--forge-work-panel-header-height);
-    flex-shrink: 0;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.75rem;
-    border-bottom: 1px solid var(--forge-border-subtle);
-    padding: 0 0.625rem 0 0.875rem;
-  }
-
-  .forge-work-panel-heading {
-    display: flex;
-    min-width: 0;
-    align-items: baseline;
-    gap: 0.5rem;
-  }
-
-  .forge-work-panel-title {
-    flex-shrink: 0;
-    font-size: 13px;
-    font-weight: 650;
-  }
-
-  .forge-work-panel-task {
-    overflow: hidden;
-    color: var(--forge-text-muted);
-    font-size: 11px;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  .forge-work-panel-header-actions {
-    display: flex;
-    flex-shrink: 0;
-    gap: 0.125rem;
-  }
-
   .forge-work-panel-tabs {
     min-height: 0;
     flex: 1;
     gap: 0;
   }
 
-  .forge-work-panel-tab-rail {
+  .forge-work-panel-object-bar {
     display: flex;
     min-width: 0;
     min-height: var(--forge-work-panel-tabs-height);
@@ -122,7 +84,7 @@
   }
 
   .forge-work-panel-tab-close,
-  .forge-work-panel-new-tab {
+  .forge-work-panel-object-action {
     display: inline-flex;
     flex-shrink: 0;
     align-items: center;
@@ -136,14 +98,12 @@
     height: 22px;
   }
 
-  .forge-work-panel-new-tab {
-    width: 36px;
-    border-left: 1px solid var(--forge-border-subtle);
-    border-radius: 0;
+  .forge-work-panel-object-action {
+    width: 30px;
   }
 
   .forge-work-panel-tab-close:hover,
-  .forge-work-panel-new-tab:hover {
+  .forge-work-panel-object-action:hover {
     background: var(--forge-hover);
     color: var(--forge-text-primary);
   }
@@ -151,6 +111,20 @@
   .forge-work-panel-tab-content {
     min-height: 0;
     overflow: auto;
+  }
+
+  .forge-work-panel-overflow-menu {
+    width: min(18rem, 70cqw);
+  }
+
+  .forge-work-panel-launcher-utilities {
+    display: flex;
+    min-height: var(--forge-work-panel-tabs-height);
+    flex-shrink: 0;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.125rem;
+    padding: 0 0.625rem;
   }
 
   .forge-work-panel-launcher {
