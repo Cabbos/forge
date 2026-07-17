@@ -90,6 +90,17 @@ describe("work panel tab state", () => {
       widthPercent: 52,
     });
   });
+
+  it("normalizes an invalid width when closing the final tab", () => {
+    const state = openWorkPanelTab(restoreTaskPanelState(null), {
+      kind: "file",
+      id: "file:README.md",
+      label: "README.md",
+      path: "README.md",
+    });
+
+    assert.equal(closeWorkPanelTab({ ...state, widthPercent: 100 }, "file:README.md").widthPercent, 62);
+  });
 });
 
 describe("work panel persistence", () => {
@@ -126,12 +137,25 @@ describe("work panel persistence", () => {
       [WORK_PANEL_STORAGE_KEY]: JSON.stringify({
         version: 1,
         tasks: {
-          "task-1": { tabs: [], activeTabId: null, launcherOpen: true },
+          "task-1": { tabs: [], activeTabId: null, launcherOpen: true, widthPercent: 52 },
         },
       }),
     });
 
     assert.equal(loadWorkPanelTasks(storage)["task-1"]?.widthPercent, 40);
+  });
+
+  it("normalizes width only for v2 task records", () => {
+    const storage = memoryStorage({
+      [WORK_PANEL_STORAGE_KEY]: JSON.stringify({
+        version: 2,
+        tasks: {
+          "task-1": { tabs: [], activeTabId: null, launcherOpen: true, widthPercent: 90 },
+        },
+      }),
+    });
+
+    assert.equal(loadWorkPanelTasks(storage)["task-1"]?.widthPercent, 62);
   });
 
   it("falls back safely for malformed JSON and saves one task without losing siblings", () => {

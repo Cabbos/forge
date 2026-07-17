@@ -22,9 +22,10 @@ export function getWorkbenchWidth(viewportWidth: number): number {
 }
 
 export function getWorkPanelBounds(workbenchWidth: number): { min: number; max: number } {
-  const min = Math.max(MIN_WORK_PANEL_WIDTH_PERCENT, 38 - workbenchWidth * 0.002);
-  const max = Math.min(MAX_WORK_PANEL_WIDTH_PERCENT, 78 - workbenchWidth * 0.016);
-  return { min: round(min), max: round(Math.max(min, max)) };
+  const safeWidth = Math.max(1, workbenchWidth);
+  const min = Math.max(MIN_WORK_PANEL_WIDTH_PERCENT, Math.min(MAX_WORK_PANEL_WIDTH_PERCENT, (MIN_WORK_PANEL_WIDTH_PX / safeWidth) * 100));
+  const max = Math.max(min, Math.min(MAX_WORK_PANEL_WIDTH_PERCENT, (MAX_WORK_PANEL_WIDTH_PX / safeWidth) * 100));
+  return { min: round(min), max: round(max) };
 }
 
 function round(value: number): number {

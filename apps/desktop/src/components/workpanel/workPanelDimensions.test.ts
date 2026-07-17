@@ -24,5 +24,8 @@ describe("work panel dimensions", () => {
   it("derives bounded split widths from the available workbench", () => {
     assert.deepEqual(getWorkPanelBounds(1000), { min: 36, max: 62 });
     assert.deepEqual(getWorkPanelBounds(2000), { min: 34, max: 46 });
+    assert.deepEqual(getWorkPanelBounds(800), { min: 45, max: 62 });
+    assert.deepEqual(getWorkPanelBounds(2400), { min: 34, max: 38.33 });
+    assert.deepEqual(getWorkPanelBounds(0), { min: 62, max: 62 });
   });
 });

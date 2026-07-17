@@ -23,7 +23,7 @@ export function loadWorkPanelTasks(storage: StorageLike): Record<string, WorkPan
       const tabs = value.tabs.filter(isWorkPanelTab);
       const requestedActiveId = typeof value.activeTabId === "string" ? value.activeTabId : null;
       const launcherOpen = value.launcherOpen === true;
-      const widthPercent = typeof value.widthPercent === "number" ? value.widthPercent : undefined;
+      const widthPercent = parsed.version === 1 ? 40 : typeof value.widthPercent === "number" ? value.widthPercent : 40;
       tasks[key] = restoreTaskPanelState({ tabs, activeTabId: requestedActiveId, launcherOpen, widthPercent: widthPercent ?? 40 });
       return tasks;
     }, {});
