@@ -86,6 +86,27 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
   });
 
+  test("work panel review sends one line feedback into the conversation", async ({ page }) => {
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = "work-panel-review-session";
+    });
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+
+    await panel.getByRole("option", { name: /^审阅/ }).click();
+    await expect(panel.getByRole("button", { name: /README.md/ })).toBeVisible();
+    await panel.getByLabel("README.md 第 2 行").click();
+    await panel.getByPlaceholder("写下这一行需要调整的地方").fill("这里需要保留空状态说明");
+    await panel.getByRole("button", { name: "发送到对话" }).click();
+
+    const composer = page.locator("textarea.forge-composer-textarea");
+    await expect(composer).toContainText("README.md:2");
+    await expect(composer).toContainText("这里需要保留空状态说明");
+    await expect(composer).toBeFocused();
+  });
+
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     await expect
