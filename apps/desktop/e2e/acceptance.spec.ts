@@ -241,6 +241,71 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByTestId("work-panel-launcher")).toBeVisible();
   });
 
+  test("work panel restore keeps tabs and supports keyboard navigation", async ({ page }) => {
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    const separator = page.getByRole("separator", { name: "调整工作面板宽度" });
+    await expect(separator).toBeVisible();
+    await expect(panel.getByRole("button", { name: "最大化工作面板" })).toBeVisible();
+
+    await panel.getByRole("option", { name: /^预览/ }).click();
+    await panel.getByPlaceholder("输入本机网址或搜索文件").fill("http://localhost:1420");
+    await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
+    await panel.getByRole("button", { name: "新建工作面板标签" }).click();
+    await expect(panel.getByPlaceholder("搜索工作面板")).toBeFocused();
+    await panel.getByRole("option", { name: /^文件/ }).click();
+    await panel.getByPlaceholder("搜索工作区文件").fill("README");
+    await panel.getByRole("option", { name: /README.md/ }).click();
+
+    const previewTab = panel.getByRole("tab", { name: /localhost:1420/ });
+    const fileTab = panel.getByRole("tab", { name: /README.md/ });
+    await previewTab.focus();
+    await page.keyboard.press("ArrowRight");
+    await expect(fileTab).toBeFocused();
+
+    await panel.getByRole("button", { name: "关闭工作面板" }).click();
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    await expect(previewTab).toBeVisible();
+    await expect(fileTab).toBeVisible();
+  });
+
+  test("work panel unavailable file stays isolated and can retry", async ({ page }) => {
+    await page.evaluate(() => {
+      localStorage.setItem("forge-work-panel-v1", JSON.stringify({
+        version: 1,
+        tasks: {
+          "/Users/cabbos/project/forge": {
+            tabs: [
+              { kind: "file", id: "file:missing.ts", label: "missing.ts", path: "missing.ts" },
+              { kind: "preview", id: "preview:http://localhost:1420", label: "localhost:1420", target: { type: "url", url: "http://localhost:1420" } },
+            ],
+            activeTabId: "file:missing.ts",
+            launcherOpen: false,
+          },
+          "another-task": {
+            tabs: [{ kind: "unknown", id: "bad", label: "bad" }],
+            activeTabId: "bad",
+            launcherOpen: false,
+          },
+        },
+      }));
+    });
+    await page.reload();
+    await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
+    await page.evaluate(() => {
+      // @ts-expect-error acceptance mock
+      window.__mockPreviewFileError = "文件已被移走";
+    });
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+
+    await expect(panel.getByRole("alert")).toContainText("文件已被移走");
+    await expect(panel.getByRole("button", { name: "重试读取文件" })).toBeVisible();
+    await panel.getByRole("tab", { name: /localhost:1420/ }).click();
+    await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
+    await expect(panel.getByRole("tab", { name: "missing.ts" })).toBeVisible();
+  });
+
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     await expect

@@ -177,7 +177,7 @@ export function WorkPanelLauncher({ taskKey, onOpenTab }: WorkPanelLauncherProps
   return (
     <div className="forge-work-panel-launcher" data-testid="work-panel-launcher">
       <Command className="forge-work-panel-command forge-work-panel-launcher-command" onKeyDown={handleKeyDown}>
-        <CommandInput value={query} onValueChange={setQuery} placeholder="搜索工作面板" />
+        <CommandInput autoFocus value={query} onValueChange={setQuery} placeholder="搜索工作面板" />
         <CommandList className="forge-work-panel-launcher-actions">
           <CommandEmpty>没有匹配的操作</CommandEmpty>
           <CommandGroup>

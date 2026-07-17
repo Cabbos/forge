@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Eye, FileText } from "lucide-react";
+import { Eye, FileText, RefreshCw } from "lucide-react";
 import { FilePreviewActions } from "@/components/messages/FilePreviewActions";
 import { FilePreviewBody } from "@/components/messages/FilePreviewBody";
 import { deriveFilePreviewView } from "@/components/messages/filePreviewPresentation";
@@ -63,11 +63,24 @@ export function WorkPanelFileDocument({
       </header>
       {actionError ? <div className="forge-work-panel-inline-error" role="alert">{actionError}</div> : null}
       <div className="forge-work-panel-file-body">
-        <FilePreviewBody
-          loading={previewQuery.isPending}
-          error={queryError}
-          lines={view.lines}
-        />
+        {queryError ? (
+          <div className="forge-work-panel-unavailable" role="alert">
+            <div>
+              <strong>无法预览这个文件</strong>
+              <span>{queryError}</span>
+            </div>
+            <ForgeButton variant="ghost" size="sm" onClick={() => void previewQuery.refetch()} aria-label="重试读取文件">
+              <RefreshCw className="size-3.5" />
+              重试
+            </ForgeButton>
+          </div>
+        ) : (
+          <FilePreviewBody
+            loading={previewQuery.isPending}
+            error={null}
+            lines={view.lines}
+          />
+        )}
       </div>
       <FilePreviewActions
         copyText={view.copyText}

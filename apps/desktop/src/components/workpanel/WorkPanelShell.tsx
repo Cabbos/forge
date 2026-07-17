@@ -1,7 +1,9 @@
+import { useRef } from "react";
 import { Maximize2, Minimize2, Plus, X } from "lucide-react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ForgeIconButton } from "@/components/primitives/icon-button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 import { WorkPanelContent } from "./WorkPanelContent";
 import { WorkPanelLauncher } from "./WorkPanelLauncher";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
@@ -31,10 +33,47 @@ export function WorkPanelShell({
   onOpenTab,
   onToggleMaximize,
 }: WorkPanelShellProps) {
+  const panelRef = useRef<HTMLElement>(null);
   const selectedValue = state.launcherOpen ? null : state.activeTabId;
 
+  useGSAP(() => {
+    const panel = panelRef.current;
+    if (!panel || prefersReducedMotion()) return;
+    gsap.fromTo(
+      panel,
+      { autoAlpha: 0, x: 12 },
+      {
+        autoAlpha: 1,
+        x: 0,
+        duration: forgeMotion.surface.duration,
+        ease: forgeMotion.surface.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: panelRef });
+
+  useGSAP(() => {
+    const panel = panelRef.current;
+    if (!panel || prefersReducedMotion()) return;
+    const content = panel.querySelector<HTMLElement>(
+      ".forge-work-panel-launcher, .forge-work-panel-tab-content:not([hidden])",
+    );
+    if (!content) return;
+    gsap.fromTo(
+      content,
+      { autoAlpha: 0, y: 3 },
+      {
+        autoAlpha: 1,
+        y: 0,
+        duration: forgeMotion.evidence.duration,
+        ease: forgeMotion.evidence.ease,
+        clearProps: "transform,opacity,visibility",
+      },
+    );
+  }, { scope: panelRef, dependencies: [selectedValue] });
+
   return (
-    <aside className="forge-work-panel" role="complementary" aria-label="工作面板" data-testid="work-panel">
+    <aside ref={panelRef} className="forge-work-panel" role="complementary" aria-label="工作面板" data-testid="work-panel">
       <header className="forge-work-panel-header">
         <div className="forge-work-panel-heading">
           <span className="forge-work-panel-title">工作面板</span>

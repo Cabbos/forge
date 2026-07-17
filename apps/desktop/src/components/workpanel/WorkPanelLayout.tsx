@@ -65,7 +65,13 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
       <Panel id="conversation" minSize={maximized ? "0%" : "35%"} groupResizeBehavior="preserve-relative-size">
         {children}
       </Panel>
-      {open ? <Separator id="work-panel-separator" className="forge-work-panel-separator" /> : null}
+      {open ? (
+        <Separator
+          id="work-panel-separator"
+          className="forge-work-panel-separator"
+          aria-label="调整工作面板宽度"
+        />
+      ) : null}
       {open ? (
         <Panel
           id="work-panel"
