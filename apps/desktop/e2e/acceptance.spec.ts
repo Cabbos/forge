@@ -210,6 +210,17 @@ test.describe("Phase 7 acceptance surfaces", () => {
     });
     await expect.poll(renderedWidthPercent).toBeGreaterThan(37);
     await expect.poll(renderedWidthPercent).toBeLessThan(41);
+
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await expect(panel).toHaveAttribute("data-viewport-mode", "split");
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
+    await expect.poll(renderedWidthPercent).toBeGreaterThan(37);
+    await expect.poll(renderedWidthPercent).toBeLessThan(41);
+    await page.getByRole("separator", { name: "调整工作面板宽度" }).dblclick();
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
   });
 
   test("work panel terminal keeps toolbar text at accessible contrast in light theme", async ({ page }) => {
