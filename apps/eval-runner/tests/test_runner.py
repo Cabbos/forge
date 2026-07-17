@@ -26,6 +26,7 @@ from app.runner import (
     ForgeAgentRunner,
     continuity_db_diagnostic,
     create_runner,
+    scope_violations_for,
 )
 
 
@@ -93,6 +94,29 @@ def test_task_supports_regression_and_fix_validation_commands() -> None:
     assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
 
 
+def test_scope_allows_forge_managed_continuity_database_unless_forbidden() -> None:
+    task = EvaluationTask(
+        id="continuity-runtime-artifact",
+        title="Continuity runtime artifact",
+        prompt="Change src/app.py.",
+        expected_files_changed=["src/app.py"],
+    )
+
+    assert (
+        scope_violations_for(
+            task,
+            ["src/app.py", ".forge/continuity.db"],
+        )
+        == []
+    )
+
+    forbidden_task = task.model_copy(update={"forbidden_files_changed": [".forge/continuity.db"]})
+    assert scope_violations_for(forbidden_task, [".forge/continuity.db"]) == [
+        "forbidden_change:.forge/continuity.db",
+        "unexpected_change:.forge/continuity.db",
+    ]
+
+
 def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     task = EvaluationTask(
         id="add-cli-flag",
@@ -122,6 +146,27 @@ def test_mock_runner_creates_complete_agent_trace_for_passing_task() -> None:
     assert trace.failure_reason is None
     assert trace.duration_ms >= 0
     assert trace.model_dump(mode="json")["started_at"].endswith("+00:00")
+
+
+def test_mock_runner_accepts_validation_commands_as_executable_verification() -> None:
+    task = EvaluationTask(
+        id="continuity-validation",
+        title="Validate continuity storage",
+        prompt="Run the continuity validation.",
+        validation_commands=["python3 scripts/assert-continuity.py"],
+        expected_success=True,
+    )
+    runner = DeterministicMockRunner()
+
+    trace = runner.run_task(task)
+
+    assert trace.error is None
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == "python3 scripts/assert-continuity.py"
+    assert trace.verification_result.passed is True
+    assert [output.command for output in trace.shell_outputs] == [
+        "python3 scripts/assert-continuity.py"
+    ]
 
 
 def test_mock_runner_preserves_forge_run_evidence_from_case_metadata() -> None:

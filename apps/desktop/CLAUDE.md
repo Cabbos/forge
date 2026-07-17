@@ -7,69 +7,79 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm run dev          # Vite dev server on :1420 (frontend only, no Tauri)
 npm run tauri dev    # Full Tauri desktop app (starts Vite + Rust backend)
-npm run build        # TypeScript check + Vite production build
+npm run build        # TypeScript check + Vite production build (runs check:conversation-style first)
+npm run check:backend   # cargo fmt --check + clippy -D warnings + cargo test
+npm run test:e2e        # Playwright E2E
 ```
 
 The `npm run tauri` script proxies to `tauri` CLI. Run individual Tauri commands like `npm run tauri -- build`.
 
+Useful contract gates: `check:protocol` (StreamEvent sync), `check:conversation-style` (design-token/static style contract), `check:security-config` (CSP/capability), `check:desktop-boundary` (product boundary), `check:frontend-architecture` (React Query migration + boundary).
+
 ## Architecture
 
-This is a **Tauri 2.0 desktop app** ("TUI-to-GUI") — a GUI wrapper around CLI AI coding agents. Rust backend, React/TypeScript frontend.
+Forge is a **local-first AI agent workbench** built as a Tauri 2 desktop app: React/TypeScript frontend, Rust/Tokio backend. It runs its own agent loop (not a wrapper around external CLI agents): pick a local project, describe a goal, and Forge assembles project context, executes file/shell work inside workspace boundaries, streams process evidence, and preserves checkpoints so work can resume.
 
 ### Streaming protocol (the backbone)
 
 The Rust backend streams structured events to the frontend via Tauri's `emit("session-output", StreamEvent)`. The `StreamEvent` enum is the **single source of truth for all backend→frontend communication**. It lives in two files that must stay in sync:
 
-- `src-tauri/src/protocol/events.rs` — Rust definition (serde-tagged enum)
+- `src-tauri/src/protocol/events.rs` — Rust definition (serde-tagged enum, `#[serde(tag = "event_type")]`)
 - `src/lib/protocol.ts` — TypeScript mirror (discriminated union)
 
-Event lifecycle: `*_start` → `*_chunk` (accumulated) → `*_end`. The frontend store (`src/store/index.ts`) accumulates chunks into `BlockState[]` and persists to IndexedDB.
+`npm run check:protocol` (`scripts/check-protocol-sync.mjs`) enforces the sync structurally: every Rust variant must exist in the TS union with matching field names, `skip_serializing_if` fields must stay optional on the TS side, and every event type must be handled by the dispatcher or the `eventToBlock` fallback. Field-level exceptions need a justified entry in `ALLOWED_FIELD_MISMATCH`.
 
-### Session types
+Event lifecycle: `*_start` → `*_chunk` (accumulated) → `*_end`. The frontend store accumulates chunks into `BlockState[]` and persists to IndexedDB (`idb-keyval`).
 
-There are two kinds of sessions, both stored in `AppState.sessions: HashMap<String, Session>`:
+### Sessions
 
-| Variant | Source | Use case |
-|---|---|---|
-| `Session::Agent(AgentSession)` | `agent/session.rs` | AI agent (Claude/Codex/Hermes) — API calls + tool execution loop |
-| `Session::Cli(CliSession)` | `pty/session.rs` | Raw PTY bash session via `portable-pty` |
+`AppState.sessions: RwLock<HashMap<String, Arc<AgentSession>>>` (`src-tauri/src/state.rs`). All sessions are agent sessions built by `ipc/session_builder.rs`; there is no separate raw-PTY session type. `agent/session/` splits the loop into `lifecycle.rs` (start/stop/resume), `loop.rs` (round execution, loop-guard round limits), `tools.rs` (tool-call orchestration), `compact.rs` (auto/manual compaction), and `a2a.rs` (subagent delegation).
 
-### Agent loop (`agent/session.rs`)
+Turn flow: user input → `send_input_context` assembles context (system prompt, project docs, memory recall, project records, selected files, connector context, compacted history) → `turn_prepared` event with context-budget buckets → provider stream → tool calls via `ToolExecutor` → results fed back → next round, until final answer or the loop guard stops runaway rounds. Snapshots (`agent/snapshot.rs`) persist session/turn/delivery/resume state so interrupted turns can resume.
 
-User message → add to history → API stream → collect `tool_calls` → execute via `ToolExecutor` → feed `tool_result` back → loop (max 10 rounds). History windowed to 30 turns, preserving tool_use/tool_result pairs.
+### Providers and credentials (`adapters/`)
 
-### AI adapters (`adapters/`)
+All providers implement the `AiAdapter` trait (`adapters/base.rs`, key method `stream_message()`). `adapters/provider_registry.rs` catalogs built-in providers (Anthropic, DeepSeek, Kimi/Moonshot, GLM/Zhipu, Qwen, MiniMax, OpenAI, OpenRouter, Gemini, xAI, Groq, Mistral, Ollama/local); `adapters/openai_compatible.rs` covers OpenAI-compatible transports including user-defined profiles from `~/.forge/config.json` (data-only profiles — no executable plugin code). `provider_conformance.rs` and `provider_probe.rs` power the manual compatibility probe and model-catalog refresh.
 
-All providers implement the `AiAdapter` trait (`base.rs`), which has one key method: `stream_message()`. The trait uses `async_trait`. Three adapters: `AnthropicAdapter` (Claude), `OpenAiAdapter` (Codex), and the Claude adapter is reused for Hermes.
+API keys are **reference-only**: `settings.rs` stores a `CredentialRef` and resolves secrets from the system credential store (macOS Keychain in production builds; unsupported platforms fail closed). Plaintext `config.json`/`profiles.json` keys are migrated at startup with byte-preserving rollback. Log sinks redact registered credentials before persisting.
 
-### Tool execution & permission gate (`executor/`)
+### Tool execution & permission gate (`executor/` + `harness/`)
 
-`ToolExecutor` handles: `read_file`, `write_file` (with permission check), `run_shell`/`bash`. For dangerous writes, it emits `ConfirmAsk` to the frontend and **blocks** on a `oneshot` channel until the user clicks Yes/No via the `confirm_response` IPC command. The channel is stored in `AppState.pending_confirms`.
+`ToolExecutor` (`executor/mod.rs`, split into `FileExecutor` and `ShellExecutor`) handles file, shell, search, and web tools. For dangerous writes/shell commands it emits `ConfirmAsk` and **blocks on a oneshot channel** until the user responds via the `confirm_response` IPC command. Permission modes (manual confirm / trust project / full access) live in `harness/permissions.rs`; decisions are recorded as replayable `PermissionLedgerEvent`s (`harness/permission_ledger.rs`); shell validation is in `harness/shell_policy.rs`; workspace write boundaries in `harness/write_boundary.rs`.
 
-### Plugin system (`plugin_manager/`)
+### Capabilities (`harness/`)
 
-Four plugin types: `McpServer`, `Hook`, `Skill`, `Extension`. Three agent targets: `Claude`, `Codex`, `Hermes`. Plugins are scanned locally and discovered from a registry. Installation is handled by `PluginInstaller`.
+MCP servers (`harness/mcp.rs`), hooks (`harness/hooks.rs`), and skills (`harness/skills.rs`) are managed under `harness/` with capability descriptors in `harness/capability.rs` + `harness/capabilities/`. These feed context into turns but are not user-facing product concepts.
 
-### Frontend state (`src/store/index.ts`)
+### Long-running work (`loop_runtime/`, `gateway/`, `scheduler/`, `service/`)
 
-Zustand store. State is persisted across restarts via IndexedDB (`idb-keyval`). Key actions: `hydrate` (load on startup), `dispatchOutputEvent` (the central stream event handler), `addSession`/`removeSession`.
+`loop_runtime/` is the Level-3 runtime: append-only loop event journal, rebuildable projection, durable human gates, policy/budget preflight, typed completion evidence, and crash/replay recovery. `gateway/` hosts background trigger runs with lease/retry/dead-letter evidence; `service/` is the local service facade; `diagnostics/` aggregates runtime health. Boundary rule: gateway autonomous resume stays human-gated; local desktop ownership is the default.
 
-### Frontend IPC (`src/lib/tauri.ts`)
+### Memory and continuity (`memory/`, `continuity/`, `forge_wiki/`)
 
-All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handlers.rs` and registered in `lib.rs`.
+Unified memory records (`memory/`) back saved background, user facts, and project archive entries with archive/forget/recall-policy metadata. `continuity/` distills cross-session lessons. `forge_wiki/` stores per-project pages (index, decisions, tasks, log) and writeback proposals. Recall decisions are surfaced body-free in the `turn_prepared` audit.
+
+### Frontend state (`src/store/`)
+
+Zustand store, sliced by responsibility: `blocks.ts` (event → BlockState), `event-dispatch.ts` (central stream handler), `persistence.ts` + `hydration.ts` (IndexedDB), `usage-ledger.ts` (provider usage/cost facts), `health-alerts.ts`, `recovery-notices.ts`, `runtime-projections.ts`, and action modules (`session-actions.ts`, `workspace-actions.ts`, `context-actions.ts`, `preferences-actions.ts`). Server state for ecosystem surfaces is migrating to React Query (`src/hooks/queries/`, `src/lib/query-client.ts`).
+
+### Frontend IPC (`src/lib/tauri.ts` + `src/lib/ipc/`)
+
+All Tauri `invoke()` calls are wrapped here. Rust handlers live in `src-tauri/src/ipc/` (one module per domain: `session_lifecycle.rs`, `confirmations.rs`, `send_input_context.rs`, `unified_memory.rs`, `settings_handlers.rs`, …) and are registered in `lib.rs` via `generate_handler!`.
 
 ### Component tree
 
-`App` → `AppShell` → `Sidebar` + `SessionView` + `StatusBar`. `SessionView` contains `ChatView` → `MessageList` (virtualized) → per-type block renderers in `components/messages/`.
+`App` → `AppShell` → sidebar/titlebar/session surfaces + status bar. `SessionView` contains the conversation lane (`components/chat/`) and composer (`components/session/`); per-event block renderers live in `components/messages/`. Presentation logic is extracted into pure, tested modules beside components (e.g. `processToolPresentation.ts`, `writePreviewPresentation.ts`) — keep components thin and put new derivation logic in those modules.
 
 ## Key patterns
 
-- When adding a new stream event type: add it to BOTH `protocol/events.rs` (Rust) and `lib/protocol.ts` (TS), plus handle it in the store's `dispatchOutputEvent` and create a renderer component in `components/messages/`.
-- API keys are stored in `~/.forge/config.json` via `settings.rs`. The frontend fetches status via `getApiKeyStatus()`.
-- The `@/` path alias maps to `src/` (configured in both `vite.config.ts` and `tsconfig.json`).
-- shadcn/ui components live in `src/components/ui/`. The config is in `components.json` (style: "base-nova").
+- When adding a new stream event type: add it to BOTH `protocol/events.rs` (Rust) and `lib/protocol.ts` (TS), keep field names and optionality aligned (the sync check is field-level), handle it in `dispatchOutputEvent` and/or `eventToBlock`, and add a renderer in `components/messages/`.
+- Styles: design tokens in `src/styles/tokens.css`, domain rules in per-surface files (`composer.css`, `messages.css`, `process.css`, …) coordinated by `globals.css`. `npm run check:conversation-style` is the static contract gate that runs before every build. The design language contract is `docs/product/forge-design-language.md`.
+- API key status is fetched via `getApiKeyStatus()`; it returns configured/source/status/error only, never secrets.
+- The `@/` path alias maps to `src/` (configured in `vite.config.ts` and `tsconfig.json`).
+- shadcn/ui components live in `src/components/ui/` (config `components.json`, style "base-nova", lucide icons); app-specific primitives live in `src/components/primitives/`.
+- Checkpoints use V2 Git snapshots (`ipc/checkpoint_snapshot.rs` / `agent/snapshot.rs`): staged/unstaged patches, untracked bytes, HEAD verification, and full pre-state restore on failure.
 
-<!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
 This project is indexed by GitNexus as **forge-v1** (8129 symbols, 18116 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
@@ -110,5 +120,3 @@ This project is indexed by GitNexus as **forge-v1** (8129 symbols, 18116 relatio
 | Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
 | Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
 | Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
-
-<!-- gitnexus:end -->

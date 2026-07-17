@@ -377,16 +377,18 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             body_json.len(),
         );
 
-        let response = self
-            .with_auth_header(
-                self.client
-                    .post(format!("{}/chat/completions", self.base_url)),
-            )
-            .header("Content-Type", "application/json")
-            .body(body_json)
-            .send()
-            .await
-            .map_err(|e| AdapterError::Http(e.to_string()))?;
+        let response = tokio::select! {
+            response = self
+                .with_auth_header(
+                    self.client
+                        .post(format!("{}/chat/completions", self.base_url)),
+                )
+                .header("Content-Type", "application/json")
+                .body(body_json)
+                .send() => response,
+            _ = cancel.notified() => return Err(AdapterError::Stream("Cancelled".to_string())),
+        }
+        .map_err(|e| AdapterError::Http(e.to_string()))?;
 
         if !response.status().is_success() {
             let status = response.status().as_u16();
@@ -1498,6 +1500,58 @@ mod tests {
         assert!(request_messages
             .iter()
             .any(|message| { message["role"] == "user" && message["content"] == "继续处理" }));
+    }
+
+    #[tokio::test]
+    async fn streaming_request_cancels_while_waiting_for_response_headers() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let (request_seen_tx, request_seen_rx) = tokio::sync::oneshot::channel();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let _ = read_http_json_body(&mut stream);
+            let _ = request_seen_tx.send(());
+            std::thread::sleep(Duration::from_millis(750));
+            let body = "data: [DONE]\n\n";
+            let _ = write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            );
+        });
+
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .expect("adapter")
+            .with_base_url(&base_url);
+        let cancel = Arc::new(Notify::new());
+        let task_cancel = cancel.clone();
+        let task = tokio::spawn(async move {
+            adapter
+                .stream_message_with_emitter(
+                    "cancel-before-headers",
+                    &[ChatMessage::user("wait")],
+                    &CaptureEmitter::default(),
+                    task_cancel,
+                )
+                .await
+        });
+
+        tokio::time::timeout(Duration::from_secs(1), request_seen_rx)
+            .await
+            .expect("server should receive request")
+            .expect("request signal");
+        cancel.notify_waiters();
+
+        let result = tokio::time::timeout(Duration::from_millis(250), task)
+            .await
+            .expect("cancellation should not wait for response headers")
+            .expect("adapter task should join");
+        assert!(matches!(
+            result,
+            Err(AdapterError::Stream(message)) if message == "Cancelled"
+        ));
     }
 
     #[tokio::test]

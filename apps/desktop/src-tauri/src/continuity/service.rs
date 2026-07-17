@@ -38,6 +38,10 @@ impl ContinuityService {
         Ok(Self::new())
     }
 
+    pub fn initialize_project(&self, project_path: &str) -> Result<(), String> {
+        self.store_for_project(project_path).map(|_| ())
+    }
+
     fn store_for_project(&self, project_path: &str) -> Result<Arc<ContinuityStore>, String> {
         let mut stores = self.stores.lock().unwrap_or_else(|err| err.into_inner());
         if let Some(store) = stores.get(project_path) {
@@ -182,5 +186,27 @@ mod tests {
 
         assert!(database_path.exists());
         assert!(!workspace.join(".forge").join("continuity.db").exists());
+    }
+
+    #[test]
+    fn initialize_project_prepares_schema_before_the_agent_can_validate_it() {
+        let root = tempfile::tempdir().expect("temp root");
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let service = ContinuityService::new();
+        let project_path = workspace.to_string_lossy().to_string();
+
+        service
+            .initialize_project(&project_path)
+            .expect("initialize continuity project");
+
+        let database_path = workspace.join(".forge").join("continuity.db");
+        let conn = rusqlite::Connection::open(database_path).expect("open continuity database");
+        let event_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM continuity_events", [], |row| {
+                row.get(0)
+            })
+            .expect("query continuity events");
+        assert_eq!(event_count, 0);
     }
 }

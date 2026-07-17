@@ -14,7 +14,7 @@
     "check:conversation-style": "node scripts/check-conversation-style.mjs",
     "check:deterministic-signals": "node --test scripts/desktop-deterministic-signals.test.mjs",
     "check:security-config": "node --test scripts/desktop-security-config.test.mjs",
-    "check:protocol": "node scripts/check-protocol-sync.mjs",
+    "check:protocol": "node scripts/check-protocol-sync.mjs && node --test scripts/check-protocol-sync.test.mjs",
     "check:desktop-boundary": "node --test scripts/desktop-product-boundary.test.mjs",
     "check:backend": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings && cargo test --manifest-path src-tauri/Cargo.toml",
     "check:precommit": "node scripts/pre-commit-check.mjs",

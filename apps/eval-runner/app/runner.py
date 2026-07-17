@@ -33,6 +33,7 @@ from app.workspace_observer import observe_workspace_changes, snapshot_workspace
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
 DEFAULT_SETUP_TIMEOUT_SECONDS = 300
 DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
+FORGE_MANAGED_RUNTIME_PATHS = frozenset({".forge/continuity.db"})
 
 
 class EvalRunner(Protocol):
@@ -147,7 +148,10 @@ class DeterministicMockRunner:
                 duration_ms=int(mock.get("duration_ms", duration_ms(started_at, ended_at))),
             )
 
-        if task.verification_command is None:
+        verification_commands = task.validation_commands or (
+            [task.verification_command] if task.verification_command is not None else []
+        )
+        if not verification_commands:
             error = "no_verification"
             failure_reason = "Task does not define a verification command."
             failure_category = FailureCategory.NO_VERIFICATION
@@ -157,17 +161,18 @@ class DeterministicMockRunner:
                 "All verification checks passed." if task.expected_success else "1 test failed."
             )
             stderr = "" if task.expected_success else "AssertionError: simulated failure"
-            shell_outputs.append(
-                ShellOutput(
-                    command=task.verification_command,
-                    stdout=stdout,
-                    stderr=stderr,
-                    exit_code=exit_code,
-                    duration_ms=120,
+            for command in verification_commands:
+                shell_outputs.append(
+                    ShellOutput(
+                        command=command,
+                        stdout=stdout,
+                        stderr=stderr,
+                        exit_code=exit_code,
+                        duration_ms=120,
+                    )
                 )
-            )
             verification_result = VerificationResult(
-                command=task.verification_command,
+                command=verification_commands[-1],
                 passed=task.expected_success,
                 stdout=stdout,
                 stderr=stderr,
@@ -1225,6 +1230,7 @@ def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> 
     for path in changed_files:
         if path in forbidden:
             violations.append(f"forbidden_change:{path}")
-        if expected and path not in expected:
+        is_managed_runtime_change = path in FORGE_MANAGED_RUNTIME_PATHS and path not in forbidden
+        if expected and path not in expected and not is_managed_runtime_change:
             violations.append(f"unexpected_change:{path}")
     return violations
