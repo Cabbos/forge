@@ -148,6 +148,62 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByTestId("work-panel-terminal")).toBeVisible();
   });
 
+  test("work panel desktop sheet keeps its outer breathing room inside the workbench", async ({ page }) => {
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    await expect(page.getByRole("complementary", { name: "工作面板" })).toHaveAttribute("data-viewport-mode", "split");
+    const metrics = await page.evaluate(() => {
+      const panel = document.querySelector<HTMLElement>("aside[data-testid='work-panel']");
+      const workbench = document.querySelector<HTMLElement>("[data-testid='main-workbench']");
+      if (!panel || !workbench) return null;
+      const panelRect = panel.getBoundingClientRect();
+      const workbenchRect = workbench.getBoundingClientRect();
+      return { panelTop: panelRect.top, panelBottom: panelRect.bottom, workbenchTop: workbenchRect.top, workbenchBottom: workbenchRect.bottom };
+    });
+    expect(metrics).not.toBeNull();
+    expect(metrics!.panelTop - metrics!.workbenchTop).toBeGreaterThanOrEqual(9);
+    expect(metrics!.panelBottom).toBeLessThanOrEqual(metrics!.workbenchBottom - 9);
+  });
+
+  test("work panel overlay starts below the app titlebar and preserves a reachable close control", async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    const titlebar = page.getByTestId("app-titlebar");
+    const [panelBox, titlebarBox] = await Promise.all([panel.boundingBox(), titlebar.boundingBox()]);
+    expect(panelBox).not.toBeNull();
+    expect(titlebarBox).not.toBeNull();
+    expect(panelBox!.y).toBeGreaterThanOrEqual(titlebarBox!.y + titlebarBox!.height - 1);
+    await expect(panel.getByRole("button", { name: "关闭工作面板" })).toBeVisible();
+    await panel.getByRole("button", { name: "关闭工作面板" }).click();
+    await expect(panel).toHaveCount(0);
+  });
+
+  test("work panel terminal keeps toolbar text at accessible contrast in light theme", async ({ page }) => {
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await panel.getByRole("option", { name: /^终端/ }).click();
+    const shell = page.getByTestId("operating-surface");
+    if (await shell.getAttribute("data-theme") !== "light") {
+      await page.keyboard.press("Meta+K");
+      await page.getByRole("option", { name: /切换主题/ }).click();
+    }
+    const contrast = await panel.locator(".forge-work-panel-terminal .forge-work-panel-content-toolbar").evaluate((toolbar) => {
+      const parse = (value: string) => value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+      const luminance = (value: string) => parse(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      const background = getComputedStyle(toolbar).backgroundColor;
+      const values = Array.from(toolbar.querySelectorAll<HTMLElement>("small, button")).map((element) => getComputedStyle(element).color);
+      return values.map((color) => {
+        const [lighter, darker] = [luminance(color), luminance(background)].sort((a, b) => b - a);
+        return (lighter + 0.05) / (darker + 0.05);
+      });
+    });
+    expect(contrast.every((value) => value >= 4.5)).toBeTruthy();
+  });
+
   test("work panel preview and file adapters open selected objects as tabs", async ({ page }) => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });
