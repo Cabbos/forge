@@ -1,4 +1,4 @@
-import { useDeferredValue, useState } from "react";
+import { useDeferredValue, useEffect, useRef, useState } from "react";
 import {
   ArrowLeft,
   FileDiff,
@@ -50,7 +50,9 @@ interface WorkPanelLauncherProps {
 }
 
 export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLauncherProps) {
+  const launcherCommandRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<PickerAction | null>(null);
+  const [activeActionIndex, setActiveActionIndex] = useState(0);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const activeSessionId = useStore((state) => state.activeSessionId);
@@ -86,11 +88,37 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
   };
 
   const handleKeyDown = (event: React.KeyboardEvent) => {
-    if (event.key !== "Escape" || selection === null) return;
-    event.preventDefault();
-    event.stopPropagation();
-    returnToRoot();
+    if (selection !== null) {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      returnToRoot();
+      return;
+    }
+
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      event.stopPropagation();
+      setActiveActionIndex((index) => (
+        event.key === "ArrowDown"
+          ? (index + 1) % WORK_PANEL_LAUNCHER_ACTIONS.length
+          : (index - 1 + WORK_PANEL_LAUNCHER_ACTIONS.length) % WORK_PANEL_LAUNCHER_ACTIONS.length
+      ));
+      return;
+    }
+
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      handleAction(WORK_PANEL_LAUNCHER_ACTIONS[activeActionIndex].id);
+    }
   };
+
+  useEffect(() => {
+    if (selection !== null) return;
+    const frame = requestAnimationFrame(() => launcherCommandRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [mode, selection]);
 
   if (selection) {
     const previewUrlTab = selection === "preview" ? createPreviewUrlTab(query) : null;
@@ -177,17 +205,23 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
 
   return (
     <div className="forge-work-panel-launcher" data-testid="work-panel-launcher" data-mode={mode}>
-      <Command className="forge-work-panel-command forge-work-panel-launcher-command" onKeyDown={handleKeyDown}>
+      <Command
+        ref={launcherCommandRef}
+        tabIndex={0}
+        className="forge-work-panel-command forge-work-panel-launcher-command"
+        onKeyDown={handleKeyDown}
+      >
         {mode === "new" ? <span className="forge-work-panel-launcher-label">打开新的…</span> : null}
         <CommandList className="forge-work-panel-launcher-actions">
           <CommandGroup>
-            {WORK_PANEL_LAUNCHER_ACTIONS.map((action) => {
+            {WORK_PANEL_LAUNCHER_ACTIONS.map((action, index) => {
               const Icon = actionIcons[action.id];
               return (
                 <CommandItem
                   key={action.id}
                   role="button"
                   value={action.label}
+                  data-selected={index === activeActionIndex ? "true" : "false"}
                   className="forge-work-panel-launcher-action"
                   onSelect={() => handleAction(action.id)}
                 >
