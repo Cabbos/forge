@@ -209,6 +209,49 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel).toHaveCount(0);
   });
 
+  test("work panel preview fills the active tab in overlay and split layouts", async ({ page }) => {
+    await page.setViewportSize({ width: 700, height: 900 });
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await panel.getByRole("option", { name: /^预览/ }).click();
+    await panel.getByPlaceholder("输入本机网址或搜索文件").fill("http://localhost:1420");
+    await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
+    const measure = () => panel.evaluate((element) => {
+      const tabContent = element.querySelector<HTMLElement>(".forge-work-panel-tab-content:not([hidden])");
+      const viewport = element.querySelector<HTMLElement>(".forge-work-panel-preview-viewport");
+      if (!tabContent || !viewport) return null;
+      const panelBox = element.getBoundingClientRect();
+      const tabBox = tabContent.getBoundingClientRect();
+      const viewportBox = viewport.getBoundingClientRect();
+      return {
+        panelBottom: panelBox.bottom,
+        tabBottom: tabBox.bottom,
+        viewportBottom: viewportBox.bottom,
+        viewportHeight: viewportBox.height,
+        tabDisplay: getComputedStyle(tabContent).display,
+        viewportBorder: getComputedStyle(viewport).borderTopWidth,
+        viewportShadow: getComputedStyle(viewport).boxShadow,
+      };
+    });
+    const assertFilled = async () => {
+      const metrics = await measure();
+      expect(metrics).not.toBeNull();
+      expect(metrics!.tabDisplay).toBe("flex");
+      expect(Math.abs(metrics!.panelBottom - metrics!.tabBottom)).toBeLessThanOrEqual(3);
+      expect(Math.abs(metrics!.panelBottom - metrics!.viewportBottom)).toBeLessThanOrEqual(3);
+      expect(metrics!.viewportHeight).toBeGreaterThan(700);
+      expect(metrics!.viewportBorder).toBe("0px");
+      expect(metrics!.viewportShadow).toBe("none");
+      return metrics!;
+    };
+    await expect(panel).toHaveAttribute("data-viewport-mode", "overlay");
+    await assertFilled();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await expect(panel).toHaveAttribute("data-viewport-mode", "split");
+    await assertFilled();
+  });
+
   test("work panel restores its default split width and keeps the narrow overlay usable", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.getByRole("button", { name: "打开工作面板" }).click();

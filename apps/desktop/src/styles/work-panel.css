@@ -114,8 +114,10 @@
   }
 
   .forge-work-panel-tab-content {
+    display: flex;
     min-height: 0;
-    overflow: auto;
+    flex-direction: column;
+    overflow: hidden;
   }
 
   .forge-work-panel-overflow-menu {
