@@ -1,6 +1,7 @@
 import { FileDiff, FileText, Globe2, ListTree, TerminalSquare } from "lucide-react";
 import { WorkPanelFiles } from "./WorkPanelFiles";
 import { WorkPanelPreview } from "./WorkPanelPreview";
+import { WorkPanelReview } from "./WorkPanelReview";
 import type { WorkPanelTab } from "./workPanelTypes";
 
 export function WorkPanelContent({
@@ -10,6 +11,7 @@ export function WorkPanelContent({
   tab: WorkPanelTab;
   onOpenTab: (tab: WorkPanelTab) => void;
 }) {
+  if (tab.kind === "review") return <WorkPanelReview />;
   if (tab.kind === "preview") return <WorkPanelPreview tab={tab} />;
   if (tab.kind === "file") return <WorkPanelFiles tab={tab} onOpenTab={onOpenTab} />;
 

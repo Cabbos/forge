@@ -454,6 +454,145 @@
     background: white;
   }
 
+  .forge-work-panel-review {
+    display: flex;
+    min-height: 0;
+    flex: 1;
+    flex-direction: column;
+    overflow: hidden;
+    background: var(--forge-bg-surface);
+  }
+
+  .forge-work-panel-review-notice {
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--forge-border-subtle);
+    padding: 0.45rem 0.75rem;
+    color: var(--forge-text-muted);
+    font-size: 10px;
+  }
+
+  .forge-work-panel-review-body {
+    display: grid;
+    min-height: 0;
+    flex: 1;
+    grid-template-columns: minmax(132px, 28%) minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .forge-work-panel-review-files {
+    min-width: 0;
+    overflow: auto;
+    border-right: 1px solid var(--forge-border-subtle);
+    padding: 0.375rem;
+    background: var(--forge-bg-depth);
+  }
+
+  .forge-work-panel-review-files button {
+    display: grid;
+    width: 100%;
+    gap: 0.2rem;
+    border-radius: calc(var(--radius) - 3px);
+    padding: 0.5rem;
+    color: var(--forge-text-muted);
+    text-align: left;
+  }
+
+  .forge-work-panel-review-files button[data-active="true"] {
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
+  }
+
+  .forge-work-panel-review-files span {
+    overflow: hidden;
+    font-size: 10px;
+    font-weight: 600;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .forge-work-panel-review-files small {
+    color: var(--forge-text-faint);
+    font-family: var(--font-mono);
+    font-size: 9px;
+  }
+
+  .forge-work-panel-review-diff {
+    min-width: 0;
+    overflow: auto;
+    font-size: 10px;
+  }
+
+  .forge-work-panel-review-diff table {
+    font-size: 10px;
+  }
+
+  .forge-work-panel-review-diff td {
+    line-height: 1.55;
+  }
+
+  .forge-work-panel-review-gutter {
+    width: 42px;
+    border-right: 1px solid var(--forge-border-subtle);
+    color: var(--forge-text-faint);
+    text-align: right;
+  }
+
+  .forge-work-panel-review-gutter button {
+    width: 100%;
+    padding: 0 0.35rem;
+    color: inherit;
+    font-family: var(--font-mono);
+    text-align: right;
+  }
+
+  .forge-work-panel-review-gutter button:hover,
+  .forge-work-panel-review-gutter button:focus-visible {
+    background: var(--forge-hover);
+    color: var(--forge-text-primary);
+    outline: none;
+  }
+
+  .forge-work-panel-review-feedback {
+    display: grid;
+    flex-shrink: 0;
+    gap: 0.5rem;
+    border-top: 1px solid var(--forge-border-subtle);
+    padding: 0.625rem;
+    background: var(--forge-bg-depth);
+  }
+
+  .forge-work-panel-review-feedback > div {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 10px;
+  }
+
+  .forge-work-panel-review-feedback > div button {
+    color: var(--forge-text-muted);
+  }
+
+  .forge-work-panel-review-feedback textarea {
+    width: 100%;
+    resize: vertical;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-surface);
+    padding: 0.5rem 0.625rem;
+    color: var(--forge-text-primary);
+    font-size: 11px;
+    outline: none;
+  }
+
+  .forge-work-panel-review-feedback textarea:focus {
+    border-color: var(--forge-material-border-hover);
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--forge-accent) 12%, transparent);
+  }
+
+  .forge-work-panel-review-feedback > :last-child {
+    justify-self: end;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .forge-work-panel-launcher-action {
       transition: none;

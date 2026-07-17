@@ -164,6 +164,7 @@ pub fn run() {
             ipc::permission_handlers::set_permission_mode,
             ipc::workspace_files::open_file,
             ipc::workspace_files::preview_file,
+            ipc::workspace_review::get_workspace_review,
             ipc::project_runtime::get_project_runtime_status,
             ipc::project_runtime::start_project_dev_server,
             ipc::project_runtime::stop_project_dev_server,

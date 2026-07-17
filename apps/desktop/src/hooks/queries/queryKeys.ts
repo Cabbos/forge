@@ -20,6 +20,8 @@ export const queryKeys = {
     ["search-workspace-files", query, sessionId ?? "", workingDir ?? ""] as const,
   previewFile: (path: string, line?: number, sessionId?: string, workingDir?: string | null) =>
     ["preview-file", path, line ?? 0, sessionId ?? "", workingDir ?? ""] as const,
+  workspaceReview: (sessionId?: string | null, workingDir?: string | null) =>
+    ["workspace-review", sessionId ?? "", workingDir ?? ""] as const,
   forgeWikiState: (projectPath: string, sessionId?: string | null) =>
     ["forge-wiki-state", projectPath, sessionId ?? ""] as const,
   appMetadata: ["app-metadata"] as const,

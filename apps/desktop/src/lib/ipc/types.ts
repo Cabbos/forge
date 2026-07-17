@@ -148,6 +148,22 @@ export interface FilePreview {
   lines: FilePreviewLine[];
 }
 
+export type WorkspaceReviewFileStatus = "added" | "modified" | "renamed" | "deleted";
+
+export interface WorkspaceReviewFile {
+  path: string;
+  status: WorkspaceReviewFileStatus;
+  additions: number;
+  deletions: number;
+}
+
+export interface WorkspaceReview {
+  working_dir: string;
+  patch: string;
+  files: WorkspaceReviewFile[];
+  truncated: boolean;
+}
+
 export interface ProjectRuntimeStatus {
   working_dir: string;
   has_package_json: boolean;

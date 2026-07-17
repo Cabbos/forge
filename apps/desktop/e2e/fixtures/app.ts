@@ -1524,6 +1524,24 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
               { number: 3, content: "}", is_target: args.line === 3 },
             ],
           };
+        case "get_workspace_review":
+          // @ts-expect-error mock
+          window.__lastGetWorkspaceReviewArgs = args;
+          return {
+            working_dir: String(args.workingDir ?? sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir),
+            patch: [
+              "diff --git a/README.md b/README.md",
+              "index 1111111..2222222 100644",
+              "--- a/README.md",
+              "+++ b/README.md",
+              "@@ -1,2 +1,3 @@",
+              " Forge",
+              "+Keep the empty state explanation.",
+              " Workbench",
+            ].join("\n"),
+            files: [{ path: "README.md", status: "modified", additions: 1, deletions: 0 }],
+            truncated: false,
+          };
         case "open_file":
           // @ts-expect-error mock
           window.__lastOpenFileArgs = args;
