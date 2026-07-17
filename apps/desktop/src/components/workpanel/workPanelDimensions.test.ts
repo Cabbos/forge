@@ -3,6 +3,8 @@ import { describe, it } from "node:test";
 import {
   DEFAULT_WORK_PANEL_WIDTH_PERCENT,
   getWorkPanelBounds,
+  getWorkbenchWidth,
+  clampWorkPanelWidthPercent,
   getWorkPanelViewportMode,
   normalizeWorkPanelWidthPercent,
 } from "./workPanelDimensions.ts";
@@ -27,5 +29,18 @@ describe("work panel dimensions", () => {
     assert.deepEqual(getWorkPanelBounds(800), { min: 45, max: 62 });
     assert.deepEqual(getWorkPanelBounds(2400), { min: 34, max: 38.33 });
     assert.deepEqual(getWorkPanelBounds(0), { min: 62, max: 62 });
+  });
+
+  it("clamps immediate resize targets to the current split bounds", () => {
+    const bounds = getWorkPanelBounds(2400);
+    assert.equal(clampWorkPanelWidthPercent(40, bounds), 38.33);
+    assert.equal(clampWorkPanelWidthPercent(20, bounds), 34);
+    assert.equal(clampWorkPanelWidthPercent(36, bounds), 36);
+  });
+
+  it("normalizes non-finite viewport and workbench measurements", () => {
+    assert.equal(getWorkPanelViewportMode(Number.NaN), "overlay");
+    assert.equal(getWorkbenchWidth(Number.POSITIVE_INFINITY), 360);
+    assert.deepEqual(getWorkPanelBounds(Number.NEGATIVE_INFINITY), { min: 62, max: 62 });
   });
 });

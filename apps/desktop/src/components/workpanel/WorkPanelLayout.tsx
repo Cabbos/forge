@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { WorkPanelShell } from "./WorkPanelShell";
 import { closeWorkPanelTab, focusWorkPanelTab, openWorkPanelLauncher, openWorkPanelTab, restoreTaskPanelState } from "./workPanelState";
-import { getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
+import { clampWorkPanelWidthPercent, getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
 import { loadWorkPanelTasks, saveWorkPanelTask } from "./workPanelPersistence";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
 
@@ -25,17 +25,21 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
   const mode = getWorkPanelViewportMode(viewportWidth);
   const bounds = getWorkPanelBounds(getWorkbenchWidth(viewportWidth));
 
-  const updateState = useCallback((update: (current: WorkPanelTaskState) => WorkPanelTaskState) => {
+  const updateState = useCallback((update: (current: WorkPanelTaskState) => WorkPanelTaskState, persist = true) => {
     setTaskStates((current) => {
       const nextTaskState = update(current[taskKey] ?? restoreTaskPanelState(null));
-      if (typeof window !== "undefined") saveWorkPanelTask(window.localStorage, taskKey, nextTaskState);
+      if (persist && typeof window !== "undefined") saveWorkPanelTask(window.localStorage, taskKey, nextTaskState);
       return { ...current, [taskKey]: nextTaskState };
     });
   }, [taskKey]);
 
   const setWidthPercent = useCallback((widthPercent: number) => {
-    updateState((current) => ({ ...current, widthPercent: normalizeWorkPanelWidthPercent(widthPercent) }));
-  }, [updateState]);
+    const target = mode === "split"
+      ? clampWorkPanelWidthPercent(widthPercent, bounds)
+      : normalizeWorkPanelWidthPercent(widthPercent);
+    updateState((current) => ({ ...current, widthPercent: target }), false);
+    if (mode === "split") panelRef.current?.resize(`${target}%`);
+  }, [bounds, mode, panelRef, updateState]);
 
   useEffect(() => {
     const toggle = () => setOpen((current) => !current);
@@ -65,7 +69,16 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
   const panelSize = isSplit ? `${state.widthPercent}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%";
 
   return (
-    <Group orientation="horizontal" className="forge-work-panel-layout" data-viewport-mode={mode}>
+    <Group
+      orientation="horizontal"
+      className="forge-work-panel-layout"
+      data-viewport-mode={mode}
+      onLayoutChanged={(layout) => {
+        const widthPercent = layout["work-panel"];
+        if (!isSplit || maximized || typeof widthPercent !== "number") return;
+        updateState((current) => ({ ...current, widthPercent: clampWorkPanelWidthPercent(widthPercent, bounds) }));
+      }}
+    >
       <Panel id="conversation" minSize={mode === "overlay" || maximized ? "0%" : "35%"} groupResizeBehavior="preserve-relative-size">
         {children}
       </Panel>
@@ -85,9 +98,6 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
           minSize={maximized ? "100%" : isSplit ? `${bounds.min}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
           maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
           groupResizeBehavior="preserve-relative-size"
-          onResize={(size) => {
-            if (!maximized && isSplit) setWidthPercent(size.asPercentage);
-          }}
         >
           <WorkPanelShell
             maximized={maximized}
