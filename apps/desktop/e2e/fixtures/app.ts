@@ -1510,6 +1510,8 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             working_dir: String(args.workingDir ?? sessionWorkingDirs.get(String(args.sessionId ?? "")) ?? workingDir),
           };
         case "preview_file":
+          // @ts-expect-error acceptance mock
+          if (window.__mockPreviewFileError) throw new Error(String(window.__mockPreviewFileError));
           // @ts-expect-error mock
           window.__lastPreviewFileArgs = args;
           return {

@@ -384,6 +384,32 @@
     background: var(--forge-code-bg);
   }
 
+  .forge-work-panel-unavailable {
+    display: flex;
+    min-height: 220px;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+    padding: 20px;
+    color: var(--forge-text-muted);
+  }
+
+  .forge-work-panel-unavailable > div {
+    display: grid;
+    max-width: 360px;
+    gap: 4px;
+  }
+
+  .forge-work-panel-unavailable strong {
+    color: var(--forge-text-primary);
+    font-size: 12px;
+  }
+
+  .forge-work-panel-unavailable span {
+    overflow-wrap: anywhere;
+    font-size: 11px;
+  }
+
   .forge-work-panel-file-view > :last-child {
     flex-shrink: 0;
     border-color: var(--forge-border-subtle);
