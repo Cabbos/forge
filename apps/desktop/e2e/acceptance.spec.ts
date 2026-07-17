@@ -199,6 +199,17 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await page.setViewportSize({ width: 700, height: 900 });
     await expect(panel).toHaveAttribute("data-viewport-mode", "overlay");
     await expect(page.getByTestId("main-workbench")).toBeVisible();
+
+    await page.setViewportSize({ width: 1200, height: 900 });
+    await expect(panel).toHaveAttribute("data-viewport-mode", "split");
+    await expect(panel).toHaveAttribute("data-width-percent", "40");
+    const renderedWidthPercent = () => panel.evaluate((element) => {
+      const layout = element.closest<HTMLElement>(".forge-work-panel-layout");
+      if (!layout) return null;
+      return element.getBoundingClientRect().width / layout.getBoundingClientRect().width * 100;
+    });
+    await expect.poll(renderedWidthPercent).toBeGreaterThan(37);
+    await expect.poll(renderedWidthPercent).toBeLessThan(41);
   });
 
   test("work panel terminal keeps toolbar text at accessible contrast in light theme", async ({ page }) => {
