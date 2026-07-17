@@ -10,6 +10,7 @@ import {
 } from "@/lib/tauri";
 import { useActiveWorkspace, useStore } from "@/store";
 import type { WorkPanelTab } from "./workPanelTypes";
+import { createTerminalOutputSanitizer } from "./workPanelTerminalOutput";
 
 type WorkPanelTerminalTab = Extract<WorkPanelTab, { kind: "terminal" }>;
 
@@ -28,6 +29,7 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
   useEffect(() => {
     let disposed = false;
     let removeListener: (() => void) | null = null;
+    const outputSanitizer = createTerminalOutputSanitizer();
 
     setStatus("starting");
     setError(null);
@@ -37,12 +39,11 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
     void (async () => {
       try {
         removeListener = await listen<WorkspaceTerminalOutput>("work-panel-terminal-output", (event) => {
+          if (disposed) return;
           if (event.payload.task_id !== tab.taskId || event.payload.terminal_id !== terminalIdRef.current) return;
           if (event.payload.chunk) {
             setRecentOutput((current) => {
-              const next = `${current}${event.payload.chunk}`
-                .replace(/\x1B(?:[@-_][0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "")
-                .replace(/\r(?!\n)/g, "\n");
+              const next = `${current}${outputSanitizer.push(event.payload.chunk)}`;
               return next.slice(-8_000);
             });
           }
@@ -50,6 +51,10 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
             setStatus("exited");
           }
         });
+        if (disposed) {
+          await removeListener();
+          return;
+        }
         const info = await startWorkspaceTerminal({
           taskId: tab.taskId,
           sessionId,
@@ -73,7 +78,8 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
 
     return () => {
       disposed = true;
-      removeListener?.();
+      outputSanitizer.reset();
+      if (removeListener) void removeListener();
       const terminalId = terminalIdRef.current;
       terminalIdRef.current = null;
       if (terminalId) void closeWorkspaceTerminal(tab.taskId, terminalId).catch(() => {});
@@ -83,10 +89,9 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
   const submitCommand = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const terminalId = terminalIdRef.current;
-    const nextCommand = command.trim();
-    if (!terminalId || !nextCommand || status !== "running") return;
+    if (!terminalId || !command.trim() || status !== "running") return;
     setCommand("");
-    void writeWorkspaceTerminal(tab.taskId, terminalId, `${nextCommand}\r`).catch((cause) => {
+    void writeWorkspaceTerminal(tab.taskId, terminalId, `${command}\r`).catch((cause) => {
       setError(errorMessage(cause));
     });
   };
