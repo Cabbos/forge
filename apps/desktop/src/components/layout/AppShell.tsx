@@ -6,7 +6,7 @@ import { AppTitlebar } from "./AppTitlebar";
 import { WorkPanelLayout } from "@/components/workpanel/WorkPanelLayout";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
-import { getProjectDisplay, getSessionTitle } from "@/lib/session-display";
+import { getProjectDisplay } from "@/lib/session-display";
 import { useEmptyWorkbenchController } from "./useEmptyWorkbenchController";
 import { RecoveryNoticeBanner } from "./RecoveryNoticeBanner";
 import { HealthAlertBanner } from "./HealthAlertBanner";
@@ -73,7 +73,7 @@ export function AppShell() {
           setSearchOpen(true);
         }}
       />
-      <WorkPanelLayout taskKey={visibleSessionId ?? activeWorkspace?.path ?? "no-project"} taskLabel={activeSession ? getSessionTitle(activeSession) : project.name}>
+      <WorkPanelLayout taskKey={visibleSessionId ?? activeWorkspace?.path ?? "no-project"}>
         <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
           <RecoveryNoticeBanner />
           <HealthAlertBanner />
