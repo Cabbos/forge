@@ -54,11 +54,12 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByRole("option", { name: /^预览/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^文件/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^子任务/ })).toBeVisible();
+    await expect(panel.locator("iframe")).toHaveCount(0);
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
   });
 
-  test("work panel launcher opens selected objects as tabs", async ({ page }) => {
+  test("work panel preview and file adapters open selected objects as tabs", async ({ page }) => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
     const panel = page.getByRole("complementary", { name: "工作面板" });
 
@@ -68,12 +69,20 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
 
     await expect(panel.getByRole("tab", { name: /localhost:1420/ })).toBeVisible();
+    await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
     await panel.getByRole("option", { name: /^文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
     await panel.getByRole("option", { name: /README.md/ }).click();
 
     await expect(panel.getByRole("tab", { name: /README.md/ })).toBeVisible();
+    await expect(panel.getByTestId("work-panel-file-view")).toContainText("export function Demo()");
+
+    await panel.getByRole("button", { name: "新建工作面板标签" }).click();
+    await panel.getByRole("option", { name: /^文件/ }).click();
+    await panel.getByPlaceholder("搜索工作区文件").fill("README");
+    await panel.getByRole("option", { name: /README.md/ }).click();
+    await expect(panel.getByRole("tab", { name: /README.md/ })).toHaveCount(1);
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
   });
 

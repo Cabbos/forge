@@ -90,7 +90,7 @@ export function WorkPanelShell({
         ) : (
           state.tabs.map((tab) => (
             <TabsContent key={tab.id} value={tab.id} className="forge-work-panel-tab-content">
-              <WorkPanelContent tab={tab} />
+              <WorkPanelContent tab={tab} onOpenTab={onOpenTab} />
             </TabsContent>
           ))
         )}
