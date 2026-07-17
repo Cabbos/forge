@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Group, Panel, Separator, usePanelRef } from "react-resizable-panels";
 import { WorkPanelShell } from "./WorkPanelShell";
 import { closeWorkPanelTab, focusWorkPanelTab, openWorkPanelLauncher, openWorkPanelTab, restoreTaskPanelState } from "./workPanelState";
-import { getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MAX_WORK_PANEL_WIDTH_PX, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
+import { getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
 import { loadWorkPanelTasks, saveWorkPanelTask } from "./workPanelPersistence";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
 
@@ -83,7 +83,7 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
           panelRef={panelRef}
           defaultSize={panelSize}
           minSize={maximized ? "100%" : isSplit ? `${bounds.min}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
-          maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MAX_WORK_PANEL_WIDTH_PX}px` : "100%"}
+          maxSize={maximized ? "100%" : isSplit ? `${bounds.max}%` : mode === "fixed" ? `${MIN_WORK_PANEL_WIDTH_PX}px` : "100%"}
           groupResizeBehavior="preserve-relative-size"
           onResize={(size) => {
             if (!maximized && isSplit) setWidthPercent(size.asPercentage);

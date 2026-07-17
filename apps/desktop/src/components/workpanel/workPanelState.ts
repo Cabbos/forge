@@ -58,7 +58,7 @@ export function closeWorkPanelTab(state: WorkPanelTaskState, tabId: string): Wor
   if (closingIndex < 0) return state;
 
   const tabs = state.tabs.filter((tab) => tab.id !== tabId);
-  if (tabs.length === 0) return { ...EMPTY_WORK_PANEL_STATE, widthPercent: state.widthPercent };
+  if (tabs.length === 0) return { ...EMPTY_WORK_PANEL_STATE, widthPercent: normalizeWorkPanelWidthPercent(state.widthPercent) };
   if (state.activeTabId !== tabId) return { ...state, tabs };
 
   const nextIndex = Math.min(closingIndex, tabs.length - 1);
