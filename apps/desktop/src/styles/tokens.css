@@ -143,6 +143,14 @@
     --forge-inspector-gap: 10px;
     --forge-work-panel-tabs-height: 38px;
     --forge-work-panel-header-height: 44px;
+    --forge-work-panel-canvas: #1D1F1C;
+    --forge-work-panel-sheet: #292B28;
+    --forge-work-panel-row: #323531;
+    --forge-work-panel-row-active: #3A3D38;
+    --forge-work-panel-context: #262825;
+    --forge-work-panel-border: rgba(241, 242, 238, 0.09);
+    --forge-work-panel-shadow: 0 18px 42px rgba(0, 0, 0, 0.32);
+    --forge-work-panel-objectbar-height: 42px;
     --forge-disclosure-row-height: 28px;
 
     /* LED state colors */
@@ -173,5 +181,16 @@
     --forge-film-bg: rgba(42, 39, 33, 0.94);
     --forge-film-perf: rgba(238, 234, 225, 0.08);
     --forge-film-header: rgba(18, 17, 15, 0.86);
+  }
+
+  body:has(.forge-app-shell[data-theme="light"]),
+  .forge-app-shell[data-theme="light"] {
+    --forge-work-panel-canvas: #E5E6E1;
+    --forge-work-panel-sheet: #FAF9F6;
+    --forge-work-panel-row: #EFEFEA;
+    --forge-work-panel-row-active: #E7E8E2;
+    --forge-work-panel-context: #F5F4F0;
+    --forge-work-panel-border: rgba(42, 46, 38, 0.10);
+    --forge-work-panel-shadow: 0 16px 38px rgba(46, 48, 43, 0.13);
   }
 }

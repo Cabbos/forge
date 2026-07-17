@@ -52,7 +52,7 @@ export function WorkPanelFileDocument({
         <div className="forge-work-panel-content-title">
           <FileText className="size-4" />
           <span title={view.title}>{view.title}</span>
-          <small>{view.locationLabel}</small>
+          <small className="forge-work-panel-file-path">{view.locationLabel}</small>
         </div>
         {onOpenPreview ? (
           <ForgeButton variant="ghost" size="sm" onClick={onOpenPreview}>
