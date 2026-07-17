@@ -4,6 +4,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
+use crate::agent::loop_guard::LoopGuard;
+use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::turn_state::{AgentTurnState, AgentTurnStatus};
 use crate::continuity::{
     build_episode_from_turn, build_send_input_reflection_event, continuity_events_from_turn,
@@ -99,11 +101,24 @@ pub(crate) async fn send_headless_turn(
     session: &crate::agent::session::AgentSession,
     prompt: &str,
     emitter: Arc<HeadlessEventEmitter>,
+    model_rounds_used: usize,
+    max_model_rounds: usize,
 ) -> Result<(), String> {
+    configure_headless_model_round_budget(session, model_rounds_used, max_model_rounds);
     let turn_guard = session.reserve_turn()?;
     session
         .send_message_with_shared_emitter(prompt, emitter, Vec::new(), None, None, turn_guard)
         .await
+}
+
+pub(crate) fn configure_headless_model_round_budget(
+    session: &crate::agent::session::AgentSession,
+    model_rounds_used: usize,
+    max_model_rounds: usize,
+) {
+    let remaining = max_model_rounds.saturating_sub(model_rounds_used).max(1);
+    *lock_unpoisoned(&session.loop_guard) =
+        LoopGuard::default_limits().with_max_model_rounds(remaining);
 }
 
 pub(crate) fn headless_reflection_outcome(

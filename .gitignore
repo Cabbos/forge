@@ -35,3 +35,6 @@ release/evidence/*/candidate-manifest.json
 release/evidence/*/release-manifest.json
 
 .gitnexus
+
+# Brainstorming visual companion sessions
+.superpowers/
