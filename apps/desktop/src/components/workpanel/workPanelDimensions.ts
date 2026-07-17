@@ -12,20 +12,26 @@ export function normalizeWorkPanelWidthPercent(widthPercent: number | undefined)
 }
 
 export function getWorkPanelViewportMode(viewportWidth: number): WorkPanelViewportMode {
-  if (viewportWidth < 720) return "overlay";
-  if (viewportWidth < 900) return "fixed";
+  const safeViewportWidth = Number.isFinite(viewportWidth) ? viewportWidth : 0;
+  if (safeViewportWidth < 720) return "overlay";
+  if (safeViewportWidth < 900) return "fixed";
   return "split";
 }
 
 export function getWorkbenchWidth(viewportWidth: number): number {
-  return Math.max(MIN_WORK_PANEL_WIDTH_PX, viewportWidth - 284);
+  const safeViewportWidth = Number.isFinite(viewportWidth) ? viewportWidth : 0;
+  return Math.max(MIN_WORK_PANEL_WIDTH_PX, safeViewportWidth - 284);
 }
 
 export function getWorkPanelBounds(workbenchWidth: number): { min: number; max: number } {
-  const safeWidth = Math.max(1, workbenchWidth);
+  const safeWidth = Number.isFinite(workbenchWidth) ? Math.max(1, workbenchWidth) : 1;
   const min = Math.max(MIN_WORK_PANEL_WIDTH_PERCENT, Math.min(MAX_WORK_PANEL_WIDTH_PERCENT, (MIN_WORK_PANEL_WIDTH_PX / safeWidth) * 100));
   const max = Math.max(min, Math.min(MAX_WORK_PANEL_WIDTH_PERCENT, (MAX_WORK_PANEL_WIDTH_PX / safeWidth) * 100));
   return { min: round(min), max: round(max) };
+}
+
+export function clampWorkPanelWidthPercent(widthPercent: number, bounds: { min: number; max: number }): number {
+  return Math.min(bounds.max, Math.max(bounds.min, normalizeWorkPanelWidthPercent(widthPercent)));
 }
 
 function round(value: number): number {
