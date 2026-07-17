@@ -80,7 +80,7 @@ flowchart LR
 | 可恢复的运行时 | `apps/desktop/src-tauri/src/loop_runtime/`：append-only journal、投影重建、replay 回归测试、策略与预算 preflight、类型化完成证据 |
 | Provider 适配 | `apps/desktop/src-tauri/src/adapters/`：`anthropic.rs` 与 `openai_compatible.rs` 两族手写流式 HTTP，`provider_registry.rs` 注册目录与 transport 路由 |
 | 子代理协作 | `apps/desktop/src-tauri/src/agent/a2a/`：worktree 隔离的子任务、父子事件胶囊、审阅门 |
-| 动态工作面板 | `apps/desktop/src/components/workpanel/`：基于 Base UI Tabs、cmdk、react-resizable-panels 与成熟 diff 组件组织审阅、临时命令验证、显式预览、文件和聚焦子任务；记忆与 continuity 只作为后台上下文，不进入面板导航 |
+| 动态工作面板 | `apps/desktop/src/components/workpanel/`：首次打开是无标题选择器，用户只会明确选择审阅、临时终端、预览、文件或聚焦子任务五类对象；它们以去重的融合对象栏 Tab 呈现。默认宽度为 40%，按任务保存，分屏可在 34–62% 间调整，窄窗口改为 overlay；主题 light/dark 由整个工作台消费。临时终端只用于最近输出验证，并非嵌入式终端管理器；记忆与 continuity 只作为后台实现上下文，不进入面板导航 |
 | 记忆与上下文预算 | `apps/desktop/src-tauri/src/memory/`、`agent/prepared_turn.rs`：统一记忆视图、召回计划与 token 预算分桶；模型用量与上下文余量在 UI 上是两个独立指标 |
 | eval 打分与信任门 | `apps/eval-runner/app/scoring.py`、`app/trust_gates.py`、`app/execution.py`：completed 不等于 trusted，缺证据是 UNKNOWN 不是 pass |
 
