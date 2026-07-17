@@ -521,6 +521,16 @@ function TaskRow({
   );
 }
 
+export function AgentA2AFocusedTask({
+  task,
+  runtimeFacts = [],
+}: {
+  task: AgentA2ATaskProjection;
+  runtimeFacts?: LoopRuntimeFact[];
+}) {
+  return <TaskRow task={task} mode="panel" runtimeFacts={runtimeFacts} />;
+}
+
 export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | null }) {
   if (!state || state.tasks.length === 0) return null;
 
