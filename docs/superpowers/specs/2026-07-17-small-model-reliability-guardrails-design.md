@@ -1,313 +1,348 @@
-# Forge 小模型可靠性护栏设计
+# Forge 小模型 Anthropic 优先可靠性设计
 
 Date: 2026-07-17
 Status: pending user review
-Scope: Forge Desktop Agent 的工具契约、工作区边界、任务约束和循环收敛能力
+Revision: 2 — 根据真实 Anthropic/OpenAI-compatible A/B 结果缩小范围
+Scope: Forge Desktop Agent 的本地 Qwen 传输选择、工具失败记账、工作区路径身份和显式保护路径
 
 ## 目标
 
-在不针对单个评测题写特例、不削弱正常开发能力的前提下，提高本地小模型通过
-OpenAI-compatible/vLLM 链路执行真实编码任务时的可靠性。
+让远程 vLLM 上的 `qwen3.6-35b-a3b-nvfp4-fast` 通过最适合它的协议运行 Forge
+Agent，同时只修复 A/B 之后仍能复现的协议无关底层缺陷。
 
-本轮优先解决第四波 R1 评测暴露出的三类问题：
+本轮不再假设“20 轮耗尽主要需要一个新的重型收敛控制器”。真实 A/B 显示，切换到
+Forge 已有的 Anthropic-compatible adapter 后，两道关键 R1 已在 11–12 轮内完成。
 
-1. 模型复制或拼接临时工作区绝对路径，产生无效文件调用并浪费轮次；
-2. 模型运行可能修改明确禁止文件的依赖安装命令；
-3. 重复读取和重复验证被当作有效进展，直到耗尽模型轮次。
+本轮目标因此缩小为：
 
-完成后，Forge 应当帮助能力较弱的模型遵守已经明确存在的任务约束，并在证据足够时
-结束任务；它不能替模型猜测需求，也不能把未完成任务包装为成功。
+1. 将该远程 Qwen 的默认评测传输改为 `custom_anthropic`；
+2. 修复工具失败已经发生、但 Agent 仍记录为成功或零失败的问题；
+3. 先复现 `/var` 与 `/private/var` 等工作区路径身份问题，只在确认权限判断不一致时修复；
+4. 对用户明确保护的锁文件提供确定性的依赖命令预检；
+5. 用严格单并发 R1 复测决定是否还需要后续收敛控制。
 
-## 基线证据
+Forge 不能因为切换协议而降低权限边界，也不能把模型错误隐藏成成功。
 
-当前实现中：
+## 配置与链路证据
 
-- vLLM 走 `openai_compatible` adapter，其内置文件工具只描述为“读取文件”或“写入
-  文件”，`path` 参数没有工作区相对路径说明；Anthropic adapter 的工具说明更完整，
-  两套定义已经漂移。
-- `FileExecutor` 允许工作区内绝对路径和相对路径，但权限钩子、执行器和后台循环并未
-  共享同一个路径解析结果。macOS 的 `/var` 与 `/private/var` 别名以及模型漏写开头
-  `/` 时，容易在不同层得到不一致结论。
-- `LoopGuard` 把“一个批次中至少一个工具未报错”视为进展。相同文件未变化时的重读、
-  相同工作区状态下的重复测试仍会重置无进展计数。
-- 依赖安装会进入权限确认，但确认只回答“是否允许执行”，不会判断该命令是否违反用户
-  明确写出的 `不要修改 package-lock.json` 约束。
-- R1 中 `storage-validation` 已通过；`priority-labels` 曾因依赖安装修改禁止锁文件失败；
-  `due-date-labels` 在功能和验证已经通过的情况下仍耗尽 20 轮，并包含错误路径和重复
-  验证调用。
+CC Switch 的 `remote-vllm` Claude 配置已经包含：
 
-## 方案选择
+- `ANTHROPIC_BASE_URL`，指向远程 vLLM 服务；
+- `ANTHROPIC_AUTH_TOKEN`；
+- Opus、Sonnet、Haiku 三个默认模型都映射到
+  `qwen3.6-35b-a3b-nvfp4-fast`。
 
-采用“分层可靠性控制器”。
+Forge 已经原生支持：
 
-### 未采用：仅增强提示词
+- provider：`custom_anthropic`；
+- transport：`CustomAnthropicCompatible`；
+- endpoint：`<base>/v1/messages`；
+- Anthropic blocks 工具消息；
+- `FORGE_CUSTOM_ANTHROPIC_API_KEY`、`FORGE_CUSTOM_ANTHROPIC_BASE_URL` 和
+  `FORGE_CUSTOM_ANTHROPIC_MODEL`。
 
-优点是改动小、兼容性好。缺点是模型在长工具链中仍可能遗忘路径和禁止文件约束，且
-无法阻止已经生成的危险命令。
+因此切换评测协议不需要修改 vLLM 服务端，也不需要修改 CC Switch 数据库。
 
-### 未采用：全面硬拦截
+## A/B 结果
 
-优点是确定性强。缺点是容易误伤合理的依赖安装、探索性读取和多轮验证，把 Forge
-退化成只适用于当前评测集的执行器。
+使用相同模型、相同 R1 case、相同 Forge Agent 和严格单并发进行验证。
 
-### 采用：提示、确定性边界和证据收敛分层
+| 用例 | OpenAI-compatible 基线 | Anthropic 实测 | 结果 |
+|---|---:|---:|---|
+| `priority-labels` | 失败；18 轮；43.361 秒；8 确认 | 通过；11 轮；29.034 秒；5 确认 | 轮次下降 38.9%，锁文件零越界 |
+| `due-date-labels` | 轮次耗尽；20 轮；50.232 秒；9 确认 | 通过；12 轮；38.116 秒；8 确认 | 轮次下降 40%，正常完成 |
 
-- 工具契约负责让模型第一次就更容易做对；
-- 运行时只对可以确定判断的路径和显式用户约束做强制保护；
-- 收敛控制器根据新证据而不是工具退出状态判断进展；
-- 最终轮次保留给无工具总结，确保结果诚实、可交付。
+Anthropic smoke 还证明服务端能够返回标准：
 
-## 总体架构
+- `type=message`；
+- `stop_reason=tool_use`；
+- `content[].type=tool_use`；
+- 工作区相对参数 `{"path":"package.json"}`。
 
-单轮任务的执行链路调整为：
+完成两题后，远程服务状态为：
+
+- health HTTP 200；
+- `vllm:num_requests_running = 0`；
+- `vllm:num_requests_waiting = 0`。
+
+保存的原始产物：
+
+- `apps/desktop/artifacts/eval-runs/2026-07-17-anthropic-priority-labels-smoke.json`；
+- `apps/desktop/artifacts/eval-runs/2026-07-17-anthropic-due-date-smoke.json`。
+
+## 结论边界
+
+当前收益不能简单归因为 Anthropic 线协议本身。Forge 的 Anthropic adapter 同时使用了
+更完整的默认系统提示、工具描述和 Anthropic block 消息格式。因此本轮结论是：
+
+> 对当前 Qwen 和当前 Forge 实现，`custom_anthropic` 这条完整 adapter 链路明显优于
+> `custom_openai` 链路。
+
+本轮不会为了证明某一个因素而拆分系统提示、工具 schema 和消息编码做多变量实验。产品
+决策以端到端 Agent 结果为准。
+
+## A/B 后仍存在的真实缺陷
+
+### 1. 工具失败记账不可信
+
+`due-date-labels` 中：
+
+- 首次 `npm test` 实际退出 1；
+- 模型调用了不存在的截断工具名 `write_to_`；
+- raw trace 中存在失败结果，但最终 `failed_tool_count` 仍为 0。
+
+`priority-labels` 中：
+
+- 两个 shell 调用被 `blocked_external_path` 阻止；
+- raw `tool_call_result.is_error` 为 true；
+- 最终 `failed_tool_count` 仍为 0。
+
+这会污染循环进展判断、continuity 反思、评测归因和用户最终摘要，必须优先修复。
+
+### 2. 路径身份存在待验证风险
+
+同一临时工作区在 trace 中同时出现：
+
+- `/var/folders/.../workspace`；
+- `/private/var/folders/.../workspace`。
+
+同一运行中还有两个 shell 调用被判为 `external_write`，但脱敏 trace 没有保留这两个调用
+的命令参数，因此当前证据不能证明阻止事件由路径别名导致。实现前必须用定向测试构造
+等价路径；只有测试能够复现权限判断不一致时，才修改路径核心。若现有逻辑已经正确，
+本轮只补充安全的诊断证据，不做推测性权限改动。
+
+### 3. 显式保护路径仍依赖模型自律
+
+Anthropic 本轮没有再次安装测试依赖，因此没有修改 `package-lock.json`。这说明协议选择
+降低了发生概率，但没有建立运行时保证。用户明确写出“不要修改 package-lock.json”时，
+Forge 仍应阻止已知会修改该锁文件的依赖命令。
+
+## 已选方案
+
+采用“Anthropic 优先 + 三个最小协议无关修复”。
 
 ```text
-用户请求
-  -> TurnExecutionContract（工作区、保护路径、验证线索）
-  -> CanonicalToolCatalog（统一工具定义）
-  -> WorkspacePathResolver（统一路径身份）
-  -> ToolBoundaryPreflight（显式约束与确定性副作用检查）
+远程 Qwen
+  -> custom_anthropic /v1/messages
+  -> 现有 Anthropic 工具链
+  -> CanonicalWorkspaceIdentity
+  -> ExplicitProtectedPathPreflight
   -> ToolExecutor
-  -> ActionNoveltyTracker（新证据判定）
-  -> ConvergenceController（提醒、预算保留、最终回答）
+  -> SharedToolOutcomeClassifier
+  -> AgentTurn / LoopGuard / Continuity / Eval evidence
 ```
 
-这些组件位于 Desktop Agent 内部，对 provider 保持中立。OpenAI-compatible 本地模型
-是首要验收对象，但 Anthropic 和其他 provider 使用相同工具契约和边界语义。
+不在本轮引入新的通用规划器、动作新颖度数据库或最终轮次状态机。
 
 ## 设计细节
 
-### 1. 统一内置工具契约
+### 1. 远程 Qwen 默认使用 custom_anthropic
 
-建立一个 Desktop 内部的 `CanonicalToolCatalog`，作为 Anthropic 和
-OpenAI-compatible adapter 的内置工具名称、描述和 JSON Schema 的唯一来源。
+真实评测使用以下映射：
 
-文件工具的 `path` 参数必须明确：
+- `FORGE_HEADLESS_PROVIDER=custom_anthropic`；
+- `FORGE_HEADLESS_MODEL=qwen3.6-35b-a3b-nvfp4-fast`；
+- `FORGE_CUSTOM_ANTHROPIC_BASE_URL=<CC Switch ANTHROPIC_BASE_URL>`；
+- `FORGE_CUSTOM_ANTHROPIC_API_KEY=<CC Switch ANTHROPIC_AUTH_TOKEN>`；
+- `FORGE_CUSTOM_ANTHROPIC_MODEL=qwen3.6-35b-a3b-nvfp4-fast`。
 
-- 优先传工作区相对路径，例如 `src/priority.ts`；
-- 不要复制系统提示中的临时工作区绝对路径；
-- 不允许 `~` 或 `..` 越界；
-- 工作区内绝对路径可以兼容，但会在执行前规范化。
+认证令牌只进入子进程环境，不写入命令产物、报告或仓库。报告只保存 provider、model、
+安全 endpoint 元数据和健康指标。
 
-`run_shell` 的说明必须明确：
+`custom_openai` 继续保留为兼容和对照通道，但不再作为该 Qwen 的默认评测通道。
 
-- 命令默认已经在当前工作区运行，不需要先 `cd <workspace>`；
-- 先使用项目已有脚本和依赖；
-- 除非任务明确要求新增依赖，否则不要运行安装或添加依赖的命令；
-- 成功验证一次后，只有代码或配置发生变化才需要重跑同一命令。
+### 2. 共享工具结果分类器
 
-系统提示保留工作区绝对路径用于边界说明，但同时声明所有工具参数优先使用相对路径。
-adapter 不再维护相互漂移的内置工具文本。
+新增或收敛一个 `tool_result_is_error(tool_name, result)` 语义，供以下位置共同使用：
 
-### 2. 统一工作区路径解析
+- `AgentSession` 累积 `failed_tool_count`；
+- `completed_tool_trace`；
+- LoopGuard 的 `made_progress`；
+- continuity 工具结果与反思输入；
+- headless trace 投影。
 
-新增 `WorkspacePathResolver`，供权限检查、写入边界、文件执行器和工具结果摘要共同使用。
-解析结果包含：
+第一版保持最小、确定性规则：
 
-- 原始请求路径；
-- 规范化工作区相对路径；
-- 规范化绝对路径；
-- 路径是否存在；
-- 是否经过安全的别名规范化；
-- 失败代码和可执行的重试提示。
+- shell 结果中可解析到非零 `Exit code` 时为失败；
+- executor 明确返回 `is_error=true` 时为失败；
+- `Unknown tool:` 和 `Unknown MCP tool:` 为失败；
+- `Error:`、`Denied:`、`Permission denied`、`Tool execution blocked` 为失败；
+- 现有中文阻止结果使用稳定错误代码或结构化标志，不依赖展示文案翻译；
+- 缺失工具结果继续为失败。
 
-解析规则：
+若当前执行 API 只能返回字符串，先复用 shell exit code 和稳定前缀完成最小修复；不为本轮
+重写整个 ToolExecutor 返回类型。后续再独立设计结构化 `ToolExecutionOutcome`。
 
-1. 合法相对路径保持相对身份；
-2. 工作区内绝对路径转换为同一相对身份；
-3. `/var`、`/private/var` 等文件系统别名通过 canonical root 判断，不做字符串前缀猜测；
-4. 只有当漏写根分隔符的路径与当前工作区 canonical 路径能够唯一、完整对应时，才返回
-   建议路径，不静默执行；
-5. 越界、包含父目录遍历或存在歧义的路径继续拒绝。
+同一工具结果在 UI、turn state 和 eval trace 中必须得到一致失败结论。
 
-错误结果使用稳定代码和直接可复制的重试输入，例如：
+### 3. CanonicalWorkspaceIdentity 定向复现
 
-```text
-Error[path_not_in_workspace]: requested path cannot be resolved safely.
-Retry with workspace-relative path: {"path":"src/priority.ts"}
-```
+先为权限外部路径判断和 FileExecutor 建立定向契约测试。只有测试复现不一致时，才提取
+小型共享路径身份函数。
 
-不对模糊路径进行猜测性写入。
+输入：
 
-### 3. 单轮任务执行契约
+- working directory；
+- 工具参数中的文件路径，或 shell policy 提取出的目标路径。
 
-在用户消息进入工具循环时建立 `TurnExecutionContract`。第一版只提取高置信度、显式
-表达的约束，不做通用自然语言规划。
-
-契约包含：
+输出：
 
 - canonical workspace root；
-- 用户明确要求不得修改的路径；
-- 用户明确允许或要求的依赖变更；
-- 用户明确要求执行的验证命令线索；
-- 模型总轮次及最终回答保留轮次。
+- canonical requested path；
+- workspace-relative identity；
+- `inside_workspace`；
+- 稳定错误原因。
 
-保护路径提取支持当前中英文明确句式，例如“不要修改 X”“不得改动 X”“do not
-modify X”。提取失败时不推断保护范围；现有权限和工作区边界仍然生效。
+规则：
 
-契约只在当前 turn 有效，不持久化为未来任务的隐式权限。
+1. 已存在路径使用 filesystem canonicalization；
+2. 新文件使用最近存在父目录的 canonical path 加文件名；
+3. `/var` 与 `/private/var` 等别名必须得到同一 identity；
+4. `..` 越界、symlink 越界和无法唯一解析的路径继续拒绝；
+5. 不自动猜测模型漏字符形成的任意路径；
+6. shell 命令中的冗余 `cd <canonical workspace>` 不应被视为外部写入证据。
 
-### 4. 依赖安装和保护路径预检
+如果无法复现，则不改变安全判定，只让 permission evidence 保存稳定分类和脱敏后的路径
+identity，供下一次真实失败归因。本轮不改变用户界面展示路径。
 
-在 shell 权限确认之前运行 `ToolBoundaryPreflight`。它复用现有 shell 命令分类能力，
-识别 npm、pnpm、yarn 和 bun 的 install/add/remove/update 类命令及其常见锁文件副作用。
+### 4. 显式保护路径预检
 
-确定性规则如下：
+从当前用户消息中只提取高置信度保护路径表达：
 
-- 如果用户明确保护 `package-lock.json`，可能修改该文件的 npm 依赖命令在执行前被阻止；
-- pnpm、yarn、bun 对各自锁文件采用同样规则；
-- `npm test`、`npm run <script>`、`npx tsc --noEmit` 等非依赖变更命令不因此被阻止；
-- 用户明确要求新增依赖且没有保护对应锁文件时，仍按现有权限策略确认，不自动放行；
-- 用户后续明确改变约束时，建立新的 turn 契约，不复用旧结论。
+- “不要修改 X”；
+- “不得改动 X”；
+- “do not modify X”。
 
-被阻止的安装命令返回原因、命中的保护路径和替代建议，例如先检查 `package.json`、
-使用已有 test script 或执行 `npx --no-install`。运行时不自动改写成另一个 shell 命令。
+第一版只将明确出现的文件名变成当前 turn 的保护集合，不推断目录或通配符。
 
-### 5. 以新证据判定进展
+在 shell 权限确认之前识别 npm、pnpm、yarn、bun 的 install/add/remove/update 类命令。
+如果对应锁文件位于保护集合，则：
 
-新增 `ActionNoveltyTracker`。它维护当前 turn 的工作区 revision 和已见证据键。
+- 阻止命令；
+- 返回稳定原因代码和命中的保护文件；
+- 建议使用已有依赖、项目 test script 或 `--no-install` 形式；
+- 不自动改写或执行替代命令。
 
-进展定义：
+用户明确要求依赖变更且没有保护锁文件时，继续走现有人工确认，不自动放行。
 
-- 文件内容实际发生变化；
-- 首次读取某个文件的当前 revision；
-- 工作区变化后首次运行某个验证命令；
-- 验证命令产生与此前不同的退出状态或结果摘要；
-- 一次失败后的修复使错误指纹发生变化；
-- 新的用户决定或权限结果改变了可执行边界。
+### 5. 暂缓重型收敛控制
 
-以下不再算新进展：
+原设计中的 `ActionNoveltyTracker`、进度胶囊和保留最终 provider round 暂不实施。
 
-- 同一文件未变化时重复读取；
-- 工作区未变化时重复运行同一验证命令并得到相同结果；
-- 同一路径错误以等价形式重复出现；
-- 写入与原内容完全相同的内容；
-- 只改变命令中的冗余 `cd <workspace>` 或空白。
+原因：
 
-现有硬性模型轮次、工具调用次数和溢出预算继续作为最终保险。工具类别连续出现只作为
-弱信号，不单独证明无进展。
+- Anthropic 已将最难用例从 20 轮降至 12 轮；
+- 当前更直接的问题是失败工具没有进入失败计数；
+- 在失败记账修正前设计收敛策略会使用不可信输入；
+- 过早限制重复读写可能误伤正常探索和修复。
 
-### 6. 收敛控制与最终轮次
-
-`ConvergenceController` 根据新证据和剩余预算采取分级动作：
-
-1. 首次重复无新证据：记录指标，不干预；
-2. 连续重复达到提醒阈值：向模型注入短提示，列出已完成修改、最近通过验证和仍未满足
-   的具体事项；
-3. 距离工作轮次上限较近：注入一次结构化进度胶囊，要求只处理一个明确缺口；
-4. 保留最后一个 provider round，移除工具定义并要求生成最终回答；
-5. 若仍有失败验证或未解决错误，最终回答必须标记未完成，不得声称全部通过。
-
-“模型轮次上限”仍表示总 provider 调用预算。假设上限为 20，最多 19 轮可携带工具，
-第 20 轮为无工具最终回答。模型提前正常结束时不会额外调用最终轮。
-
-最终进度胶囊只包含稳定事实：变更文件、最近验证结果、保护路径、失败指纹和剩余轮次，
-不包含新的推测性任务计划。
-
-### 7. 可观测性
-
-为评测和诊断增加不含敏感内容的计数：
-
-- `path_normalization_count`；
-- `path_rejection_count` 及稳定错误代码；
-- `protected_action_block_count`；
-- `novel_action_count` 与 `repeated_action_count`；
-- `convergence_nudge_count`；
-- `final_round_reserved`；
-- 最终 stop reason。
-
-日志不记录 API key、完整环境变量或工具文件内容。路径指标只保存工作区相对路径或哈希。
+完成本轮修复后，如果完整 R1 两轮仍出现 `model_round_limit` 或重复验证，再以新的 trace
+单独设计收敛控制器。
 
 ## 错误处理
 
-- 路径无法唯一归一化：拒绝该工具调用，返回相对路径重试提示，不猜测目标文件。
-- 任务约束解析有歧义：不创建硬保护规则，保留现有权限确认。
-- shell 命令无法可靠分类：使用现有 shell 风险策略，不用本设计新增的保护路径规则放行。
-- 进展追踪器不可用：退回现有 LoopGuard 硬预算，不能跳过权限或工作区检查。
-- 最终回答 provider 调用失败：保留真实 stop reason 和已完成证据，使用现有恢复摘要。
-- 收敛提醒后模型仍重复：允许硬预算最终终止，但报告重复动作指纹，不伪造成功。
+- Anthropic endpoint 或模型不可用：停止远程评测，不自动回退 OpenAI-compatible 并生成
+  不可比结果。
+- Anthropic 响应不符合 message/tool_use 契约：保存脱敏协议错误，停止该 case。
+- 工具结果无法分类：保留 executor 原始 `is_error`；若该字段也不可用，标记分类未知，
+  不假定成功。
+- 路径无法 canonicalize：使用现有 fail-closed 路径，不扩大权限。
+- 保护路径解析有歧义：不生成新的硬规则，保留现有权限确认。
+- vLLM `waiting > 0` 持续增长或 health 非 200：停止后续 case，不并发追加请求，也不自动
+  重启服务器。
 
 ## 测试策略
 
-遵循测试先行。每个行为先写失败测试，再实现最小修改。
+遵循测试先行。每个运行时代码修改前必须先新增失败测试。
 
 ### 单元测试
 
-- OpenAI-compatible 与 Anthropic 使用相同的内置文件和 shell 工具定义；
-- schema 明确包含相对路径、默认工作目录和依赖安装约束；
-- 相对路径、工作区内绝对路径、macOS 路径别名得到相同 canonical identity；
-- 越界和模糊路径被拒绝，并给出稳定错误代码和重试建议；
-- 明确保护 `package-lock.json` 时阻止 npm 安装，但允许测试和类型检查；
-- 用户明确要求新增依赖且未保护锁文件时仍进入现有确认流程；
-- 重读、重复验证和相同内容写入不算新进展；
-- 真实修改及修改后的首次验证算新进展；
-- 20 轮预算只允许 19 个工具轮，并保留一个无工具最终轮；
-- 未通过验证时的最终轮不会生成“全部完成”状态证据。
+- `custom_anthropic` 路由到 `AnthropicAdapter` 和 `<base>/v1/messages`；
+- 非零 shell exit code 在 turn trace、累计计数和 LoopGuard 中都算失败；
+- `Unknown tool: write_to_` 算失败；
+- raw executor `is_error=true` 不能在 turn projection 中变成成功；
+- 定向测试证明 `/var/.../workspace` 与 `/private/var/.../workspace` 是否得到同一 identity；
+- 新文件父目录 canonicalization 不允许 symlink/`..` 越界；
+- canonical workspace 前的冗余 `cd` 不触发外部路径误判；
+- 明确保护 `package-lock.json` 时阻止 npm install/add；
+- `npm test`、`npx tsc --noEmit` 和无锁文件副作用的命令不因此被阻止；
+- 未保护锁文件的依赖变更仍进入现有人工确认。
 
 ### 集成测试
 
 使用 fake adapter 驱动完整 `AgentSession`：
 
-- 模型先发工作区绝对路径，运行时统一身份且不产生重复路径；
-- 模型发出漏根分隔符的临时路径时，得到可执行重试提示；
-- 模型尝试在保护锁文件的任务中执行依赖安装，文件系统保持不变；
-- 模型在工作区未变化时重复运行 `npx tsc --noEmit`，收到收敛提示并进入最终回答；
-- 模型在最后工作轮仍请求工具，保留的最终 round 不暴露工具且生成诚实总结；
-- 现有权限确认、取消、checkpoint、continuity 和验证证据没有回归。
+- 一个失败 shell + 一个未知工具得到 `failed_tool_count=2`；
+- LoopGuard 不把只有失败工具的批次记为进展；
+- permission ledger、turn trace 和 headless trace 的失败数一致；
+- 若定向测试先复现失败，则等价 macOS 路径修复后可以读写工作区内文件；
+- 真正外部路径继续拒绝；
+- 保护锁文件的依赖命令不会改变工作区快照。
 
-### 回归评测
+### 远程回归
 
-远程 vLLM 只使用一个并发槽，三个 R1 用例严格串行执行。每次调用期间记录 vLLM
-健康状态和 `running`/`waiting`，不并行启动额外远程评测。
+只使用一个 vLLM 并发槽：
 
-先运行一轮诊断；全部满足硬标准后，再完整重复一轮确认稳定性。
+1. 按 `storage-validation`、`priority-labels`、`due-date-labels` 顺序运行 R1；
+2. 每题结束后检查 health、running、waiting；
+3. 第一轮全部满足硬标准后，再按相同顺序完整重复一轮；
+4. 不同时运行 OpenAI-compatible 对照或其他远程 Agent；
+5. 保存完整脱敏 trace 和优化前后报告。
 
 ## 验收标准
 
 硬标准：
 
-- `storage-validation`、`priority-labels`、`due-date-labels` 连续两轮全部通过；
-- 三题都没有 forbidden file diff；
-- 没有由工作区路径拼接或 `/var` 别名导致的工具失败；
+- 三个 R1 用例通过 `custom_anthropic` 连续两轮全部通过；
+- 所有 case 都没有 forbidden file diff；
+- `priority-labels` 不再修改 `package-lock.json`；
 - `due-date-labels` 不以 `model_round_limit` 结束；
-- vLLM 观测始终满足 `running <= 1`、`waiting = 0`，无卡死和重启需求；
-- Desktop 相关 Rust 单元/集成测试、Clippy、格式检查和现有 acceptance 门禁通过。
+- raw `tool_call_result.is_error`、shell exit code、`failed_tool_count` 和 continuity 失败工具数
+  一致；
+- `/var` 与 `/private/var` 等价路径不再产生错误的 external-path 判断；
+- 真正越界路径和危险 shell 保护没有回归；
+- vLLM 全程满足 health 200、`running <= 1`、`waiting = 0`；
+- Desktop 相关 Rust 测试、格式检查、Clippy 和现有 acceptance 门禁通过。
 
-目标指标，不作为牺牲安全性的理由：
+目标指标：
 
-- `storage-validation` 不高于 10 个工作轮；
-- `priority-labels` 不高于 16 个工作轮；
-- `due-date-labels` 不高于 16 个工作轮；
-- 三题失败工具调用数和确认请求数相对当前 R1 基线下降。
+- `storage-validation` 不高于 10 个模型轮次；
+- `priority-labels` 不高于 14 个模型轮次；
+- `due-date-labels` 不高于 16 个模型轮次；
+- 确认请求数不高于本次 Anthropic smoke 基线；
+- 不通过放宽权限或隐藏失败来达到轮次指标。
 
 ## 影响边界
 
-预期涉及 Desktop 内以下领域：
+预期只涉及：
 
-- adapter 内置工具定义；
-- harness 系统提示和单轮任务约束；
-- executor/permissions/write boundary 的路径解析；
-- AgentSession 工具结果记录、LoopGuard 和最终回答调度；
-- 对应 Rust 测试及 R1 评测报告。
+- 远程评测运行配置或脚本；
+- Agent 工具结果分类与 turn metrics；
+- 权限/执行器共享的工作区路径 identity；
+- shell 依赖变更预检和当前 turn 的显式保护路径；
+- 对应 Rust 测试和 R1 报告。
 
-实现前必须对每个拟修改 symbol 运行 GitNexus upstream impact。HIGH 或 CRITICAL 风险必须
-先报告用户，再继续编辑。提交前运行 `detect_changes(scope: compare, base_ref: main)`。
+实现前必须对每个拟修改 symbol 执行 GitNexus upstream impact。HIGH 或 CRITICAL 风险必须
+先向用户报告，再继续编辑。提交前运行 `detect_changes(scope: compare, base_ref: main)`。
 
 ## 非目标
 
-- 不修改 vLLM 服务端、模型权重、采样参数或 CC Switch 配置；
-- 不提高远程并发，也不通过重启服务器掩盖 Agent 问题；
-- 不为三个 R1 题目硬编码文件名、命令或答案；
-- 不自动安装依赖或自动接受高风险权限；
-- 不构建通用自然语言任务规划器；
-- 不移除现有工作区越界、危险 shell 和人工确认保护；
-- 不把评测器的 `expected_files_changed` 私有元数据泄漏给生产 Agent。
+- 不修改 vLLM 服务端、模型权重或采样参数；
+- 不修改 CC Switch 当前 provider 或保存的认证值；
+- 不增加远程并发或自动重启服务器；
+- 不删除 OpenAI-compatible 支持；
+- 不在本轮统一所有 provider 的完整工具 catalog；
+- 不在本轮实现通用 ActionNoveltyTracker 或最终轮次状态机；
+- 不为 R1 题目硬编码答案、源文件路径或验证结果；
+- 不自动接受高风险权限；
+- 不把 eval 私有的 expected/forbidden 元数据泄漏给生产 Agent。
 
 ## 交付顺序
 
-1. 统一工具契约和路径解析；
-2. 增加单轮任务执行契约与保护路径预检；
-3. 增加新证据追踪和收敛控制；
-4. 完成 Rust 回归、静态检查和 acceptance；
-5. 严格单并发执行 R1 两轮复测；
-6. 输出优化前后对比报告并根据新失败决定下一轮，而不是继续扩大本轮范围。
+1. 固化 `custom_anthropic` 单并发评测运行方式；
+2. 测试先行修复共享工具失败分类；
+3. 测试先行复现 canonical workspace identity；仅在红灯成立时修复；
+4. 测试先行增加显式保护路径的依赖命令预检；
+5. 完成 Rust 回归、格式、Clippy 和 acceptance；
+6. 严格单并发完成 R1 两轮；
+7. 输出 A/B 与修复前后报告，再决定是否启动独立收敛控制设计。
