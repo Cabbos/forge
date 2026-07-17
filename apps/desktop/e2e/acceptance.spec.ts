@@ -1,6 +1,53 @@
 import { test, expect } from "@playwright/test";
 import { expandArchiveRecords, setup } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
+import type { AgentA2ATaskProjection } from "../src/lib/protocol";
+
+function workPanelSubtask(
+  task: Pick<AgentA2ATaskProjection, "task_id" | "title" | "latest_message"> &
+    Partial<AgentA2ATaskProjection>,
+): AgentA2ATaskProjection {
+  return {
+    agent_id: `agent-${task.task_id}`,
+    role: "implementer",
+    execution_mode: "worktree_worker",
+    status: "running",
+    messages: [],
+    failure_message: null,
+    updated_at_ms: Date.now(),
+    artifact_count: 0,
+    latest_artifact_kind: null,
+    latest_artifact_title: null,
+    needs_human_review: null,
+    reason_codes: [],
+    tests_passed: null,
+    diff_truncated: null,
+    worktree_path: null,
+    cleaned_up: null,
+    suggested_action: null,
+    parent_task_id: null,
+    child_task_ids: [],
+    created_at_ms: Date.now() - 1_000,
+    started_at_ms: Date.now() - 800,
+    ended_at_ms: null,
+    duration_ms: null,
+    retryable: null,
+    failure_kind: null,
+    resume_note: null,
+    latest_progress: null,
+    lease_owner: null,
+    lease_acquired_at_ms: null,
+    lease_expires_at_ms: null,
+    last_heartbeat_at_ms: null,
+    attempt_count: 1,
+    max_attempts: 3,
+    diff_available: null,
+    changed_file_count: null,
+    changed_files: [],
+    test_report_excerpt: null,
+    ...task,
+  };
+}
 
 test.describe("Phase 7 acceptance surfaces", () => {
   test.beforeEach(async ({ page }) => {
@@ -104,6 +151,63 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const composer = page.locator("textarea.forge-composer-textarea");
     await expect(composer).toContainText("README.md:2");
     await expect(composer).toContainText("这里需要保留空状态说明");
+    await expect(composer).toBeFocused();
+  });
+
+  test("work panel opens one selected subtask and sends instructions back to conversation", async ({ page }) => {
+    const sessionId = "work-panel-subtask-session";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "agent_a2a_updated",
+        session_id: sessionId,
+        state: {
+          running_count: 2,
+          completed_count: 0,
+          failed_count: 0,
+          interrupted_count: 0,
+          tasks: [
+            workPanelSubtask({
+              task_id: "subtask-settings",
+              title: "设置诊断",
+              latest_message: "正在核对诊断状态",
+              latest_progress: "已完成数据映射",
+              changed_file_count: 1,
+              changed_files: ["apps/desktop/src/components/settings/Diagnostics.tsx"],
+            }),
+            workPanelSubtask({
+              task_id: "subtask-history",
+              title: "历史记录",
+              latest_message: "正在整理会话列表",
+            }),
+          ],
+        },
+      },
+    ]);
+
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await panel.getByRole("option", { name: /^子任务/ }).click();
+    await panel.getByRole("option", { name: /设置诊断/ }).click();
+
+    await expect(panel.getByRole("tab", { name: "设置诊断" })).toBeVisible();
+    await expect(panel).toContainText("正在核对诊断状态");
+    await expect(panel).toContainText("已完成数据映射");
+    await expect(panel).toContainText("Diagnostics.tsx");
+    await expect(panel.getByText("历史记录", { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "接管子任务" })).toBeDisabled();
+
+    await panel.getByRole("button", { name: "补充指令" }).click();
+    await panel.getByPlaceholder("告诉这个子任务接下来要做什么").fill("只检查当前设置页，不要扩展范围");
+    await panel.getByRole("button", { name: "发送到对话" }).click();
+
+    const composer = page.locator("textarea.forge-composer-textarea");
+    await expect(composer).toContainText("给子任务「设置诊断」补充指令");
+    await expect(composer).toContainText("只检查当前设置页，不要扩展范围");
     await expect(composer).toBeFocused();
   });
 

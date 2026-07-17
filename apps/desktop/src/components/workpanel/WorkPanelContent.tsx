@@ -2,6 +2,7 @@ import { FileDiff, FileText, Globe2, ListTree, TerminalSquare } from "lucide-rea
 import { WorkPanelFiles } from "./WorkPanelFiles";
 import { WorkPanelPreview } from "./WorkPanelPreview";
 import { WorkPanelReview } from "./WorkPanelReview";
+import { WorkPanelSubtask } from "./WorkPanelSubtask";
 import type { WorkPanelTab } from "./workPanelTypes";
 
 export function WorkPanelContent({
@@ -14,6 +15,7 @@ export function WorkPanelContent({
   if (tab.kind === "review") return <WorkPanelReview />;
   if (tab.kind === "preview") return <WorkPanelPreview tab={tab} />;
   if (tab.kind === "file") return <WorkPanelFiles tab={tab} onOpenTab={onOpenTab} />;
+  if (tab.kind === "subtask") return <WorkPanelSubtask tab={tab} />;
 
   const content = placeholderForTab(tab);
   return (

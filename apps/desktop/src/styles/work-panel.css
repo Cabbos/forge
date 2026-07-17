@@ -593,6 +593,89 @@
     justify-self: end;
   }
 
+  .forge-work-panel-subtask {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+  }
+
+  .forge-work-panel-subtask-toolbar {
+    gap: 16px;
+  }
+
+  .forge-work-panel-subtask-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  .forge-work-panel-subtask-actions button,
+  .forge-work-panel-subtask-instruction button {
+    display: inline-flex;
+    min-height: 28px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-surface);
+    padding: 0 9px;
+    color: var(--forge-text-muted);
+    font-size: 11px;
+  }
+
+  .forge-work-panel-subtask-actions button:hover:not(:disabled),
+  .forge-work-panel-subtask-instruction button:hover:not(:disabled) {
+    border-color: var(--forge-material-border-hover);
+    color: var(--forge-text-primary);
+  }
+
+  .forge-work-panel-subtask-actions button:disabled,
+  .forge-work-panel-subtask-instruction button:disabled {
+    cursor: not-allowed;
+    opacity: 0.45;
+  }
+
+  .forge-work-panel-subtask-instruction {
+    display: flex;
+    align-items: flex-end;
+    gap: 8px;
+    border-bottom: 1px solid var(--forge-border-subtle);
+    background: var(--forge-bg-depth);
+    padding: 10px 12px;
+  }
+
+  .forge-work-panel-subtask-instruction textarea {
+    min-height: 64px;
+    flex: 1;
+    resize: vertical;
+    border: 1px solid var(--forge-border-subtle);
+    border-radius: calc(var(--radius) - 2px);
+    background: var(--forge-bg-surface);
+    padding: 8px 10px;
+    color: var(--forge-text-primary);
+    font: inherit;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .forge-work-panel-subtask-instruction textarea:focus {
+    border-color: var(--forge-material-border-hover);
+    outline: none;
+  }
+
+  .forge-work-panel-subtask-body {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    padding: 14px;
+  }
+
+  .forge-work-panel-subtask-body .forge-a2a-task-row-wrapper {
+    width: 100%;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .forge-work-panel-launcher-action {
       transition: none;
