@@ -125,7 +125,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await page.getByRole("button", { name: "打开工作面板" }).click();
 
     const panel = page.getByRole("complementary", { name: "工作面板" });
+    const launcher = panel.getByTestId("work-panel-launcher");
     await expect(panel).toBeVisible();
+    await expect(launcher.locator("[data-slot='command']")).toBeFocused();
     await expect(panel.getByText("工作面板", { exact: true })).toHaveCount(0);
     await expect(panel.getByRole("tablist")).toHaveCount(0);
     await expect(panel.getByRole("button", { name: "关闭工作面板" })).toBeVisible();
@@ -137,6 +139,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.locator("iframe")).toHaveCount(0);
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
+    await expect(panel.getByTestId("work-panel-terminal")).toBeVisible();
   });
 
   test("work panel preview and file adapters open selected objects as tabs", async ({ page }) => {
@@ -294,6 +299,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
     await expect(emptyLauncher).toHaveAttribute("data-mode", "new");
     await expect(emptyLauncher).toContainText("打开新的…");
+    await expect(emptyLauncher.locator("[data-slot='command']")).toBeFocused();
     await panel.getByRole("option", { name: /^打开文件/ }).click();
     await panel.getByPlaceholder("搜索工作区文件").fill("README");
     await panel.getByRole("option", { name: /README.md/ }).click();
