@@ -6,14 +6,14 @@ import { getProjectDisplay, getSessionStatus, getSessionTitle } from "@/lib/sess
 interface AppTitlebarProps {
   session: SessionState | null;
   project: ReturnType<typeof getProjectDisplay>;
-  onOpenHub: () => void;
+  onOpenWorkPanel: () => void;
   onOpenSearch: () => void;
 }
 
 export function AppTitlebar({
   session,
   project,
-  onOpenHub,
+  onOpenWorkPanel,
   onOpenSearch,
 }: AppTitlebarProps) {
   const hasPendingOutput = session?.blocks.some((block) => block.event_type === "pending") ?? false;
@@ -77,9 +77,9 @@ export function AppTitlebar({
         </ButtonPrimitive>
         <ButtonPrimitive
           type="button"
-          onClick={onOpenHub}
-          aria-label="打开项目档案"
-          title="打开项目档案"
+          onClick={onOpenWorkPanel}
+          aria-label="打开工作面板"
+          title="打开工作面板"
           className="forge-titlebar-button"
         >
           <PanelRightOpen className="size-4" />
