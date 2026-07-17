@@ -3,10 +3,10 @@ import { useActiveWorkspace, useStore } from "@/store";
 import { Sidebar, type SidebarPanel } from "./Sidebar";
 import { EmptyWorkbench } from "./EmptyWorkbench";
 import { AppTitlebar } from "./AppTitlebar";
-import { HubPanelHost } from "./HubPanelHost";
+import { WorkPanelLayout } from "@/components/workpanel/WorkPanelLayout";
 import { useOutputStream } from "@/hooks/useOutputStream";
 import type { CapabilityTab } from "@/components/settings/CapabilityManager";
-import { getProjectDisplay } from "@/lib/session-display";
+import { getProjectDisplay, getSessionTitle } from "@/lib/session-display";
 import { useEmptyWorkbenchController } from "./useEmptyWorkbenchController";
 import { RecoveryNoticeBanner } from "./RecoveryNoticeBanner";
 import { HealthAlertBanner } from "./HealthAlertBanner";
@@ -71,29 +71,31 @@ export function AppShell() {
           setSearchOpen(true);
         }}
       />
-      <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
-        <RecoveryNoticeBanner />
-        <HealthAlertBanner />
-        <NetworkStatusBanner />
-        <AppTitlebar
-          session={activeSession}
-          project={project}
-          onOpenSearch={() => setSearchOpen(true)}
-          onOpenHub={() => window.dispatchEvent(new Event("toggle-hub"))}
-        />
-
-        {visibleSessionId ? (
-          <Suspense fallback={<div className="flex-1 bg-background" />}>
-            <LazySessionView sessionId={visibleSessionId} />
-          </Suspense>
-        ) : (
-          <EmptyWorkbench
-            {...emptyWorkbenchProps}
+      <WorkPanelLayout taskKey={visibleSessionId ?? activeWorkspace?.path ?? "no-project"} taskLabel={activeSession ? getSessionTitle(activeSession) : project.name}>
+        <main data-testid="main-workbench" className="forge-main-workbench flex flex-col h-full min-w-0 overflow-hidden">
+          <RecoveryNoticeBanner />
+          <HealthAlertBanner />
+          <NetworkStatusBanner />
+          <AppTitlebar
+            session={activeSession}
             project={project}
+            onOpenSearch={() => setSearchOpen(true)}
+            onOpenWorkPanel={() => window.dispatchEvent(new Event("toggle-work-panel"))}
           />
-        )}
-        <StatusBar />
-      </main>
+
+          {visibleSessionId ? (
+            <Suspense fallback={<div className="flex-1 bg-background" />}>
+              <LazySessionView sessionId={visibleSessionId} />
+            </Suspense>
+          ) : (
+            <EmptyWorkbench
+              {...emptyWorkbenchProps}
+              project={project}
+            />
+          )}
+          <StatusBar />
+        </main>
+      </WorkPanelLayout>
       {activeSidebarPanel !== null && (
         <Suspense fallback={null}>
           <LazyCapabilityDrawer
@@ -104,7 +106,6 @@ export function AppShell() {
           />
         </Suspense>
       )}
-      <HubPanelHost />
       {searchOpen && (
         <Suspense fallback={null}>
           <LazyCommandPalette open={searchOpen} onOpenChange={setSearchOpen} />

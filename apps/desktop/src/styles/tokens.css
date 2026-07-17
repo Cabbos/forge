@@ -141,6 +141,8 @@
     --forge-user-line-height: 22px;
     --forge-inspector-width: 300px;
     --forge-inspector-gap: 10px;
+    --forge-work-panel-tabs-height: 38px;
+    --forge-work-panel-header-height: 44px;
     --forge-disclosure-row-height: 28px;
 
     /* LED state colors */

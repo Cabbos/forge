@@ -44,6 +44,20 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(page.getByRole("dialog")).toBeVisible();
   });
 
+  test("work panel opens on a launcher without project archive content", async ({ page }) => {
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await expect(panel).toBeVisible();
+    await expect(panel.getByRole("button", { name: "审阅" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "终端" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "预览" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "文件" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "子任务" })).toBeVisible();
+    await expect(panel.getByText("经验回忆")).toHaveCount(0);
+    await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
+  });
+
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
     await page.getByRole("button", { name: "设置" }).click();
     await expect
