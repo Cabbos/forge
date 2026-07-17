@@ -148,6 +148,36 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.getByTestId("work-panel-terminal")).toBeVisible();
   });
 
+  test("work panel launcher selection follows the active theme without shared muted utility leakage", async ({ page }) => {
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const shell = page.getByTestId("operating-surface");
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    const review = panel.getByRole("option", { name: /^审阅/ });
+    await shell.evaluate((element) => element.setAttribute("data-theme", "light"));
+    await expect(review).toHaveAttribute("aria-selected", "true");
+    await expect(review).not.toHaveClass(/data-selected:bg-muted/);
+    await expect(review).toHaveCSS("background-color", "rgb(231, 232, 226)");
+    await review.hover();
+    await expect(review).toHaveCSS("background-color", "rgb(231, 232, 226)");
+
+    await shell.evaluate((element) => element.setAttribute("data-theme", "dark"));
+    await expect(review).toHaveCSS("background-color", "rgb(58, 61, 56)");
+    const darkContrast = await review.evaluate((element) => {
+      const channels = (value: string) => value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
+      const luminance = (value: string) => channels(value).map((channel) => {
+        const normalized = channel / 255;
+        return normalized <= 0.04045 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+      }).reduce((total, channel, index) => total + channel * [0.2126, 0.7152, 0.0722][index], 0);
+      const style = getComputedStyle(element);
+      const [lighter, darker] = [luminance(style.color), luminance(style.backgroundColor)].sort((a, b) => b - a);
+      return (lighter + 0.05) / (darker + 0.05);
+    });
+    expect(darkContrast).toBeGreaterThanOrEqual(4.5);
+    await panel.getByTestId("work-panel-launcher").locator("[data-slot='command']").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("aria-selected", "true");
+  });
+
   test("work panel desktop sheet keeps its outer breathing room inside the workbench", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.getByRole("button", { name: "打开工作面板" }).click();
