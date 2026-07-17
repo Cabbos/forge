@@ -3,9 +3,6 @@ import {
   setup,
   expectLastSendInputArgs,
   expectNoSendInput,
-  projectArchive,
-  openProjectArchive,
-  expandArchiveRecords,
 } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
 import type { WorkflowState } from "../src/lib/protocol";
@@ -31,18 +28,12 @@ test.describe("First loop v0", () => {
 
     await expect(page.getByRole("main").getByText(request, { exact: true }).last()).toBeVisible();
 
-    await page.getByTitle("打开项目档案").click();
-    const archive = page.locator("aside").last();
-
-    await expect(archive.getByText("项目档案", { exact: true }).first()).toBeVisible();
-    const firstVersion = archive.locator("section").filter({ hasText: "第一版" });
-    await expect(firstVersion.getByRole("heading", { name: "第一版" })).toBeVisible();
-    await expect(firstVersion.getByText("可见、可点、可继续")).toBeVisible();
-    await expect(firstVersion.getByText("番茄钟小工具").first()).toBeVisible();
-    await expect(firstVersion.getByText("开始、暂停、重置").first()).toBeVisible();
-    await expect(firstVersion.getByText("下一步", { exact: true }).first()).toBeVisible();
-    await expect(archive.getByRole("heading", { name: "本轮参考" })).toHaveCount(0);
-    await expect(archive.getByText("工作台", { exact: true })).toHaveCount(0);
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+    await expect(panel.getByTestId("work-panel-launcher")).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^预览/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^文件/ })).toBeVisible();
+    await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
   });
 
   test("shows a delivery summary after sending a first-loop request", async ({ page }) => {
@@ -115,7 +106,7 @@ test.describe("First loop v1", () => {
 
   test("start readiness surfaces missing provider setup before the first prompt", async ({ page }) => {
     const sessionId = "first-loop-missing-provider";
-    await setup(page);
+    await setup(page, { workingDir: "/Users/cabbos/project/forge-test-app" });
     await page.addInitScript((sessionId) => {
       window.localStorage.clear();
       window.localStorage.setItem("forge-working-dir", "/Users/cabbos/project/forge-test-app");
@@ -234,7 +225,7 @@ test.describe("First loop v1", () => {
   test("first loop binds to the active test app without exposing the full path", async ({ page }) => {
     const sessionId = "first-loop-test-app";
     const sandboxPath = "/Users/cabbos/project/forge-test-app";
-    await setup(page);
+    await setup(page, { workingDir: sandboxPath });
     await page.addInitScript(({ sessionId, sandboxPath }) => {
       window.localStorage.clear();
       window.localStorage.setItem("forge-working-dir", sandboxPath);
@@ -285,7 +276,7 @@ test.describe("First loop v1", () => {
     await expect(delivery.getByText(sandboxPath, { exact: true })).toHaveCount(0);
   });
 
-  test("demo ledger first loop reaches repair, delivery, and project archive", async ({ page }) => {
+  test("demo ledger first loop reaches repair and delivery without exposing background records", async ({ page }) => {
     const sessionId = "demo-ledger-first-loop";
     const sandboxPath = "/Users/cabbos/project/forge-test-app";
     const request = "请为收支记录工具做第一版：支持新增收入或支出、展示明细列表，并在页面顶部汇总当前结余。";
@@ -301,7 +292,7 @@ test.describe("First loop v1", () => {
       created_at: "2026-05-17T00:00:00.000Z",
     };
 
-    await setup(page);
+    await setup(page, { workingDir: sandboxPath });
     await page.addInitScript(({ sessionId, sandboxPath }) => {
       window.localStorage.clear();
       window.localStorage.setItem("forge-working-dir", sandboxPath);
@@ -392,7 +383,7 @@ test.describe("First loop v1", () => {
     ], 1);
 
     const confirmCard = page.getByTestId("message-panel").filter({ hasText: "准备修改项目" });
-    await expect(confirmCard.getByText("forge-test-app")).toBeVisible();
+    await expect(confirmCard.getByText("forge-test-app", { exact: true })).toBeVisible();
     await expect(confirmCard).not.toContainText(sandboxPath);
     await expect(confirmCard).not.toContainText("/Users/");
     await expect(confirmCard.getByText("src/App.tsx", { exact: true })).toBeVisible();
@@ -457,31 +448,17 @@ test.describe("First loop v1", () => {
     await expect(successfulDelivery.getByText("预览未运行")).toBeVisible();
     await expect(successfulDelivery.getByText("检查点已就绪")).toBeVisible();
     await expect(successfulDelivery.getByText("检查通过", { exact: true })).toBeVisible();
-    await expect(successfulDelivery.getByText("自动记录")).toBeVisible();
+    await expect(successfulDelivery.getByText("自动记录")).toHaveCount(0);
     await expect(page.getByRole("main").getByText(sandboxPath, { exact: true })).toHaveCount(0);
     await expect(page.getByRole("main").getByText(/Workflow Router|Task Mode|Living Wiki|Forge Wiki|writeback|ConfirmAsk|permission/i)).toHaveCount(0);
     await expect(page.getByRole("main").getByText(/示例|玩具|临时/)).toHaveCount(0);
 
-    await successfulDelivery.getByRole("button", { name: "查看记录" }).click();
-
-    const archive = projectArchive(page);
-    await expect(page.getByRole("complementary", { name: "项目档案" })).toBeVisible();
-    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
-    await expect(archive.getByText("forge-test-app", { exact: true }).first()).toBeVisible();
-    await expect(archive.getByText(sandboxPath, { exact: true })).toHaveCount(0);
-
-    const records = await expandArchiveRecords(page);
-    await expect(records.getByRole("heading", { name: "建议更新记录" })).toBeVisible();
-    await expect(records.getByText(proposal.summary)).toBeVisible();
-    await expect(records.getByText("保存位置")).toBeVisible();
-    await expect(records.getByText("项目记录页面")).toBeVisible();
-    await expect(records.getByText("tasks.md, log.md")).toBeVisible();
-    await expect(records.getByRole("button", { name: "接受" })).toBeVisible();
-    await expect(records.getByRole("button", { name: "丢弃" })).toBeVisible();
-    await expect(records.getByText(/Workflow Router|Task Mode|Living Wiki|Forge Wiki|writeback/)).toHaveCount(0);
+    await expect(successfulDelivery.getByText(proposal.summary)).toHaveCount(0);
+    await successfulDelivery.getByRole("button", { name: "检查这版" }).click();
+    await expect(page.locator("textarea")).toHaveValue(/检查当前版本/);
   });
 
-  test("demo workspace resume returns to project overview without path leakage", async ({ page }) => {
+  test("demo workspace restore keeps the latest result without exposing continuity internals", async ({ page }) => {
     const sessionId = "demo-ledger-return-session";
     const sandboxPath = "/Users/cabbos/project/forge-test-app";
     const summary = {
@@ -497,7 +474,7 @@ test.describe("First loop v1", () => {
       record_target_pages: ["tasks.md", "log.md"],
     };
 
-    await setup(page);
+    await setup(page, { workingDir: sandboxPath });
     await page.addInitScript((sandboxPath) => {
       // @ts-expect-error mock
       const original = window.__tauriMockIPC;
@@ -587,25 +564,36 @@ test.describe("First loop v1", () => {
       db.close();
     }, { sessionId, sandboxPath, summary });
 
+    await page.addInitScript(({ sessionId, summary }) => {
+      // @ts-expect-error mock transcript restored by the Tauri fixture
+      window.__mockSessionTranscripts = {
+        [sessionId]: [
+          {
+            event_type: "user_message",
+            session_id: sessionId,
+            block_id: "demo-return-user-message",
+            content: "请为收支记录工具做第一版：支持新增收入或支出、展示明细列表，并在页面顶部汇总当前结余。",
+          },
+          {
+            event_type: "delivery_summary",
+            session_id: sessionId,
+            block_id: "demo-return-delivery-summary",
+            summary,
+          },
+        ],
+      };
+    }, { sessionId, summary });
+
     await page.reload();
     await expect(page.getByLabel("当前项目边界").getByText("forge-test-app", { exact: true })).toBeVisible();
     await expect(page.getByLabel("当前项目边界").getByText(sandboxPath, { exact: true })).toHaveCount(0);
 
-    await page.getByTitle("打开项目档案").click();
-
-    const archive = projectArchive(page);
-    await expect(page.getByRole("complementary", { name: "项目档案" })).toBeVisible();
-    await expect(archive.getByRole("heading", { name: "项目概览" })).toBeVisible();
-    await expect(archive.getByText("forge-test-app", { exact: true }).first()).toBeVisible();
-    await expect(archive.getByText("收支记录工具")).toBeVisible();
-    await expect(archive.getByText("预览未运行 · 检查点已就绪")).toBeVisible();
-    await expect(archive.getByText("下一步：验收添加收支和合计展示。")).toBeVisible();
-    await expect(archive.getByText(sandboxPath, { exact: true })).toHaveCount(0);
-
-    await archive.getByRole("button", { name: "继续上次任务" }).click();
-    await expect(page.locator("textarea")).toHaveValue(/继续上次任务/);
-    await expect(page.locator("textarea")).toHaveValue(/收支记录工具/);
-    await expect(page.locator("textarea")).not.toHaveValue(/目标项目：/);
-    await expect(page.locator("textarea")).not.toHaveValue(new RegExp(sandboxPath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+    const delivery = page.getByTestId("message-panel").filter({ hasText: "本轮交付" });
+    await expect(delivery.getByText("预览未运行")).toBeVisible();
+    await expect(delivery.getByText("检查点已就绪")).toBeVisible();
+    await expect(delivery.getByText("下一步：验收添加收支和合计展示。")).toBeVisible();
+    await expect(delivery.getByText("自动记录")).toHaveCount(0);
+    await expect(page.getByText("继续上次任务", { exact: true })).toHaveCount(0);
+    await expect(page.getByText(sandboxPath, { exact: true })).toHaveCount(0);
   });
 });

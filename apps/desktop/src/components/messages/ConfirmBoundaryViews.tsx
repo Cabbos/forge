@@ -29,11 +29,6 @@ export function ConfirmBoundaryGrid({ boundary }: { boundary: WriteBoundaryViewM
     <dl data-testid="confirm-boundary-grid" className="forge-confirm-boundary-grid">
       <BoundaryLine label={boundary.targetLabel}>
         <span>{boundary.workspaceLabel}</span>
-        {boundary.workspacePath !== boundary.workspaceLabel ? (
-          <code className="forge-confirm-file-chip">
-            {boundary.workspacePath}
-          </code>
-        ) : null}
       </BoundaryLine>
       <BoundaryLine label="操作">{boundary.operationLabel}</BoundaryLine>
       <BoundaryLine label="影响范围">

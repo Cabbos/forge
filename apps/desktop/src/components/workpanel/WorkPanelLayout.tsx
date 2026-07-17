@@ -38,13 +38,9 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
     const show = () => setOpen(true);
     window.addEventListener("toggle-work-panel", toggle);
     window.addEventListener("open-work-panel", show);
-    window.addEventListener("toggle-hub", toggle);
-    window.addEventListener("open-hub", show);
     return () => {
       window.removeEventListener("toggle-work-panel", toggle);
       window.removeEventListener("open-work-panel", show);
-      window.removeEventListener("toggle-hub", toggle);
-      window.removeEventListener("open-hub", show);
     };
   }, []);
 

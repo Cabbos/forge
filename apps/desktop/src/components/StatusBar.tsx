@@ -37,7 +37,7 @@ export function StatusBar() {
   if (!view.visible) return null;
 
   const openAgentWorkbench = () => {
-    window.dispatchEvent(new CustomEvent("open-hub", { detail: { section: "agents" } }));
+    window.dispatchEvent(new Event("open-work-panel"));
   };
 
   return (

@@ -82,7 +82,7 @@ test.describe("Timeline Message Flow", () => {
     await expect(main.locator("img")).toHaveCount(1);
     await expect(main.locator("img.forge-empty-identity-mark")).toHaveCount(1);
     await expect(main.locator("p", { hasText: "从当前对话开始" })).toHaveCount(0);
-    await expect(main.getByText("Forge 会带着项目档案，把结果推进到可预览、可检查、可继续。")).toHaveCount(0);
+    await expect(main.getByText("Forge 会展示项目经验与连续性记录。")).toHaveCount(0);
     await expect(main.getByText("当前任务", { exact: true })).toHaveCount(0);
     await expect(main.getByText("交付", { exact: true })).toHaveCount(0);
     await expect(main.getByText("创建一个任务开始")).toHaveCount(0);

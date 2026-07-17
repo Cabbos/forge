@@ -61,14 +61,14 @@ All Tauri `invoke()` calls are wrapped here. The Rust handlers are in `ipc/handl
 
 ### Component tree
 
-`App` → `AppShell` → `Sidebar` + `main-workbench` (`AppTitlebar` + `SessionView`/`EmptyWorkbench`) + `CapabilityDrawer` + `CommandPalette` + `HubPanelHost`.
+`App` → `AppShell` → `Sidebar` + `WorkPanelLayout` (`main-workbench` + dynamic `WorkPanelShell`) + `CapabilityDrawer` + `CommandPalette`.
 
 - `SessionView` → `ChatView` → `MessageList` (virtualized) → `ConversationLane` → per-type block renderers in `components/messages/`.
 - `SessionView` → `InputBar` → `ComposerSurface` + `ComposerMenuLayer` + `ComposerToolbar` + `ComposerChipTray`.
 - `SettingsDialog` wraps `SettingsCenterShell` with nav sections: models, workspace, tools, memory, data, diagnostics, scheduler, general/service, and about.
 - `HistoryView` is lazy-loaded from the sidebar and uses session-store IPC for search, provider filtering, resume, delete, rename, export, and prune.
 - `StatusBar` sits at the bottom of `AppShell` and derives active A2A work, review items, scheduler tasks, and health alerts into compact background status/task rows.
-- `HubPanelHost` owns the Agent Workbench, including A2A review queue/history and retained-worktree context.
+- `WorkPanelLayout` owns the resizable right-side work surface. `WorkPanelShell` opens object tabs for current review, selected previews/files, one selected A2A task, and a temporary terminal; memory and continuity stay background-only.
 - `CommandPalette` is the global search/switch surface (Cmd+K).
 
 ## Key patterns

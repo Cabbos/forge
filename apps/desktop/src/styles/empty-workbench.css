@@ -1,4 +1,8 @@
 @layer components {
+  .forge-main-workbench {
+    container-type: inline-size;
+  }
+
   .forge-empty-shell {
     display: flex;
     height: 100%;
@@ -597,6 +601,12 @@
       align-items: flex-start;
     }
 
+    .forge-empty-entry-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @container (max-width: 560px) {
     .forge-empty-entry-grid {
       grid-template-columns: 1fr;
     }

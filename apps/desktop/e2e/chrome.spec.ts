@@ -57,44 +57,46 @@ test.describe("Desktop Empty Workspace Layout", () => {
     expect(metrics!.noticeRightGap).toBeGreaterThanOrEqual(24);
   });
 
-  test("project archive open keeps empty start choices readable on narrow desktop", async ({ page }) => {
+  test("work panel launcher keeps empty start choices readable on narrow desktop", async ({ page }) => {
     await setup(page, { workingDir: null });
     await page.setViewportSize({ width: 900, height: 720 });
     await page.goto("http://localhost:1420");
     await page.waitForSelector("[class*=sidebar]", { timeout: 10000 });
-    await page.getByTitle("打开项目档案").click();
-    await expect(page.getByTestId("project-archive-panel")).toBeVisible();
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    await expect(page.getByTestId("work-panel-launcher")).toBeVisible();
 
     const metrics = await page.getByRole("main").evaluate((node) => {
       const main = node as HTMLElement;
-      const archive = document.querySelector<HTMLElement>("[data-testid='project-archive-panel']");
+      const panel = document.querySelector<HTMLElement>("aside.forge-work-panel");
       const grid = main.querySelector<HTMLElement>(".forge-empty-entry-grid");
       const cards = Array.from(main.querySelectorAll<HTMLElement>(".forge-empty-entry-card"));
-      if (!archive || !grid || cards.length < 2) return null;
-      const archiveRect = archive.getBoundingClientRect();
+      const actions = Array.from(document.querySelectorAll<HTMLElement>(".forge-work-panel-launcher-action"));
+      if (!panel || !grid || cards.length < 2 || actions.length < 5) return null;
+      const panelRect = panel.getBoundingClientRect();
       const gridRect = grid.getBoundingClientRect();
       const cardRects = cards.map((card) => card.getBoundingClientRect());
-      const leadDecoration = getComputedStyle(cards[0], "::before");
+      const actionRects = actions.map((action) => action.getBoundingClientRect());
       return {
-        mainPaddingRight: getComputedStyle(main).paddingRight,
         columnCount: getComputedStyle(grid).gridTemplateColumns.split(" ").filter(Boolean).length,
         gridRight: Math.round(gridRect.right),
-        archiveLeft: Math.round(archiveRect.left),
+        panelLeft: Math.round(panelRect.left),
+        panelWidth: Math.round(panelRect.width),
         cardWidths: cardRects.map((rect) => Math.round(rect.width)),
         cardTops: cardRects.map((rect) => Math.round(rect.top)),
-        leadDecorationContent: leadDecoration.content,
-        leadDecorationWidth: leadDecoration.width,
+        actionWidths: actionRects.map((rect) => Math.round(rect.width)),
+        actionHeights: actionRects.map((rect) => Math.round(rect.height)),
       };
     });
 
     expect(metrics).not.toBeNull();
-    expect(metrics!.mainPaddingRight).toBe("300px");
-    expect(metrics!.columnCount).toBe(1);
-    expect(metrics!.gridRight).toBeLessThanOrEqual(metrics!.archiveLeft - 12);
-    expect(metrics!.cardWidths.every((width) => width >= 280)).toBe(true);
+    expect(metrics!.columnCount).toBeGreaterThanOrEqual(1);
+    expect(metrics!.columnCount).toBeLessThanOrEqual(2);
+    expect(metrics!.gridRight).toBeLessThanOrEqual(metrics!.panelLeft);
+    expect(metrics!.panelWidth).toBeGreaterThanOrEqual(270);
+    expect(metrics!.actionWidths.every((width) => width >= 190)).toBe(true);
+    expect(metrics!.actionHeights.every((height) => height >= 58)).toBe(true);
+    expect(metrics!.cardWidths.every((width) => width >= 200)).toBe(true);
     expect(metrics!.cardTops[1]).toBeGreaterThan(metrics!.cardTops[0]);
-    expect(metrics!.leadDecorationContent).toBe("none");
-    expect(metrics!.leadDecorationWidth).toBe("auto");
   });
 });
 

@@ -205,7 +205,7 @@ function forgeWikiPage(
 }
 
 function forgeWikiPageContent(pagePath: string): string {
-  if (pagePath === "tasks.md") return "# 当前任务\n\n覆盖项目档案面板。";
+  if (pagePath === "tasks.md") return "# 当前任务\n\n覆盖工作面板。";
   if (pagePath === "decisions.md") return "# 决策记录\n\n保留关键方案。";
   return "# 项目概览\n\n项目记录预览。";
 }

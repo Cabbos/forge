@@ -534,8 +534,8 @@ export function AgentA2AFocusedTask({
 export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | null }) {
   if (!state || state.tasks.length === 0) return null;
 
-  const openHub = () => {
-    window.dispatchEvent(new CustomEvent("open-hub", { detail: { section: "agents" } }));
+  const openWorkPanel = () => {
+    window.dispatchEvent(new Event("open-work-panel"));
   };
   const statusText = state.running_count > 0
     ? `${state.running_count} 个子任务运行中`
@@ -546,8 +546,8 @@ export function AgentA2AInlineSummary({ state }: { state: AgentA2AProjection | n
       type="button"
       className="forge-a2a-inline-summary"
       data-running={state.running_count > 0}
-      onClick={openHub}
-      title="打开项目档案查看子任务过程"
+      onClick={openWorkPanel}
+      title="打开工作面板查看子任务过程"
     >
       <span className="forge-a2a-inline-icon">
         {state.running_count > 0 ? <CircleDashed className="size-3.5" /> : <CheckCircle2 className="size-3.5" />}

@@ -102,7 +102,7 @@ export function WorkPanelReview() {
               return (
                 <td className="forge-work-panel-review-gutter">
                   {selectedPath && line > 0 ? (
-                    <button
+                    <ButtonPrimitive
                       type="button"
                       aria-label={`${selectedPath} 第 ${line} 行`}
                       onClick={() => {
@@ -111,7 +111,7 @@ export function WorkPanelReview() {
                       }}
                     >
                       {line}
-                    </button>
+                    </ButtonPrimitive>
                   ) : null}
                 </td>
               );
