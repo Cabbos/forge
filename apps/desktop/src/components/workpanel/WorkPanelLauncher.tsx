@@ -180,22 +180,24 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
       <Command className="forge-work-panel-command forge-work-panel-launcher-command" onKeyDown={handleKeyDown}>
         {mode === "new" ? <span className="forge-work-panel-launcher-label">打开新的…</span> : null}
         <CommandList className="forge-work-panel-launcher-actions">
-          {WORK_PANEL_LAUNCHER_ACTIONS.map((action) => {
-            const Icon = actionIcons[action.id];
-            return (
-              <CommandItem
-                key={action.id}
-                role="button"
-                value={action.label}
-                className="forge-work-panel-launcher-action"
-                onSelect={() => handleAction(action.id)}
-              >
-                <Icon className="size-5" />
-                <span>{action.label}</span>
-                {action.shortcut ? <CommandShortcut>{action.shortcut}</CommandShortcut> : null}
-              </CommandItem>
-            );
-          })}
+          <CommandGroup>
+            {WORK_PANEL_LAUNCHER_ACTIONS.map((action) => {
+              const Icon = actionIcons[action.id];
+              return (
+                <CommandItem
+                  key={action.id}
+                  role="button"
+                  value={action.label}
+                  className="forge-work-panel-launcher-action"
+                  onSelect={() => handleAction(action.id)}
+                >
+                  <Icon className="size-5" />
+                  <span>{action.label}</span>
+                  {action.shortcut ? <CommandShortcut>{action.shortcut}</CommandShortcut> : null}
+                </CommandItem>
+              );
+            })}
+          </CommandGroup>
         </CommandList>
       </Command>
     </div>
