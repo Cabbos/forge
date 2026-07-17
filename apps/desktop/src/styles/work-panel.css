@@ -712,7 +712,7 @@
   }
 
   .forge-work-panel-terminal .forge-work-panel-content-title small {
-    color: var(--forge-text-muted);
+    color: var(--forge-text-secondary);
   }
 
   .forge-work-panel-terminal .forge-work-panel-content-toolbar button {
