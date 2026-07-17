@@ -233,7 +233,7 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
                   key={action.id}
                   role="button"
                   value={action.id}
-                  className="forge-work-panel-launcher-action"
+                  className="forge-work-panel-launcher-action data-selected:bg-[var(--forge-work-panel-row-active)] data-selected:text-[var(--forge-text-primary)]"
                   onSelect={() => handleAction(action.id)}
                 >
                   <Icon className="size-5" />
