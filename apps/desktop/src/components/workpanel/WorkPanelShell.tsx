@@ -1,11 +1,11 @@
 import { useRef } from "react";
-import { Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
-import { Button as ButtonPrimitive } from "@base-ui/react/button";
+import { Maximize2, Minimize2, X } from "lucide-react";
 import { ForgeIconButton } from "@/components/primitives/icon-button";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tabs, TabsContent } from "@/components/ui/tabs";
 import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMotion";
 import { WorkPanelContent } from "./WorkPanelContent";
 import { WorkPanelLauncher } from "./WorkPanelLauncher";
+import { WorkPanelObjectBar } from "./WorkPanelObjectBar";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
 import type { WorkPanelViewportMode } from "./workPanelDimensions";
 
@@ -29,7 +29,6 @@ export function WorkPanelShell({
   maximized,
   state,
   taskKey,
-  taskLabel,
   viewportMode,
   onClose,
   onCloseTab,
@@ -37,8 +36,6 @@ export function WorkPanelShell({
   onOpenLauncher,
   onOpenTab,
   onToggleMaximize,
-  onDecreaseWidth,
-  onIncreaseWidth,
 }: WorkPanelShellProps) {
   const panelRef = useRef<HTMLElement>(null);
   const selectedValue = state.launcherOpen ? null : state.activeTabId;
@@ -81,70 +78,45 @@ export function WorkPanelShell({
 
   return (
     <aside ref={panelRef} className="forge-work-panel" role="complementary" aria-label="工作面板" data-testid="work-panel" data-viewport-mode={viewportMode} data-width-percent={state.widthPercent}>
-      <header className="forge-work-panel-header">
-        <div className="forge-work-panel-heading">
-          <span className="forge-work-panel-title">工作面板</span>
-          <span className="forge-work-panel-task" title={taskLabel}>{taskLabel}</span>
-        </div>
-        <div className="forge-work-panel-header-actions">
-          <ForgeIconButton aria-label="缩小工作面板" title="缩小工作面板" onClick={onDecreaseWidth}>
-            <Minus className="size-4" />
-          </ForgeIconButton>
-          <ForgeIconButton aria-label="扩大工作面板" title="扩大工作面板" onClick={onIncreaseWidth}>
-            <Plus className="size-4" />
-          </ForgeIconButton>
-          <ForgeIconButton
-            aria-label={maximized ? "恢复工作面板宽度" : "最大化工作面板"}
-            title={maximized ? "恢复工作面板宽度" : "最大化工作面板"}
-            onClick={onToggleMaximize}
-          >
-            {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-          </ForgeIconButton>
-          <ForgeIconButton aria-label="关闭工作面板" title="关闭工作面板" onClick={onClose}>
-            <X className="size-4" />
-          </ForgeIconButton>
-        </div>
-      </header>
-
       <Tabs
         value={selectedValue}
         onValueChange={(value) => { if (typeof value === "string") onFocusTab(value); }}
         className="forge-work-panel-tabs"
       >
-        <div className="forge-work-panel-tab-rail">
-          <TabsList variant="line" aria-label="已打开的工作内容" className="forge-work-panel-tab-list">
-            {state.tabs.map((tab) => (
-              <div key={tab.id} className="forge-work-panel-tab-wrap">
-                <TabsTrigger value={tab.id} className="forge-work-panel-tab" title={tab.label}>
-                  <span>{tab.label}</span>
-                </TabsTrigger>
-                <ButtonPrimitive
-                  type="button"
-                  className="forge-work-panel-tab-close"
-                  aria-label={`关闭 ${tab.label}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    onCloseTab(tab.id);
-                  }}
-                >
-                  <X className="size-3" />
-                </ButtonPrimitive>
-              </div>
-            ))}
-          </TabsList>
-          <ButtonPrimitive type="button" className="forge-work-panel-new-tab" aria-label="新建工作面板标签" onClick={onOpenLauncher}>
-            <Plus className="size-4" />
-          </ButtonPrimitive>
-        </div>
-
         {state.launcherOpen ? (
-          <WorkPanelLauncher taskKey={taskKey} onOpenTab={onOpenTab} />
+          <>
+            <div className="forge-work-panel-launcher-utilities">
+              <ForgeIconButton
+                aria-label={maximized ? "恢复工作面板宽度" : "最大化工作面板"}
+                title={maximized ? "恢复工作面板宽度" : "最大化工作面板"}
+                onClick={onToggleMaximize}
+              >
+                {maximized ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+              </ForgeIconButton>
+              <ForgeIconButton aria-label="关闭工作面板" title="关闭工作面板" onClick={onClose}>
+                <X className="size-4" />
+              </ForgeIconButton>
+            </div>
+            <WorkPanelLauncher taskKey={taskKey} onOpenTab={onOpenTab} />
+          </>
         ) : (
-          state.tabs.map((tab) => (
-            <TabsContent key={tab.id} value={tab.id} className="forge-work-panel-tab-content">
-              <WorkPanelContent tab={tab} onOpenTab={onOpenTab} />
-            </TabsContent>
-          ))
+          <>
+            <WorkPanelObjectBar
+              activeTabId={state.activeTabId}
+              maximized={maximized}
+              tabs={state.tabs}
+              onClose={onClose}
+              onCloseTab={onCloseTab}
+              onFocusTab={onFocusTab}
+              onOpenLauncher={onOpenLauncher}
+              onToggleMaximize={onToggleMaximize}
+            />
+            {state.tabs.map((tab) => (
+              <TabsContent key={tab.id} value={tab.id} className="forge-work-panel-tab-content">
+                <WorkPanelContent tab={tab} onOpenTab={onOpenTab} />
+              </TabsContent>
+            ))}
+          </>
         )}
       </Tabs>
     </aside>

@@ -126,6 +126,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     const panel = page.getByRole("complementary", { name: "工作面板" });
     await expect(panel).toBeVisible();
+    await expect(panel.getByText("工作面板", { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("tablist")).toHaveCount(0);
+    await expect(panel.getByRole("button", { name: "关闭工作面板" })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^审阅/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^终端/ })).toBeVisible();
     await expect(panel.getByRole("option", { name: /^预览/ })).toBeVisible();
@@ -145,6 +148,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await panel.getByPlaceholder("输入本机网址或搜索文件").fill("http://localhost:1420");
     await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
 
+    await expect(panel.getByRole("tablist", { name: "已打开的工作内容" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "更多已打开内容" })).toBeVisible();
+    await expect(panel.getByRole("button", { name: "新建工作面板标签" })).toBeVisible();
     await expect(panel.getByRole("tab", { name: /localhost:1420/ })).toBeVisible();
     await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
