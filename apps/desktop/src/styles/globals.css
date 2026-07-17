@@ -310,8 +310,8 @@
     background: var(--forge-bg-base);
   }
 
-  body:has(.forge-app-shell[data-design-version="v3-light-workbench"]),
-  .forge-app-shell[data-design-version="v3-light-workbench"],
+  body:has(.forge-app-shell[data-theme="light"]),
+  .forge-app-shell[data-theme="light"],
   .forge-session-operating-surface[data-conversation-theme="light"] {
     --forge-bg-base: #F2EFE8;
     --forge-bg-depth: #F4F1EB;

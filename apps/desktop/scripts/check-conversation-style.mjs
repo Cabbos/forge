@@ -55,6 +55,7 @@ const files = {
   confirm: read("src/styles/confirm.css"),
   delivery: read("src/styles/delivery.css"),
   tauriConfig: read("src-tauri/tauri.conf.json"),
+  appShell: read("src/components/layout/AppShell.tsx"),
   sessionView: read("src/components/session/SessionView.tsx"),
   sidebarComponent: read("src/components/layout/Sidebar.tsx"),
   conversationLane: read("src/components/chat/ConversationLane.tsx"),
@@ -63,7 +64,9 @@ const files = {
   composerToolbar: read("src/components/session/ComposerToolbar.tsx"),
 };
 
-assertIncludes(files.sessionView, 'data-conversation-theme="light"', "SessionView light theme scope");
+assertIncludes(files.appShell, 'data-design-version="v4-quiet-native"', "app shell design version");
+assertIncludes(files.appShell, "data-theme={theme}", "app shell theme scope");
+assertIncludes(files.sessionView, "data-conversation-theme={theme}", "SessionView theme scope");
 assertIncludes(files.conversationLane, "data-turn-rail={getConversationTurnRail(turn)}", "conversation turn rail marker");
 assertIncludes(files.textBlock, "data-state={block.isComplete ? \"complete\" : \"streaming\"}", "assistant streaming state");
 assertIncludes(files.textBlock, "forge-assistant-name", "assistant visible name");
@@ -84,8 +87,8 @@ assertIncludes(files.tokens, "--forge-amber-muted:", "A2A warning status token")
 assertIncludes(files.tokens, "--forge-amber-rgb:", "A2A warning rgb token");
 assertIncludes(files.tokens, "--forge-danger-rgb:", "A2A danger rgb token");
 
-assertIncludes(files.globals, '.forge-app-shell[data-design-version="v3-light-workbench"],', "app shell light theme scope");
-assertIncludes(files.globals, 'body:has(.forge-app-shell[data-design-version="v3-light-workbench"])', "body portal light theme scope");
+assertIncludes(files.globals, '.forge-app-shell[data-theme="light"],', "app shell light theme scope");
+assertIncludes(files.globals, 'body:has(.forge-app-shell[data-theme="light"])', "body portal light theme scope");
 
 const themeBlock = selectorBlock(files.globals, '.forge-session-operating-surface[data-conversation-theme="light"]');
 assertIncludes(themeBlock, "--forge-bg-base: #F2EFE8;", "warm light base token");
