@@ -20,4 +20,5 @@ export interface WorkPanelTaskState {
   tabs: WorkPanelTab[];
   activeTabId: string | null;
   launcherOpen: boolean;
+  widthPercent: number;
 }

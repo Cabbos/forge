@@ -1,5 +1,5 @@
 import { useRef } from "react";
-import { Maximize2, Minimize2, Plus, X } from "lucide-react";
+import { Maximize2, Minimize2, Minus, Plus, X } from "lucide-react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { ForgeIconButton } from "@/components/primitives/icon-button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -7,18 +7,22 @@ import { forgeMotion, gsap, prefersReducedMotion, useGSAP } from "@/lib/forgeMot
 import { WorkPanelContent } from "./WorkPanelContent";
 import { WorkPanelLauncher } from "./WorkPanelLauncher";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
+import type { WorkPanelViewportMode } from "./workPanelDimensions";
 
 interface WorkPanelShellProps {
   maximized: boolean;
   state: WorkPanelTaskState;
   taskKey: string;
   taskLabel: string;
+  viewportMode: WorkPanelViewportMode;
   onClose: () => void;
   onCloseTab: (tabId: string) => void;
   onFocusTab: (tabId: string) => void;
   onOpenLauncher: () => void;
   onOpenTab: (tab: WorkPanelTab) => void;
   onToggleMaximize: () => void;
+  onDecreaseWidth: () => void;
+  onIncreaseWidth: () => void;
 }
 
 export function WorkPanelShell({
@@ -26,12 +30,15 @@ export function WorkPanelShell({
   state,
   taskKey,
   taskLabel,
+  viewportMode,
   onClose,
   onCloseTab,
   onFocusTab,
   onOpenLauncher,
   onOpenTab,
   onToggleMaximize,
+  onDecreaseWidth,
+  onIncreaseWidth,
 }: WorkPanelShellProps) {
   const panelRef = useRef<HTMLElement>(null);
   const selectedValue = state.launcherOpen ? null : state.activeTabId;
@@ -73,13 +80,19 @@ export function WorkPanelShell({
   }, { scope: panelRef, dependencies: [selectedValue] });
 
   return (
-    <aside ref={panelRef} className="forge-work-panel" role="complementary" aria-label="工作面板" data-testid="work-panel">
+    <aside ref={panelRef} className="forge-work-panel" role="complementary" aria-label="工作面板" data-testid="work-panel" data-viewport-mode={viewportMode} data-width-percent={state.widthPercent}>
       <header className="forge-work-panel-header">
         <div className="forge-work-panel-heading">
           <span className="forge-work-panel-title">工作面板</span>
           <span className="forge-work-panel-task" title={taskLabel}>{taskLabel}</span>
         </div>
         <div className="forge-work-panel-header-actions">
+          <ForgeIconButton aria-label="缩小工作面板" title="缩小工作面板" onClick={onDecreaseWidth}>
+            <Minus className="size-4" />
+          </ForgeIconButton>
+          <ForgeIconButton aria-label="扩大工作面板" title="扩大工作面板" onClick={onIncreaseWidth}>
+            <Plus className="size-4" />
+          </ForgeIconButton>
           <ForgeIconButton
             aria-label={maximized ? "恢复工作面板宽度" : "最大化工作面板"}
             title={maximized ? "恢复工作面板宽度" : "最大化工作面板"}

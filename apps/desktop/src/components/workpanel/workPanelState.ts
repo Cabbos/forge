@@ -1,13 +1,18 @@
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes.ts";
+import { normalizeWorkPanelWidthPercent } from "./workPanelDimensions.ts";
 
 const EMPTY_WORK_PANEL_STATE: WorkPanelTaskState = {
   tabs: [],
   activeTabId: null,
   launcherOpen: true,
+  widthPercent: 40,
 };
 
 export function restoreTaskPanelState(state: WorkPanelTaskState | null | undefined): WorkPanelTaskState {
-  if (!state || state.tabs.length === 0) return { ...EMPTY_WORK_PANEL_STATE };
+  if (!state || state.tabs.length === 0) return {
+    ...EMPTY_WORK_PANEL_STATE,
+    widthPercent: normalizeWorkPanelWidthPercent(state?.widthPercent),
+  };
 
   const activeTabId = state.tabs.some((tab) => tab.id === state.activeTabId)
     ? state.activeTabId
@@ -17,6 +22,7 @@ export function restoreTaskPanelState(state: WorkPanelTaskState | null | undefin
     tabs: [...state.tabs],
     activeTabId: state.launcherOpen ? null : activeTabId,
     launcherOpen: state.launcherOpen,
+    widthPercent: normalizeWorkPanelWidthPercent(state.widthPercent),
   };
 }
 
@@ -26,6 +32,7 @@ export function openWorkPanelTab(state: WorkPanelTaskState, tab: WorkPanelTab): 
     tabs: existing ? state.tabs : [...state.tabs, tab],
     activeTabId: tab.id,
     launcherOpen: false,
+    widthPercent: state.widthPercent,
   };
 }
 
@@ -51,7 +58,7 @@ export function closeWorkPanelTab(state: WorkPanelTaskState, tabId: string): Wor
   if (closingIndex < 0) return state;
 
   const tabs = state.tabs.filter((tab) => tab.id !== tabId);
-  if (tabs.length === 0) return { ...EMPTY_WORK_PANEL_STATE };
+  if (tabs.length === 0) return { ...EMPTY_WORK_PANEL_STATE, widthPercent: state.widthPercent };
   if (state.activeTabId !== tabId) return { ...state, tabs };
 
   const nextIndex = Math.min(closingIndex, tabs.length - 1);
@@ -59,5 +66,6 @@ export function closeWorkPanelTab(state: WorkPanelTaskState, tabId: string): Wor
     tabs,
     activeTabId: tabs[nextIndex]?.id ?? null,
     launcherOpen: false,
+    widthPercent: state.widthPercent,
   };
 }
