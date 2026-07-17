@@ -740,13 +740,64 @@
   .forge-work-panel-terminal-host {
     min-height: 0;
     flex: 1;
-    overflow: hidden;
-    padding: 10px 8px 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px;
   }
 
-  .forge-work-panel-terminal-host .xterm,
-  .forge-work-panel-terminal-host .xterm-viewport {
-    height: 100%;
+  .forge-work-panel-terminal-host pre {
+    min-height: 0;
+    flex: 1;
+    overflow: auto;
+    margin: 0;
+    border: 1px solid #303230;
+    border-radius: calc(var(--radius) - 2px);
+    background: #141514;
+    padding: 12px;
+    color: #c9cbc7;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-wrap;
+  }
+
+  .forge-work-panel-terminal-host form {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    border: 1px solid #3a3d3a;
+    border-radius: calc(var(--radius) - 2px);
+    background: #202120;
+    padding: 7px 8px 7px 11px;
+    color: #8fd0a2;
+    font-family: var(--font-mono);
+  }
+
+  .forge-work-panel-terminal-host input {
+    min-width: 0;
+    border: 0;
+    outline: 0;
+    background: transparent;
+    color: #e9e8e5;
+    font: inherit;
+  }
+
+  .forge-work-panel-terminal-host input::placeholder {
+    color: #777b77;
+  }
+
+  .forge-work-panel-terminal-host form button {
+    display: grid;
+    place-items: center;
+    border: 0;
+    padding: 3px;
+    color: #b8bab6;
+  }
+
+  .forge-work-panel-terminal-host form button:disabled {
+    opacity: 0.4;
   }
 
   @media (prefers-reduced-motion: reduce) {

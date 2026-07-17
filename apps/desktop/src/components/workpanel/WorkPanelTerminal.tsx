@@ -1,13 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { listen } from "@tauri-apps/api/event";
-import { FitAddon } from "@xterm/addon-fit";
-import { Terminal } from "@xterm/xterm";
-import "@xterm/xterm/css/xterm.css";
-import { RefreshCw, TerminalSquare } from "lucide-react";
+import { CornerDownLeft, RefreshCw, TerminalSquare } from "lucide-react";
 import {
   closeWorkspaceTerminal,
-  resizeWorkspaceTerminal,
   startWorkspaceTerminal,
   writeWorkspaceTerminal,
   type WorkspaceTerminalOutput,
@@ -18,86 +14,55 @@ import type { WorkPanelTab } from "./workPanelTypes";
 type WorkPanelTerminalTab = Extract<WorkPanelTab, { kind: "terminal" }>;
 
 export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
-  const hostRef = useRef<HTMLDivElement>(null);
+  const terminalIdRef = useRef<string | null>(null);
   const [restartKey, setRestartKey] = useState(0);
   const [status, setStatus] = useState<"starting" | "running" | "exited" | "error">("starting");
   const [error, setError] = useState<string | null>(null);
+  const [command, setCommand] = useState("");
+  const [recentOutput, setRecentOutput] = useState("");
   const activeWorkspace = useActiveWorkspace();
   const boundSession = useStore((state) => state.sessions.get(tab.taskId) ?? null);
   const workingDir = boundSession?.workingDir ?? activeWorkspace?.path ?? null;
   const sessionId = boundSession ? tab.taskId : null;
 
   useEffect(() => {
-    const host = hostRef.current;
-    if (!host) return;
     let disposed = false;
-    let terminalId: string | null = null;
     let removeListener: (() => void) | null = null;
-    let resizeTimer: ReturnType<typeof setTimeout> | null = null;
 
     setStatus("starting");
     setError(null);
-    const terminal = new Terminal({
-      cursorBlink: true,
-      convertEol: false,
-      fontFamily: "var(--font-mono)",
-      fontSize: 12,
-      lineHeight: 1.35,
-      scrollback: 2_000,
-      theme: {
-        background: "#171817",
-        foreground: "#e9e8e5",
-        cursor: "#f5f3ed",
-        selectionBackground: "#4d514d",
-      },
-    });
-    const fitAddon = new FitAddon();
-    terminal.loadAddon(fitAddon);
-    terminal.open(host);
-    fitAddon.fit();
-
-    const inputDisposable = terminal.onData((data) => {
-      if (!terminalId) return;
-      void writeWorkspaceTerminal(tab.taskId, terminalId, data).catch((cause) => {
-        if (!disposed) setError(errorMessage(cause));
-      });
-    });
-    const resizeObserver = new ResizeObserver(() => {
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeTimer = setTimeout(() => {
-        if (disposed) return;
-        fitAddon.fit();
-        if (terminalId) {
-          void resizeWorkspaceTerminal(tab.taskId, terminalId, terminal.rows, terminal.cols).catch(() => {});
-        }
-      }, 40);
-    });
-    resizeObserver.observe(host);
+    setRecentOutput("");
+    terminalIdRef.current = null;
 
     void (async () => {
       try {
         removeListener = await listen<WorkspaceTerminalOutput>("work-panel-terminal-output", (event) => {
-          if (event.payload.task_id !== tab.taskId || event.payload.terminal_id !== terminalId) return;
-          if (event.payload.chunk) terminal.write(event.payload.chunk);
+          if (event.payload.task_id !== tab.taskId || event.payload.terminal_id !== terminalIdRef.current) return;
+          if (event.payload.chunk) {
+            setRecentOutput((current) => {
+              const next = `${current}${event.payload.chunk}`
+                .replace(/\x1B(?:[@-_][0-?]*[ -/]*[@-~]|\][^\x07]*(?:\x07|\x1B\\))/g, "")
+                .replace(/\r(?!\n)/g, "\n");
+              return next.slice(-8_000);
+            });
+          }
           if (event.payload.exited) {
             setStatus("exited");
-            terminal.writeln("\r\n\x1b[2m[临时终端已结束]\x1b[0m");
           }
         });
         const info = await startWorkspaceTerminal({
           taskId: tab.taskId,
           sessionId,
           workingDir,
-          rows: terminal.rows,
-          cols: terminal.cols,
+          rows: 24,
+          cols: 100,
         });
         if (disposed) {
           await closeWorkspaceTerminal(tab.taskId, info.terminal_id).catch(() => {});
           return;
         }
-        terminalId = info.terminal_id;
+        terminalIdRef.current = info.terminal_id;
         setStatus("running");
-        terminal.focus();
       } catch (cause) {
         if (!disposed) {
           setStatus("error");
@@ -108,14 +73,23 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
 
     return () => {
       disposed = true;
-      if (resizeTimer) clearTimeout(resizeTimer);
-      resizeObserver.disconnect();
-      inputDisposable.dispose();
       removeListener?.();
-      terminal.dispose();
+      const terminalId = terminalIdRef.current;
+      terminalIdRef.current = null;
       if (terminalId) void closeWorkspaceTerminal(tab.taskId, terminalId).catch(() => {});
     };
   }, [restartKey, sessionId, tab.taskId, workingDir]);
+
+  const submitCommand = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const terminalId = terminalIdRef.current;
+    const nextCommand = command.trim();
+    if (!terminalId || !nextCommand || status !== "running") return;
+    setCommand("");
+    void writeWorkspaceTerminal(tab.taskId, terminalId, `${nextCommand}\r`).catch((cause) => {
+      setError(errorMessage(cause));
+    });
+  };
 
   return (
     <section className="forge-work-panel-terminal" data-testid="work-panel-terminal">
@@ -131,7 +105,26 @@ export function WorkPanelTerminal({ tab }: { tab: WorkPanelTerminalTab }) {
         </ButtonPrimitive>
       </div>
       {error ? <p className="forge-work-panel-inline-error" role="alert">{error}</p> : null}
-      <div ref={hostRef} className="forge-work-panel-terminal-host" aria-label="临时验证终端输入" />
+      <div className="forge-work-panel-terminal-host">
+        <pre aria-live="polite" role="log">
+          {recentOutput || "临时环境已连接。输入一条验证命令即可；这里只保留最近输出。"}
+        </pre>
+        <form onSubmit={submitCommand}>
+          <span aria-hidden="true">$</span>
+          <input
+            aria-label="临时验证命令"
+            autoComplete="off"
+            disabled={status !== "running"}
+            onChange={(event) => setCommand(event.target.value)}
+            placeholder={status === "running" ? "输入验证命令" : "正在准备临时环境"}
+            spellCheck={false}
+            value={command}
+          />
+          <ButtonPrimitive type="submit" disabled={status !== "running" || !command.trim()} aria-label="运行验证命令">
+            <CornerDownLeft className="size-3.5" />
+          </ButtonPrimitive>
+        </form>
+      </div>
     </section>
   );
 }
