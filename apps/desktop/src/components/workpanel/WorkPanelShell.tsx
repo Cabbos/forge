@@ -13,7 +13,6 @@ interface WorkPanelShellProps {
   maximized: boolean;
   state: WorkPanelTaskState;
   taskKey: string;
-  taskLabel: string;
   viewportMode: WorkPanelViewportMode;
   onClose: () => void;
   onCloseTab: (tabId: string) => void;

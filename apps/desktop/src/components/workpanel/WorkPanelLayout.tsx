@@ -9,10 +9,9 @@ import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
 interface WorkPanelLayoutProps {
   children: ReactNode;
   taskKey: string;
-  taskLabel: string;
 }
 
-export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayoutProps) {
+export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   const panelRef = usePanelRef();
   const [open, setOpen] = useState(false);
   const [maximized, setMaximized] = useState(false);
@@ -103,7 +102,6 @@ export function WorkPanelLayout({ children, taskKey, taskLabel }: WorkPanelLayou
             maximized={maximized}
             state={state}
             taskKey={taskKey}
-            taskLabel={taskLabel}
             viewportMode={mode}
             onClose={() => setOpen(false)}
             onCloseTab={(tabId) => updateState((current) => closeWorkPanelTab(current, tabId))}
