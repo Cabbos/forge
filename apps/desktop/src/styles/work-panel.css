@@ -676,6 +676,52 @@
     width: 100%;
   }
 
+  .forge-work-panel-terminal {
+    display: flex;
+    min-height: 0;
+    height: 100%;
+    flex-direction: column;
+    background: #171817;
+  }
+
+  .forge-work-panel-terminal .forge-work-panel-content-toolbar {
+    border-bottom-color: #303230;
+    background: #202120;
+    color: #e9e8e5;
+  }
+
+  .forge-work-panel-terminal .forge-work-panel-content-title small {
+    color: #9c9f9b;
+  }
+
+  .forge-work-panel-terminal .forge-work-panel-content-toolbar button {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    border: 1px solid #3a3d3a;
+    border-radius: calc(var(--radius) - 2px);
+    padding: 4px 8px;
+    color: #b8bab6;
+    font-size: 11px;
+  }
+
+  .forge-work-panel-terminal .forge-work-panel-content-toolbar button:hover {
+    border-color: #565a56;
+    color: #f4f3ef;
+  }
+
+  .forge-work-panel-terminal-host {
+    min-height: 0;
+    flex: 1;
+    overflow: hidden;
+    padding: 10px 8px 8px;
+  }
+
+  .forge-work-panel-terminal-host .xterm,
+  .forge-work-panel-terminal-host .xterm-viewport {
+    height: 100%;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .forge-work-panel-launcher-action {
       transition: none;
