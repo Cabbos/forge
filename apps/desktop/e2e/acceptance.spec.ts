@@ -49,13 +49,32 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     const panel = page.getByRole("complementary", { name: "工作面板" });
     await expect(panel).toBeVisible();
-    await expect(panel.getByRole("button", { name: "审阅" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "终端" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "预览" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "文件" })).toBeVisible();
-    await expect(panel.getByRole("button", { name: "子任务" })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^审阅/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^终端/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^预览/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^文件/ })).toBeVisible();
+    await expect(panel.getByRole("option", { name: /^子任务/ })).toBeVisible();
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
+  });
+
+  test("work panel launcher opens selected objects as tabs", async ({ page }) => {
+    await page.getByRole("button", { name: "打开工作面板" }).click();
+    const panel = page.getByRole("complementary", { name: "工作面板" });
+
+    await panel.getByRole("option", { name: /^预览/ }).click();
+    await expect(panel.getByPlaceholder("输入本机网址或搜索文件")).toBeVisible();
+    await panel.getByPlaceholder("输入本机网址或搜索文件").fill("http://localhost:1420");
+    await panel.getByRole("option", { name: /http:\/\/localhost:1420/ }).click();
+
+    await expect(panel.getByRole("tab", { name: /localhost:1420/ })).toBeVisible();
+    await panel.getByRole("button", { name: "新建工作面板标签" }).click();
+    await panel.getByRole("option", { name: /^文件/ }).click();
+    await panel.getByPlaceholder("搜索工作区文件").fill("README");
+    await panel.getByRole("option", { name: /README.md/ }).click();
+
+    await expect(panel.getByRole("tab", { name: /README.md/ })).toBeVisible();
+    await expect(panel.getByText("经验回忆")).toHaveCount(0);
   });
 
   test("settings diagnostics surfaces doctor status and gateway runtime", async ({ page }) => {
