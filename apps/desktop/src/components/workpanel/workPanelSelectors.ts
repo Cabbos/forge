@@ -9,9 +9,9 @@ export interface WorkPanelLauncherActionDefinition {
 export const WORK_PANEL_LAUNCHER_ACTIONS: readonly WorkPanelLauncherActionDefinition[] = [
   { id: "review", label: "审阅", shortcut: "⌃⇧G" },
   { id: "terminal", label: "终端" },
-  { id: "preview", label: "预览", shortcut: "⌘T" },
-  { id: "files", label: "文件", shortcut: "⌘P" },
-  { id: "subtasks", label: "子任务", shortcut: "⌥⌘S" },
+  { id: "preview", label: "预览网页", shortcut: "⌘T" },
+  { id: "files", label: "打开文件", shortcut: "⌘P" },
+  { id: "subtasks", label: "侧边任务", shortcut: "⌥⌘S" },
 ];
 
 export function createReviewTab(taskId: string): WorkPanelTab {

@@ -96,7 +96,7 @@ export function WorkPanelShell({
                 <X className="size-4" />
               </ForgeIconButton>
             </div>
-            <WorkPanelLauncher taskKey={taskKey} onOpenTab={onOpenTab} />
+            <WorkPanelLauncher mode={state.tabs.length === 0 ? "empty" : "new"} taskKey={taskKey} onOpenTab={onOpenTab} />
           </>
         ) : (
           <>

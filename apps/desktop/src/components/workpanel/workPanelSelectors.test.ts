@@ -15,9 +15,9 @@ describe("work panel launcher selectors", () => {
       [
         ["review", "审阅"],
         ["terminal", "终端"],
-        ["preview", "预览"],
-        ["files", "文件"],
-        ["subtasks", "子任务"],
+        ["preview", "预览网页"],
+        ["files", "打开文件"],
+        ["subtasks", "侧边任务"],
       ],
     );
   });
