@@ -57,6 +57,9 @@ export function updateStableProgress(
   urgent = false,
 ): StableProgressState {
   if (!candidate) {
+    if (state.visible?.id === "waiting" || state.pending?.id === "waiting") {
+      return emptyProgressState(now);
+    }
     if (state.hasPresented && state.visible) {
       return { ...state, pending: null, dueAt: null };
     }
