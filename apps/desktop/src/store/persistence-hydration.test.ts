@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { beforeEach, describe, it } from "node:test";
 import { register } from "node:module";
-import type { SessionState, SessionUsageLedgerState } from "../lib/protocol.ts";
+import type { AgentTurnStatus, SessionState, SessionUsageLedgerState } from "../lib/protocol.ts";
+import { readConversationTurnTiming } from "../lib/conversationTurnTiming.ts";
 import type { AppStore } from "./types";
 
 declare global {
@@ -783,6 +784,84 @@ describe("store usageLedger persistence and hydration", () => {
     assert.strictEqual(state.activeSessionId, "session-1");
   });
 
+  it("hydrates conversation timing from Tauri transcript envelope timestamps", async () => {
+    globalThis.window.__TAURI__ = {};
+    globalThis.__forgeTauriInvoke = async (command) => {
+      switch (command) {
+        case "load_app_metadata":
+          return {
+            workspaces: [
+              {
+                id: "/workspace",
+                name: "workspace",
+                path: "/workspace",
+                lastOpenedAt: 20,
+              },
+            ],
+            activeWorkspaceId: "/workspace",
+            activeSessionId: "session-1",
+            selectedProvider: "deepseek",
+            selectedModel: "deepseek-v4-flash[1m]",
+          };
+        case "list_sessions":
+          return [
+            {
+              id: "session-1",
+              provider: "deepseek",
+              model: "deepseek-v4-flash[1m]",
+              status: "running",
+              created_at: "2026-06-27T00:00:00.000Z",
+              working_dir: "/workspace",
+              created_at_ms: 10,
+              updated_at_ms: 20,
+              context_window_tokens: 1_000_000,
+            },
+          ];
+        case "load_session_transcript":
+          return [
+            {
+              event_type: "user_message",
+              session_id: "session-1",
+              block_id: "user-1",
+              content: "Ship it",
+              recorded_at_ms: 1_000,
+            },
+            {
+              event_type: "agent_turn_updated",
+              session_id: "session-1",
+              state: testAgentTurnProjection("running_tools"),
+              recorded_at_ms: 2_000,
+            },
+            {
+              event_type: "agent_turn_updated",
+              session_id: "session-1",
+              state: testAgentTurnProjection("completed"),
+              recorded_at_ms: 13_000,
+            },
+          ];
+        case "save_app_metadata":
+          return null;
+        default:
+          throw new Error(`Unexpected Tauri invoke: ${command}`);
+      }
+    };
+    const state = createStoreState();
+    const hydrate = createHydrateAction(
+      (partial) => Object.assign(state, partial),
+      () => state,
+    );
+
+    await hydrate();
+
+    const userBlock = state.sessions.get("session-1")?.blocks[0] ?? null;
+    assert.deepEqual(readConversationTurnTiming(userBlock), {
+      startedAtMs: 1_000,
+      terminalAtMs: 13_000,
+      outcome: "completed",
+      durationMs: 12_000,
+    });
+  });
+
   it("hydrates legacy usage from Tauri transcript events without rendering a usage block", async () => {
     globalThis.window.__TAURI__ = {};
     globalThis.__forgeTauriInvoke = async (command, args) => {
@@ -983,6 +1062,23 @@ function testSession(overrides: Partial<SessionState> = {}): SessionState {
     contextUsage: null,
     usageLedger: null,
     ...overrides,
+  };
+}
+
+function testAgentTurnProjection(status: AgentTurnStatus) {
+  return {
+    session_id: "session-1",
+    status,
+    step_label: status,
+    workspace_path: "/workspace",
+    compact_count: 0,
+    verification_status: "not_needed",
+    model_rounds: 1,
+    tool_call_count: 0,
+    failed_tool_count: status === "failed" ? 1 : 0,
+    estimated_context_tokens: null,
+    stop_reason: null,
+    compact_saved_tokens: 0,
   };
 }
 

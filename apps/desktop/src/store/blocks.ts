@@ -1,4 +1,8 @@
 import type { BlockState, DeliverySummary, StreamEvent } from "../lib/protocol";
+import {
+  markLatestConversationTurnTerminal,
+  turnOutcomeForAgentStatus,
+} from "../lib/conversationTurnTiming.ts";
 
 export const SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE =
   "Tool call interrupted by session restore before it returned.";
@@ -41,6 +45,21 @@ export function applyTranscriptEventToBlocks(blocks: BlockState[], event: Stream
 
   if (event_type === "delivery_summary" && isSameAsLastDeliveryBlock(blocks, event.summary)) {
     return blocks;
+  }
+
+  if (event_type === "agent_turn_updated") {
+    const recordedAtMs = replayRecordedAtMs(event);
+    const outcome = turnOutcomeForAgentStatus(event.state.status);
+    return recordedAtMs === null || outcome === null
+      ? blocks
+      : markLatestConversationTurnTerminal(blocks, outcome, recordedAtMs);
+  }
+
+  if (event_type === "session_stopped") {
+    const recordedAtMs = replayRecordedAtMs(event);
+    return recordedAtMs === null
+      ? blocks
+      : markLatestConversationTurnTerminal(blocks, "stopped", recordedAtMs);
   }
 
   if (event_type === "error") {
@@ -496,11 +515,15 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
 
   switch (event.event_type) {
     case "user_message":
+      const recordedAtMs = replayRecordedAtMs(event);
       return {
         ...base,
         event_type: "user_message",
         content: event.content,
         isComplete: true,
+        metadata: recordedAtMs === null
+          ? {}
+          : { turn_started_at_ms: recordedAtMs },
       };
     case "thinking_start":
       return { ...base, event_type: "thinking", content: "", metadata: {} };
@@ -653,6 +676,15 @@ export function eventToBlock(event: StreamEvent): BlockState | null {
     default:
       return null;
   }
+}
+
+type ReplayTimestampedEvent = StreamEvent & { recorded_at_ms?: unknown };
+
+function replayRecordedAtMs(event: StreamEvent): number | null {
+  const value = (event as ReplayTimestampedEvent).recorded_at_ms;
+  return typeof value === "number" && Number.isFinite(value) && value >= 0
+    ? value
+    : null;
 }
 
 export function interruptedToolResultMetadata(result: string, isError: boolean): Record<string, unknown> {

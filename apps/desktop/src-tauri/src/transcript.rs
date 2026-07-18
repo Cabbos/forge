@@ -194,7 +194,7 @@ fn tail_transcript_events_at(
         let events = records
             .into_iter()
             .filter(|record| !is_compact_marker(&record.event))
-            .map(|record| record.event)
+            .map(event_with_recorded_at_ms)
             .collect::<Vec<_>>();
         let total_events = events.len();
         let limit = limit.clamp(1, TRANSCRIPT_TAIL_MAX_EVENTS);
@@ -250,8 +250,22 @@ fn renderable_events_for_load(
         .into_iter()
         .filter(|record| !is_compact_marker(&record.event))
         .skip(skip_count)
-        .map(|record| record.event)
+        .map(event_with_recorded_at_ms)
         .collect()
+}
+
+fn event_with_recorded_at_ms(record: TranscriptRecord) -> serde_json::Value {
+    let TranscriptRecord {
+        recorded_at_ms,
+        mut event,
+        ..
+    } = record;
+    if let Some(object) = event.as_object_mut() {
+        object
+            .entry("recorded_at_ms")
+            .or_insert_with(|| serde_json::Value::from(recorded_at_ms));
+    }
+    event
 }
 
 fn load_transcript_records_from_path(path: &Path) -> Result<Vec<TranscriptRecord>, String> {
@@ -573,7 +587,41 @@ mod tests {
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
 
-        assert_eq!(loaded, vec![event_one, event_two]);
+        assert_eq!(without_recorded_at_ms(&loaded), vec![event_one, event_two]);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_load_replays_recorded_timestamps_without_overwriting_event_metadata() {
+        let root = test_root("load-recorded-at");
+        let first = json!({
+            "event_type": "user_message",
+            "session_id": "session-1",
+            "block_id": "user-1",
+            "content": "first"
+        });
+        let second = json!({
+            "event_type": "user_message",
+            "session_id": "session-1",
+            "block_id": "user-2",
+            "content": "second",
+            "recorded_at_ms": 777
+        });
+        append_transcript_event_at(&root, first).expect("append first event");
+        append_transcript_event_at(&root, second).expect("append second event");
+        let path = transcript_path(&root, "session-1").expect("transcript path");
+        let records = load_transcript_records_from_path(&path).expect("load transcript records");
+
+        let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].get("block_id"), Some(&json!("user-1")));
+        assert_eq!(loaded[1].get("block_id"), Some(&json!("user-2")));
+        assert_eq!(
+            loaded[0].get("recorded_at_ms"),
+            Some(&json!(records[0].recorded_at_ms))
+        );
+        assert_eq!(loaded[1].get("recorded_at_ms"), Some(&json!(777)));
         let _ = fs::remove_dir_all(root);
     }
 
@@ -607,7 +655,40 @@ mod tests {
             tail_transcript_events_at(&root, "session-1", Some(1), 10).expect("tail transcript");
 
         assert_eq!(tail.session_id, "session-1");
-        assert_eq!(tail.events, vec![tool_start]);
+        assert_eq!(without_recorded_at_ms(&tail.events), vec![tool_start]);
+        assert_eq!(tail.total_events, 2);
+        assert_eq!(tail.next_cursor, 2);
+        assert!(!tail.cursor_reset);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn transcript_tail_replays_recorded_timestamps_without_changing_cursor_semantics() {
+        let root = test_root("tail-recorded-at");
+        for index in 1..=2 {
+            append_transcript_event_at(
+                &root,
+                json!({
+                    "event_type": "user_message",
+                    "session_id": "session-1",
+                    "block_id": format!("user-{index}"),
+                    "content": format!("message {index}")
+                }),
+            )
+            .expect("append event");
+        }
+        let path = transcript_path(&root, "session-1").expect("transcript path");
+        let records = load_transcript_records_from_path(&path).expect("load transcript records");
+
+        let tail =
+            tail_transcript_events_at(&root, "session-1", Some(1), 10).expect("tail transcript");
+
+        assert_eq!(tail.events.len(), 1);
+        assert_eq!(tail.events[0].get("block_id"), Some(&json!("user-2")));
+        assert_eq!(
+            tail.events[0].get("recorded_at_ms"),
+            Some(&json!(records[1].recorded_at_ms))
+        );
         assert_eq!(tail.total_events, 2);
         assert_eq!(tail.next_cursor, 2);
         assert!(!tail.cursor_reset);
@@ -628,7 +709,7 @@ mod tests {
         let tail =
             tail_transcript_events_at(&root, "session-1", Some(99), 10).expect("tail transcript");
 
-        assert_eq!(tail.events, vec![event]);
+        assert_eq!(without_recorded_at_ms(&tail.events), vec![event]);
         assert_eq!(tail.total_events, 1);
         assert_eq!(tail.next_cursor, 1);
         assert!(tail.cursor_reset);
@@ -813,7 +894,7 @@ mod tests {
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
 
-        assert_eq!(loaded, vec![event_one, event_two]);
+        assert_eq!(without_recorded_at_ms(&loaded), vec![event_one, event_two]);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1001,8 +1082,9 @@ mod tests {
         append_transcript_event_at(&root, start.clone()).expect("append shell start");
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+        let loaded_without_recorded_at = without_recorded_at_ms(&loaded);
 
-        assert_eq!(loaded.first(), Some(&start));
+        assert_eq!(loaded_without_recorded_at.first(), Some(&start));
         assert_eq!(
             loaded.last(),
             Some(&json!({
@@ -1036,8 +1118,9 @@ mod tests {
         append_transcript_event_at(&root, start.clone()).expect("append tool start");
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+        let loaded_without_recorded_at = without_recorded_at_ms(&loaded);
 
-        assert_eq!(loaded.first(), Some(&start));
+        assert_eq!(loaded_without_recorded_at.first(), Some(&start));
         assert!(loaded.iter().any(|event| {
             event.get("event_type").and_then(|value| value.as_str()) == Some("tool_call_result")
                 && event
@@ -1083,9 +1166,10 @@ mod tests {
         append_transcript_event_at(&root, result.clone()).expect("append tool result");
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
+        let loaded_without_recorded_at = without_recorded_at_ms(&loaded);
 
-        assert_eq!(loaded.first(), Some(&start));
-        assert_eq!(loaded.get(1), Some(&result));
+        assert_eq!(loaded_without_recorded_at.first(), Some(&start));
+        assert_eq!(loaded_without_recorded_at.get(1), Some(&result));
         assert_eq!(
             loaded.last(),
             Some(&json!({
@@ -1148,10 +1232,11 @@ mod tests {
             .expect("append compacting tool result");
 
         let loaded = load_transcript_events_at(&root, session_id).expect("load transcript");
+        let loaded_without_recorded_at = without_recorded_at_ms(&loaded);
 
         assert!(loaded.iter().all(|event| !is_compact_marker(event)));
-        assert_eq!(loaded.first(), Some(&start));
-        assert_eq!(loaded.get(1), Some(&result));
+        assert_eq!(loaded_without_recorded_at.first(), Some(&start));
+        assert_eq!(loaded_without_recorded_at.get(1), Some(&result));
         assert_eq!(
             loaded.last(),
             Some(&json!({
@@ -1177,7 +1262,7 @@ mod tests {
 
         let loaded = load_transcript_events_at(&root, "session-1").expect("load transcript");
         assert_eq!(
-            loaded,
+            without_recorded_at_ms(&loaded),
             vec![json!({
                 "event_type": "text_chunk",
                 "session_id": "session-1",
@@ -1186,6 +1271,19 @@ mod tests {
             })]
         );
         let _ = fs::remove_dir_all(root);
+    }
+
+    fn without_recorded_at_ms(events: &[serde_json::Value]) -> Vec<serde_json::Value> {
+        events
+            .iter()
+            .cloned()
+            .map(|mut event| {
+                if let Some(object) = event.as_object_mut() {
+                    object.remove("recorded_at_ms");
+                }
+                event
+            })
+            .collect()
     }
 
     fn test_root(name: &str) -> std::path::PathBuf {
