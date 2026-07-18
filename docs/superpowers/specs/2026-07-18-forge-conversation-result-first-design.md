@@ -1,7 +1,7 @@
 # Forge Conversation Result-First Design
 
 Date: 2026-07-18
-Status: approved in design discussion; pending written-spec review
+Status: approved for implementation
 Scope: Desktop Conversation information hierarchy, live progress, process disclosure, and interruption presentation
 
 ## Goal
