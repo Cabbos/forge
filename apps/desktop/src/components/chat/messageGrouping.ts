@@ -1,5 +1,14 @@
 import type { BlockState } from "@/lib/protocol";
 
+export { deriveConversationTurnView } from "./conversationTurnView.ts";
+export type {
+  ConversationTurnView,
+  LiveProgressCandidate,
+  ProcessDigest,
+  ProcessDigestItem,
+  ProcessDigestKind,
+} from "./conversationTurnView.ts";
+
 export type MessageItem =
   | { kind: "block"; block: BlockState; key: string }
   | { kind: "tool_group"; blocks: BlockState[]; key: string };
