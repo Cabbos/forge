@@ -285,8 +285,54 @@ function isDirectVerificationRunner(parts: string[]) {
 }
 
 function hasShellControlOperator(command: string) {
-  return ["&&", "||", ";", "|", ">", "<", "`", "$(", "\n", "\r"]
-    .some((operator) => command.includes(operator));
+  let quote: "'" | '"' | null = null;
+  let escaped = false;
+
+  for (let index = 0; index < command.length; index += 1) {
+    const character = command[index];
+
+    if (quote === "'") {
+      if (character === "'") quote = null;
+      continue;
+    }
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+
+    if (character === '"') {
+      quote = quote === '"' ? null : '"';
+      continue;
+    }
+    if (character === "'" && quote === null) {
+      quote = "'";
+      continue;
+    }
+
+    const commandSubstitution = character === "$" && command[index + 1] === "(";
+    if ((quote === null || quote === '"') && (character === "`" || commandSubstitution)) {
+      return true;
+    }
+    if (
+      quote === null
+      && (character === "&"
+        || character === ";"
+        || character === "|"
+        || character === ">"
+        || character === "<"
+        || character === "\n"
+        || character === "\r")
+    ) {
+      return true;
+    }
+  }
+
+  return quote !== null || escaped;
 }
 
 function emptyProgressState(now: number): StableProgressState {

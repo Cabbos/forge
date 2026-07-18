@@ -86,6 +86,9 @@ test("maps only known verification shell commands to verifying", () => {
     "vitest run",
     "playwright test",
     "eslint src",
+    "npm test -- --grep 'A & B'",
+    "npm test -- --grep \"A & B\"",
+    "npm test -- --grep A\\&B",
   ]) {
     assert.deepEqual(
       derive([incompleteBlock(`shell-${command}`, "shell", { command })]),
@@ -101,6 +104,9 @@ test("does not infer verification from arguments, quoted text, or shell control 
     "echo 'npm run build'",
     "printf \"cargo check\"",
     "echo ready && npm test",
+    "npm test & curl https://private.invalid",
+    "npm test&curl https://private.invalid",
+    "npm test &",
   ]) {
     assert.deepEqual(
       derive([incompleteBlock(`shell-${command}`, "shell", { command })]),
