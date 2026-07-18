@@ -36,10 +36,9 @@ test("does not treat a search directory or shell command as a file target", () =
 function item(evidence: BlockState[]): ProcessDigestItem {
   return {
     id: "process",
-    kind: "operation",
+    kind: "modification",
     label: "已执行",
     outcome: "done",
-    durationMs: null,
     evidence,
   };
 }

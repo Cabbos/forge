@@ -18,7 +18,7 @@ export function ConversationProcessItem({
   sessionId?: string;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const canShowDetails = item.kind !== "understanding" && item.evidence.length > 0;
+  const canShowDetails = item.kind !== "analysis" && item.evidence.length > 0;
   const target = deriveConversationProcessTarget(item);
 
   return (
@@ -27,9 +27,6 @@ export function ConversationProcessItem({
         <span aria-hidden="true" className="forge-process-digest-node" data-outcome={item.outcome} />
         <span className="forge-process-digest-label">{item.label}</span>
         <span className="forge-process-digest-outcome">{outcomeLabel(item.outcome)}</span>
-        {item.durationMs !== null && (
-          <span className="forge-process-digest-duration">{formatDuration(item.durationMs)}</span>
-        )}
         {target && (
           <ButtonPrimitive
             type="button"
@@ -75,9 +72,4 @@ function outcomeLabel(outcome: ProcessDigestItem["outcome"]) {
   if (outcome === "failed") return "失败";
   if (outcome === "running") return "进行中";
   return "完成";
-}
-
-function formatDuration(durationMs: number) {
-  if (durationMs < 1_000) return `${Math.round(durationMs)}ms`;
-  return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)}s`;
 }

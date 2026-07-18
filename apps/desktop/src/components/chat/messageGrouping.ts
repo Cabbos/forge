@@ -7,6 +7,7 @@ export type {
   ProcessDigest,
   ProcessDigestItem,
   ProcessDigestKind,
+  TurnTerminalSummary,
 } from "./conversationTurnView.ts";
 
 export type MessageItem =
