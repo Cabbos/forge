@@ -1,8 +1,10 @@
-import type { Ref } from "react";
+import { Fragment, type Ref } from "react";
 import { ToolActivityGroup } from "@/components/messages/ToolActivityGroup";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import type { ConversationTurn, MessageItem } from "@/components/chat/messageGrouping";
+import { deriveConversationTurnView } from "@/components/chat/conversationTurnView";
+import { TurnProgress } from "@/components/chat/TurnProgress";
 
 interface ConversationLaneProps {
   conversationTurns: ConversationTurn[];
@@ -24,7 +26,9 @@ export function ConversationLane({ conversationTurns, laneRef, sessionId, empty 
       {empty ? (
         <StartReadinessCard sessionId={sessionId} />
       ) : (
-        conversationTurns.map((turn) => (
+        conversationTurns.map((turn) => {
+          const turnView = deriveConversationTurnView(turn);
+          return (
           <section
             key={turn.key}
             data-testid="conversation-turn"
@@ -34,22 +38,29 @@ export function ConversationLane({ conversationTurns, laneRef, sessionId, empty 
             className="forge-conversation-turn"
           >
             {turn.items.map((item) => (
-              <div
-                data-testid="message-block"
-                data-block-role={getMessageBlockRole(item)}
-                className="forge-message-block"
-                key={item.key}
-              >
-                {item.kind === "tool_group"
-                  ? <ToolActivityGroup blocks={item.blocks} />
-                  : <MemoizedBlockRenderer block={item.block} sessionId={sessionId} />}
-              </div>
+              <Fragment key={item.key}>
+                <div
+                  data-testid="message-block"
+                  data-block-role={getMessageBlockRole(item)}
+                  className="forge-message-block"
+                >
+                  {item.kind === "tool_group"
+                    ? <ToolActivityGroup blocks={item.blocks} />
+                    : <MemoizedBlockRenderer block={item.block} sessionId={sessionId} />}
+                </div>
+                {isUserMessageItem(item) && <TurnProgress candidate={turnView.liveProgress} />}
+              </Fragment>
             ))}
           </section>
-        ))
+          );
+        })
       )}
     </div>
   );
+}
+
+function isUserMessageItem(item: MessageItem) {
+  return item.kind === "block" && item.block.event_type === "user_message";
 }
 
 function getMessageBlockRole(item: MessageItem) {
