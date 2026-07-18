@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as progress from "./conversationProgress.ts";
+import * as stableHook from "./useStableProgressLabel.ts";
 import type {
   LiveProgressCandidate,
   StableProgressState,
@@ -15,6 +16,20 @@ type StableProgressModule = {
     urgent?: boolean,
   ) => StableProgressState;
   flushStableProgress?: (state: StableProgressState, now: number) => StableProgressState;
+};
+
+interface StableProgressTimerDriver {
+  now: () => number;
+  setTimer: (callback: () => void, delay: number) => number;
+  clearTimer: (timer: number) => void;
+}
+
+type StableHookModule = {
+  scheduleStableProgressFlush?: (
+    dueAt: number,
+    onDue: (now: number) => void,
+    driver: StableProgressTimerDriver,
+  ) => () => void;
 };
 
 test("delays the first stage for 240ms and coalesces to the latest candidate", () => {
@@ -71,6 +86,28 @@ test("shows urgent waiting immediately and pauses its motion", () => {
   });
 });
 
+test("leaves visible waiting immediately when active work resumes", () => {
+  const module = stableModule();
+  const waiting = candidate("waiting", "等待你的确认", "paused", true);
+  const initial = module.createStableProgressState(waiting, 12);
+  const refreshedWaiting = module.updateStableProgress(initial, { ...waiting }, 80, true);
+  const resumed = module.updateStableProgress(
+    refreshedWaiting,
+    candidate("analyzing", "正在分析"),
+    100,
+  );
+
+  assert.equal(refreshedWaiting.visible?.id, "waiting");
+  assert.equal(refreshedWaiting.visibleSince, 12);
+  assert.deepEqual(resumed, {
+    visible: candidate("analyzing", "正在分析"),
+    visibleSince: 100,
+    pending: null,
+    dueAt: null,
+    hasPresented: true,
+  });
+});
+
 test("holds a presented label for 600ms and keeps only the latest pending stage", () => {
   const module = stableModule();
   const analyzing = candidate("analyzing", "正在分析");
@@ -115,6 +152,67 @@ test("does not flush before dueAt and clears state honestly for null", () => {
 
   assert.strictEqual(early, initial);
   assert.deepEqual(cleared, emptyState(100));
+});
+
+test("scheduler rounds up, reschedules an early wakeup, and flushes exactly once", () => {
+  const schedule = (stableHook as StableHookModule).scheduleStableProgressFlush;
+  assert.equal(typeof schedule, "function");
+  let now = 239.25;
+  let nextTimer = 0;
+  const timers = new Map<number, () => void>();
+  const delays: number[] = [];
+  const cleared: number[] = [];
+  const flushedAt: number[] = [];
+  const driver: StableProgressTimerDriver = {
+    now: () => now,
+    setTimer: (callback, delay) => {
+      const timer = ++nextTimer;
+      timers.set(timer, callback);
+      delays.push(delay);
+      return timer;
+    },
+    clearTimer: (timer) => {
+      cleared.push(timer);
+      timers.delete(timer);
+    },
+  };
+  const cancel = schedule!(240, (flushedNow) => flushedAt.push(flushedNow), driver);
+
+  assert.deepEqual(delays, [1]);
+  now = 239.75;
+  timers.get(1)!();
+  assert.deepEqual(delays, [1, 1]);
+  assert.deepEqual(flushedAt, []);
+
+  now = 240;
+  timers.get(2)!();
+  timers.get(2)!();
+  assert.deepEqual(flushedAt, [240]);
+
+  cancel();
+  assert.deepEqual(cleared, []);
+});
+
+test("scheduler cleanup cancels a pending wakeup", () => {
+  const schedule = (stableHook as StableHookModule).scheduleStableProgressFlush;
+  assert.equal(typeof schedule, "function");
+  let callback: (() => void) | null = null;
+  const cleared: number[] = [];
+  const flushedAt: number[] = [];
+  const cancel = schedule!(10, (now) => flushedAt.push(now), {
+    now: () => 0,
+    setTimer: (nextCallback) => {
+      callback = nextCallback;
+      return 7;
+    },
+    clearTimer: (timer) => cleared.push(timer),
+  });
+
+  cancel();
+  (callback as (() => void) | null)?.();
+
+  assert.deepEqual(cleared, [7]);
+  assert.deepEqual(flushedAt, []);
 });
 
 function stableModule() {

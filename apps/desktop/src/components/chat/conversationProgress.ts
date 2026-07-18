@@ -57,7 +57,11 @@ export function updateStableProgress(
   urgent = false,
 ): StableProgressState {
   if (!candidate) return emptyProgressState(now);
+  if (state.hasPresented && state.visible?.id === candidate.id) {
+    return { ...state, visible: candidate, pending: null, dueAt: null };
+  }
   if (urgent || candidate.urgent === true) return presentedProgressState(candidate, now);
+  if (state.visible?.id === "waiting") return presentedProgressState(candidate, now);
 
   if (!state.hasPresented) {
     if (candidate.id === "answering") return emptyProgressState(now);
@@ -71,9 +75,6 @@ export function updateStableProgress(
   }
 
   if (!state.visible) return createStableProgressState(candidate, now);
-  if (state.visible.id === candidate.id) {
-    return { ...state, visible: candidate, pending: null, dueAt: null };
-  }
 
   const dueAt = state.visibleSince + PROGRESS_LABEL_MINIMUM_MS;
   if (now >= dueAt) return presentedProgressState(candidate, now);
@@ -235,8 +236,57 @@ function isUnresolvedConfirmation(block: BlockState) {
 }
 
 function isSafeVerificationCommand(value: unknown) {
-  return typeof value === "string"
-    && /(?:^|[\s:])(?:build|test|vitest|playwright|check|lint|typecheck|tsc)(?=$|[\s:])/i.test(value);
+  if (typeof value !== "string") return false;
+  const command = value.trim();
+  if (!command || hasShellControlOperator(command)) return false;
+
+  const [program, ...args] = command.split(/\s+/);
+  if (program === "cargo") return args[0] === "check" || args[0] === "test";
+
+  if (program === "npm") {
+    return args[0] === "test" || (args[0] === "run" && isVerificationScript(args[1]));
+  }
+
+  if (program === "pnpm") {
+    if (args[0] === "exec") return isDirectVerificationRunner(args.slice(1));
+    return args[0] === "test" || (args[0] === "run" && isVerificationScript(args[1]));
+  }
+
+  if (program === "yarn") {
+    if (args[0] === "run") return isVerificationScript(args[1]);
+    return isVerificationScript(args[0]);
+  }
+
+  if (program === "bun") {
+    return args[0] === "test" || (args[0] === "run" && isVerificationScript(args[1]));
+  }
+
+  if (program === "npx") return isDirectVerificationRunner(args);
+  return isDirectVerificationRunner([program, ...args]);
+}
+
+function isVerificationScript(value: string | undefined) {
+  const base = value?.split(":", 1)[0];
+  return base === "build"
+    || base === "test"
+    || base === "check"
+    || base === "lint"
+    || base === "typecheck";
+}
+
+function isDirectVerificationRunner(parts: string[]) {
+  const [runner, subcommand] = parts;
+  if (["tsc", "vue-tsc", "svelte-check", "vitest", "jest", "eslint"].includes(runner)) {
+    return true;
+  }
+  if (runner === "vite") return subcommand === "build";
+  if (runner === "playwright") return subcommand === "test";
+  return false;
+}
+
+function hasShellControlOperator(command: string) {
+  return ["&&", "||", ";", "|", ">", "<", "`", "$(", "\n", "\r"]
+    .some((operator) => command.includes(operator));
 }
 
 function emptyProgressState(now: number): StableProgressState {
@@ -271,7 +321,17 @@ const DISCOVERY_TOOL_NAMES = new Set([
   "glob",
 ]);
 
-const MODIFICATION_TOOL_NAMES = new Set(["write_file", "write", "edit"]);
+const MODIFICATION_TOOL_NAMES = new Set([
+  "write_file",
+  "write_to_file",
+  "write",
+  "edit_file",
+  "edit",
+  "apply_patch",
+  "create_file",
+  "delete_file",
+  "move_file",
+]);
 
 function findLast<T>(values: T[], predicate: (value: T) => boolean): T | null {
   for (let index = values.length - 1; index >= 0; index -= 1) {

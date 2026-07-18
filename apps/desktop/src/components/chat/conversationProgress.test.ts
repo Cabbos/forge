@@ -47,18 +47,64 @@ test("maps allow-listed writes and diffs to the finite modifying stage", () => {
   );
 });
 
+test("maps authoritative backend write tool names to modifying", () => {
+  for (const tool_name of [
+    "write_to_file",
+    "edit_file",
+    "apply_patch",
+    "create_file",
+    "delete_file",
+    "move_file",
+  ]) {
+    assert.deepEqual(
+      derive([
+        incompleteBlock(`tool-${tool_name}`, "tool_call", {
+          tool_name,
+          tool_input: { path: "/repo/private/Secret.tsx", token: "never-show-this" },
+        }),
+      ]),
+      liveCandidate("modifying", "正在进行修改"),
+    );
+  }
+});
+
 test("maps only known verification shell commands to verifying", () => {
   for (const command of [
+    "npm test",
     "npm run build",
-    "pnpm test apps/desktop",
     "npm run check",
+    "npm run check:precommit",
     "npm run lint",
-    "npm run typecheck",
+    "pnpm test apps/desktop",
+    "pnpm run typecheck",
+    "yarn check",
+    "bun run test",
+    "cargo check --workspace",
+    "cargo test -p forge",
     "npx tsc --noEmit",
+    "vite build",
+    "vitest run",
+    "playwright test",
+    "eslint src",
   ]) {
     assert.deepEqual(
       derive([incompleteBlock(`shell-${command}`, "shell", { command })]),
       liveCandidate("verifying", "正在验证结果"),
+    );
+  }
+});
+
+test("does not infer verification from arguments, quoted text, or shell control chains", () => {
+  for (const command of [
+    "echo test",
+    "rg test src",
+    "echo 'npm run build'",
+    "printf \"cargo check\"",
+    "echo ready && npm test",
+  ]) {
+    assert.deepEqual(
+      derive([incompleteBlock(`shell-${command}`, "shell", { command })]),
+      liveCandidate("analyzing", "正在分析"),
     );
   }
 });
