@@ -512,14 +512,7 @@ test.beforeEach(async ({ page }) => {
       window.__progressLabelObserver = observer;
       recordProgress();
     });
-    const antiFlashStartedAt = await page.evaluate(() => performance.now());
-
-    await page.waitForFunction(
-      (startedAt) => performance.now() - startedAt >= 100,
-      antiFlashStartedAt,
-    );
-    await expect(progress).toHaveCount(0);
-
+    const progressCandidateSentAt = await page.evaluate(() => performance.now());
     await simulateStream(page, sessionId, [
       {
         event_type: "tool_call_start",
@@ -529,7 +522,13 @@ test.beforeEach(async ({ page }) => {
         tool_input: { path: "/repo/private/AppShell.tsx" },
       },
     ], 1);
-    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveCount(0);
+    await page.waitForFunction(
+      (sentAt) => performance.now() - sentAt >= 100,
+      progressCandidateSentAt,
+    );
+    await expect(progress).toHaveCount(0);
+    await expect(progress).toHaveCount(1, { timeout: 1_500 });
     await expect(progress).toHaveText("正在查找相关内容");
 
     await simulateStream(page, sessionId, [
@@ -586,6 +585,7 @@ test.beforeEach(async ({ page }) => {
       expect(entry, `missing observed progress label: ${label}`).toBeTruthy();
       return entry!;
     });
+    expect(transitions[0].at - progressCandidateSentAt).toBeGreaterThanOrEqual(200);
     for (let index = 1; index < transitions.length; index += 1) {
       expect(transitions[index].at - transitions[index - 1].at).toBeGreaterThanOrEqual(560);
     }
