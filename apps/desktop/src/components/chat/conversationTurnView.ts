@@ -1,5 +1,8 @@
 import type { BlockState } from "../../lib/protocol.ts";
 import type { ConversationTurn, MessageItem } from "./messageGrouping.ts";
+import { deriveLiveProgressCandidate } from "./conversationProgress.ts";
+
+export { deriveLiveProgressCandidate } from "./conversationProgress.ts";
 
 export type ProcessDigestKind = "understanding" | "operation" | "verification" | "exception";
 
@@ -53,7 +56,7 @@ export function deriveConversationTurnView(turn: ConversationTurn): Conversation
     finalAnswer,
     terminalError,
     interruptions,
-    liveProgress: finalAnswer || terminalError ? null : deriveInitialLiveProgress(blocks),
+    liveProgress: finalAnswer || terminalError ? null : deriveLiveProgressCandidate(blocks),
     processDigest: deriveProcessDigest(blocks, finalAnswer, terminalError),
   };
 }
@@ -65,15 +68,6 @@ function flattenMessageItems(items: MessageItem[]) {
 function isUnresolvedInterruption(block: BlockState) {
   if (block.event_type !== "confirm_ask") return false;
   return block.metadata.confirmed !== true && block.metadata.confirm_interrupted !== true;
-}
-
-function deriveInitialLiveProgress(blocks: BlockState[]): LiveProgressCandidate | null {
-  const running = findLast(blocks, (block) => !block.isComplete && isProgressBlock(block));
-  if (!running) return null;
-  if (running.event_type === "thinking" || running.event_type === "pending") {
-    return { id: "understanding", label: "正在理解任务" };
-  }
-  return { id: running.block_id || running.event_type, label: "正在执行操作" };
 }
 
 function deriveProcessDigest(
@@ -169,13 +163,6 @@ function isInternalContextContent(content: string) {
   return content.startsWith("Active Skills:")
     || content.startsWith("已启用插件:")
     || content.startsWith("## Active Skills");
-}
-
-function isProgressBlock(block: BlockState) {
-  return block.event_type === "thinking"
-    || block.event_type === "pending"
-    || block.event_type === "tool_call"
-    || block.event_type === "shell";
 }
 
 function isVerificationCommand(value: unknown) {
