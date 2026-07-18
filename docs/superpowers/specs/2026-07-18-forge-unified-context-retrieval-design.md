@@ -1,7 +1,7 @@
 # Forge Unified Context Retrieval Design
 
 Date: 2026-07-18
-Status: pending user review
+Status: approved for implementation planning
 Parent: `docs/superpowers/specs/2026-07-18-forge-memory-knowledge-retrieval-design.md`
 Workstream: 1 of 4 — unified context retrieval
 
