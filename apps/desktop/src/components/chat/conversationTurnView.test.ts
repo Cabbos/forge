@@ -124,6 +124,18 @@ test("exposes one live candidate until answer text begins", () => {
   assert.equal(answering.liveProgress, null);
 });
 
+test("keeps a preparing-result label between text start and visible answer content", () => {
+  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
+  const preparing = deriveConversationTurnView(conversationTurn([
+    block("user", "user_message", "整理页面"),
+    block("thinking", "thinking", "private"),
+    incompleteBlock("answer", "text", ""),
+  ]));
+
+  assert.deepEqual(preparing.liveProgress, { id: "answer:preparing", label: "正在整理回答" });
+  assert.equal(preparing.finalAnswer, null);
+});
+
 test("keeps grouped evidence ordered and restored completed turns collapsed", () => {
   const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
   const restored = deriveConversationTurnView(conversationTurn([
