@@ -87,25 +87,75 @@ async function completeTurn(
   ], 1);
 }
 
-async function openLatestProcess(page: import("@playwright/test").Page) {
-  const disclosure = page.getByTestId("conversation-process-disclosure").last();
+async function waitForCollapsibleOpen(
+  trigger: import("@playwright/test").Locator,
+  panel: import("@playwright/test").Locator,
+) {
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toHaveAttribute("data-open", "");
+  await expect(panel).toBeVisible();
+  await panel.scrollIntoViewIfNeeded();
+  await expect.poll(async () => panel.evaluate((element) => {
+    const hasActiveAnimation = element
+      .getAnimations({ subtree: true })
+      .some((animation) => animation.playState === "pending" || animation.playState === "running");
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return !hasActiveAnimation && Boolean(hit && (hit === element || element.contains(hit)));
+  })).toBe(true);
+}
+
+async function waitForPointerTarget(target: import("@playwright/test").Locator) {
+  await expect(target).toBeVisible();
+  await target.scrollIntoViewIfNeeded();
+  await expect.poll(async () => target.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return getComputedStyle(element).pointerEvents !== "none"
+      && Boolean(hit && (hit === element || element.contains(hit)));
+  })).toBe(true);
+}
+
+async function openProcessDisclosure(disclosure: import("@playwright/test").Locator) {
   const trigger = disclosure.getByTestId("conversation-process-trigger");
   await expect(trigger).toBeVisible();
   if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+  const panel = disclosure.locator(":scope > [data-slot='collapsible-content']");
+  await waitForCollapsibleOpen(trigger, panel);
   return disclosure;
+}
+
+async function openLatestProcess(page: import("@playwright/test").Page) {
+  const disclosure = page.getByTestId("conversation-process-disclosure").last();
+  return openProcessDisclosure(disclosure);
 }
 
 async function revealLatestProcessDetails(page: import("@playwright/test").Page) {
   const disclosure = await openLatestProcess(page);
   const evidenceTrigger = disclosure.getByTestId("conversation-evidence-trigger");
   if (await evidenceTrigger.count()) {
+    await waitForPointerTarget(evidenceTrigger);
     await evidenceTrigger.click();
+    const evidenceRoot = evidenceTrigger.locator("..");
+    await waitForCollapsibleOpen(
+      evidenceTrigger,
+      evidenceRoot.locator(":scope > [data-slot='collapsible-content']"),
+    );
   }
-  const stageEvidenceTriggers = disclosure.getByRole("button", { name: /^查看.*运行证据$/ });
-  const stageEvidenceCount = await stageEvidenceTriggers.count();
-  for (let index = 0; index < stageEvidenceCount; index += 1) {
-    await stageEvidenceTriggers.first().focus();
-    await stageEvidenceTriggers.first().press("Enter");
+  const processItems = disclosure.getByTestId("conversation-process-item");
+  const processItemCount = await processItems.count();
+  for (let index = 0; index < processItemCount; index += 1) {
+    const processItem = processItems.nth(index);
+    const stageRoot = processItem.locator(":scope > [data-slot='collapsible']");
+    const stageTrigger = stageRoot.locator(":scope > [data-slot='collapsible-trigger']");
+    if (!await stageTrigger.count()) continue;
+    await processItem.hover();
+    await waitForPointerTarget(stageTrigger);
+    await stageTrigger.click();
+    await waitForCollapsibleOpen(
+      stageTrigger,
+      stageRoot.locator(":scope > [data-slot='collapsible-content']"),
+    );
   }
   return disclosure;
 }
@@ -460,8 +510,7 @@ test.beforeEach(async ({ page }) => {
     await expect(turn).not.toContainText("AppShell.tsx");
     await expect(turn).not.toContainText(privateToken);
 
-    await trigger.click();
-    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    await openProcessDisclosure(disclosure);
     const processItem = disclosure.getByTestId("conversation-process-item");
     await expect(processItem).toHaveCount(1);
     await expect(processItem).toContainText("分析需求");
@@ -470,11 +519,18 @@ test.beforeEach(async ({ page }) => {
     await expect(turn).not.toContainText("AppShell.tsx");
     await expect(turn).not.toContainText(privateToken);
 
-    const stageEvidence = processItem.getByRole("button", { name: /^查看.*运行证据$/ });
+    const stageRoot = processItem.locator(":scope > [data-slot='collapsible']");
+    const stageEvidence = stageRoot.locator(":scope > [data-slot='collapsible-trigger']");
     await expect(stageEvidence).toHaveCount(1);
+    await expect(stageEvidence).toHaveAccessibleName(/^查看.*运行证据$/);
     await expect(stageEvidence).toHaveAttribute("aria-expanded", "false");
+    await processItem.hover();
+    await waitForPointerTarget(stageEvidence);
     await stageEvidence.click();
-    await expect(stageEvidence).toHaveAttribute("aria-expanded", "true");
+    await waitForCollapsibleOpen(
+      stageEvidence,
+      stageRoot.locator(":scope > [data-slot='collapsible-content']"),
+    );
     await expect(processItem.getByTestId("conversation-process-details")).toBeVisible();
     await expect(processItem.getByTestId("tool-card-trigger")).toContainText("AppShell.tsx");
     await expect(turn.getByTestId("conversation-next-action")).toHaveCount(0);
