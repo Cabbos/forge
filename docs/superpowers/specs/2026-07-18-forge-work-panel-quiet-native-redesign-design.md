@@ -1,7 +1,7 @@
 # Forge Work Panel Embedded Split Redesign
 
 Date: 2026-07-18
-Status: approved in design discussion; pending written-spec review
+Status: approved in design and written-spec review
 Scope: Desktop Work Panel structure, layout, and interaction
 Supersedes: the panel-frame, launcher, width, responsive, and interaction sections of `2026-07-17-forge-work-panel-design.md`
 
