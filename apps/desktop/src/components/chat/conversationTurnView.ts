@@ -77,10 +77,10 @@ export function deriveConversationTurnView(turn: ConversationTurn): Conversation
       && Boolean(block.content.trim())
       && !isInternalContextContent(block.content.trim()),
   );
-  const errors = blocks.filter((block) => block.event_type === "error");
-  const terminalError = finalAnswer ? null : errors[errors.length - 1] ?? null;
-  const interruptions = blocks.filter(isUnresolvedInterruption);
   const timing = readConversationTurnTiming(userMessage);
+  const errors = blocks.filter((block) => block.event_type === "error");
+  const terminalError = primaryTerminalError(errors, finalAnswer, timing.outcome);
+  const interruptions = blocks.filter(isUnresolvedInterruption);
   const provisionalCompletion = isProvisionalCompletion(blocks, finalAnswer);
   const effectiveTerminalOutcome = timing.outcome
     ?? (provisionalCompletion ? "completed" : null);
@@ -105,6 +105,17 @@ export function deriveConversationTurnView(turn: ConversationTurn): Conversation
     terminalSummary,
     processDigest,
   };
+}
+
+function primaryTerminalError(
+  errors: BlockState[],
+  finalAnswer: BlockState | null,
+  terminalOutcome: ConversationTurnOutcome | null,
+) {
+  const error = errors[errors.length - 1] ?? null;
+  if (!error || !finalAnswer) return error;
+  if (terminalOutcome !== "failed") return null;
+  return error.content.trim() === finalAnswer.content.trim() ? null : error;
 }
 
 function flattenMessageItems(items: MessageItem[]) {
@@ -160,11 +171,22 @@ function digestGroupForBlock(
 ): DigestGroup | null {
   switch (block.event_type) {
     case "thinking":
+      return {
+        ...digestGroup(block, { kind: "analysis", operation: false }),
+        id: "analysis-stage",
+        evidence: [],
+      };
     case "pending":
     case "context_compact_start":
     case "context_compacted":
     case "context_compact_skipped":
       return digestGroup(block, { kind: "analysis", operation: false });
+    case "confirm_ask":
+      if (isUnresolvedInterruption(block)) return null;
+      return {
+        ...digestGroup(block, { kind: "exception", operation: true }),
+        label: "确认已处理",
+      };
     case "tool_call":
     case "tool_call_result":
     case "shell":
