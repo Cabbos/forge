@@ -835,26 +835,44 @@ test.beforeEach(async ({ page }) => {
       return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
     });
 
-    const events = Array.from({ length: 24 }, (_, index) => ([
-      { event_type: "text_start" as const, session_id: sessionId, block_id: `scroll-lane-${index}` },
+    const turnCount = 12;
+    const events = Array.from({ length: turnCount }, (_, index) => ([
+      {
+        event_type: "user_message" as const,
+        session_id: sessionId,
+        block_id: `scroll-user-${index}`,
+        content: `第 ${index + 1} 轮：继续检查滚动控制的位置。`,
+      },
+      { event_type: "text_start" as const, session_id: sessionId, block_id: `scroll-answer-${index}` },
       {
         event_type: "text_chunk" as const,
         session_id: sessionId,
-        block_id: `scroll-lane-${index}`,
-        content: `第 ${index + 1} 条输出，用来撑开滚动区域。这里保持足够长度，让对话区出现滚动。`,
+        block_id: `scroll-answer-${index}`,
+        content: `第 ${index + 1} 条完整答复，用真实的多轮对话撑开滚动区域。`,
       },
-      { event_type: "text_end" as const, session_id: sessionId, block_id: `scroll-lane-${index}` },
+      { event_type: "text_end" as const, session_id: sessionId, block_id: `scroll-answer-${index}` },
     ])).flat();
     await simulateStream(page, sessionId, events, 1);
+    await expect(page.getByTestId("conversation-turn")).toHaveCount(turnCount);
 
-    await page.evaluate(() => {
-      const scroller = document.querySelector("[data-testid='conversation-scroll']");
-      if (!scroller) return;
-      scroller.dispatchEvent(new WheelEvent("wheel", { deltaY: -160, bubbles: true }));
-      scroller.scrollTop = 0;
-      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+    const scroller = page.getByTestId("conversation-scroll");
+    await expect.poll(async () => scroller.evaluate((element) => (
+      element.scrollHeight - element.clientHeight
+    ))).toBeGreaterThan(120);
+
+    await scroller.evaluate((element) => {
+      element.scrollTop = element.scrollHeight;
     });
-    await expect(page.getByTestId("scroll-to-bottom")).toBeVisible();
+    await expect.poll(async () => scroller.evaluate((element) => (
+      element.scrollHeight - element.clientHeight - element.scrollTop
+    ))).toBeLessThanOrEqual(2);
+    await scroller.hover();
+    await page.mouse.wheel(0, -480);
+    await expect.poll(async () => scroller.evaluate((element) => (
+      element.scrollHeight - element.clientHeight - element.scrollTop
+    ))).toBeGreaterThan(120);
+    const scrollToBottom = page.getByTestId("scroll-to-bottom");
+    await expect(scrollToBottom).toBeVisible();
 
     const placement = await page.evaluate(() => {
       const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
@@ -875,6 +893,12 @@ test.beforeEach(async ({ page }) => {
       placement!.buttonLeft >= placement!.laneRight + 8 ||
       placement!.buttonRight <= placement!.laneLeft - 8,
     ).toBe(true);
+
+    await scrollToBottom.click();
+    await expect.poll(async () => scroller.evaluate((element) => (
+      element.scrollHeight - element.clientHeight - element.scrollTop
+    ))).toBeLessThanOrEqual(2);
+    await expect(scrollToBottom).toHaveCount(0);
   });
 
   test("streaming output keeps bottom lock without stealing manual scroll", async ({ page }) => {
