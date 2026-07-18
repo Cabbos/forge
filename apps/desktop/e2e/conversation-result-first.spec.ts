@@ -306,7 +306,7 @@ test("shows confirmations only while backend authority says they are unresolved"
   await expect(turn.getByTestId("assistant-message")).toContainText("设置已安全更新");
   const disclosure = turn.getByTestId("conversation-process-disclosure");
   await expect(disclosure.getByTestId("conversation-process-trigger")).toHaveAccessibleName(
-    /^已完成 · (?:<1 秒|\d+ 秒) · 1 项操作，查看运行过程$/,
+    /^已完成 · (?:<1 秒|\d+ 秒)，查看运行过程$/,
   );
   await openProcessDisclosure(disclosure);
   await expect(disclosure.getByText("确认已处理", { exact: true })).toBeVisible();
