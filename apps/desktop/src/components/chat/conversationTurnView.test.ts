@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BlockState, StreamEvent } from "../../lib/protocol.ts";
-import { eventToBlock } from "../../store/blocks.ts";
+import { applyTranscriptEventToBlocks, eventToBlock } from "../../store/blocks.ts";
 import type {
   ConversationTurn,
   LiveProgressCandidate,
@@ -208,12 +208,63 @@ test("retains an atomically rendered singleton Store diff after turn completion"
       outcome: item.outcome,
       evidence: item.evidence.map((evidence) => evidence.block_id),
     })), [{
-      kind: "modification",
-      label: "完成修改",
+      kind: "analysis",
+      label: "分析需求",
       outcome: "done",
       evidence: ["singleton-diff"],
     }]);
   }
+});
+
+test("classifies a completed Store git_diff as inspection while retaining diff evidence", () => {
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    ...toolBackedStoreDiff("git-diff-call", "git_diff"),
+    block("answer", "text", "检查完成。"),
+  ]));
+
+  assert.equal(view.processDigest.items.some((item) => item.label === "完成修改"), false);
+  assert.deepEqual(view.processDigest.items.map((item) => ({
+    kind: item.kind,
+    label: item.label,
+    outcome: item.outcome,
+  })), [{
+    kind: "analysis",
+    label: "分析需求",
+    outcome: "done",
+  }]);
+  assert.equal(view.processDigest.operationCount, 1);
+  assert.equal(
+    view.processDigest.items
+      .flatMap((item) => item.evidence)
+      .some((evidence) => evidence.event_type === "diff_view"),
+    true,
+  );
+});
+
+test("classifies a completed Store write diff as one modification with retained evidence", () => {
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    ...toolBackedStoreDiff("write-call", "write_to_file"),
+    block("answer", "text", "修改完成。"),
+  ]));
+
+  assert.deepEqual(view.processDigest.items.map((item) => ({
+    kind: item.kind,
+    label: item.label,
+    outcome: item.outcome,
+  })), [{
+    kind: "modification",
+    label: "完成修改",
+    outcome: "done",
+  }]);
+  assert.equal(view.processDigest.operationCount, 1);
+  assert.equal(
+    view.processDigest.items
+      .flatMap((item) => item.evidence)
+      .some((evidence) => evidence.event_type === "diff_view"),
+    true,
+  );
 });
 
 test("keeps singleton Store diff outcomes honest before completion and on interruption", () => {
@@ -437,4 +488,34 @@ function storeDiffBlock(): BlockState {
   const diff = eventToBlock(event);
   assert.ok(diff);
   return diff;
+}
+
+function toolBackedStoreDiff(blockId: string, toolName: string): BlockState[] {
+  const events: StreamEvent[] = [
+    {
+      event_type: "tool_call_start",
+      session_id: "session",
+      block_id: blockId,
+      tool_name: toolName,
+      tool_input: { path: "src/App.tsx" },
+    },
+    {
+      event_type: "diff_view",
+      session_id: "session",
+      block_id: blockId,
+      file_path: "src/App.tsx",
+      old_content: "before",
+      new_content: "after",
+    },
+    {
+      event_type: "tool_call_result",
+      session_id: "session",
+      block_id: blockId,
+      result: "done",
+      is_error: false,
+      duration_ms: 12,
+    },
+  ];
+
+  return events.reduce(applyTranscriptEventToBlocks, []);
 }
