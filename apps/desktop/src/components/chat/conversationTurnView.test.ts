@@ -126,7 +126,11 @@ test("exposes one live candidate until answer text begins", () => {
     incompleteBlock("answer", "text", "正在输出结果"),
   ]));
 
-  assert.deepEqual(running.liveProgress, { id: "understanding", label: "正在理解任务" });
+  assert.deepEqual(running.liveProgress, {
+    id: "analyzing",
+    label: "正在分析",
+    motion: "live",
+  });
   assert.equal(answering.finalAnswer?.block_id, "answer");
   assert.equal(answering.liveProgress, null);
 });
@@ -139,7 +143,11 @@ test("keeps a preparing-result label between text start and visible answer conte
     incompleteBlock("answer", "text", ""),
   ]));
 
-  assert.deepEqual(preparing.liveProgress, { id: "answer:preparing", label: "正在整理回答" });
+  assert.deepEqual(preparing.liveProgress, {
+    id: "answering",
+    label: "正在生成答复",
+    motion: "live",
+  });
   assert.equal(preparing.finalAnswer, null);
 });
 

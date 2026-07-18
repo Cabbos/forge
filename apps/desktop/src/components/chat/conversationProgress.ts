@@ -1,20 +1,53 @@
 import type { BlockState } from "../../lib/protocol.ts";
-import type { LiveProgressCandidate } from "./conversationTurnView.ts";
 
+export const PROGRESS_INITIAL_DELAY_MS = 240;
 export const PROGRESS_LABEL_MINIMUM_MS = 600;
+
+export type LiveProgressStage =
+  | "analyzing"
+  | "discovering"
+  | "modifying"
+  | "verifying"
+  | "answering"
+  | "waiting";
+
+export interface LiveProgressCandidate {
+  id: LiveProgressStage;
+  label: string;
+  motion: "live" | "paused";
+  urgent?: boolean;
+}
+
+const LIVE_PROGRESS_CANDIDATES = {
+  analyzing: { id: "analyzing", label: "正在分析", motion: "live" },
+  discovering: { id: "discovering", label: "正在查找相关内容", motion: "live" },
+  modifying: { id: "modifying", label: "正在进行修改", motion: "live" },
+  verifying: { id: "verifying", label: "正在验证结果", motion: "live" },
+  answering: { id: "answering", label: "正在生成答复", motion: "live" },
+  waiting: { id: "waiting", label: "等待你的确认", motion: "paused", urgent: true },
+} satisfies Record<LiveProgressStage, LiveProgressCandidate>;
 
 export interface StableProgressState {
   visible: LiveProgressCandidate | null;
   visibleSince: number;
   pending: LiveProgressCandidate | null;
   dueAt: number | null;
+  hasPresented: boolean;
 }
 
 export function createStableProgressState(
   candidate: LiveProgressCandidate | null,
   now: number,
 ): StableProgressState {
-  return { visible: candidate, visibleSince: now, pending: null, dueAt: null };
+  if (!candidate || candidate.id === "answering") return emptyProgressState(now);
+  if (candidate.urgent === true) return presentedProgressState(candidate, now);
+  return {
+    visible: null,
+    visibleSince: now,
+    pending: candidate,
+    dueAt: now + PROGRESS_INITIAL_DELAY_MS,
+    hasPresented: false,
+  };
 }
 
 export function updateStableProgress(
@@ -23,45 +56,81 @@ export function updateStableProgress(
   now: number,
   urgent = false,
 ): StableProgressState {
-  if (!candidate) return createStableProgressState(null, now);
+  if (!candidate) return emptyProgressState(now);
+  if (urgent || candidate.urgent === true) return presentedProgressState(candidate, now);
+
+  if (!state.hasPresented) {
+    if (candidate.id === "answering") return emptyProgressState(now);
+    return {
+      visible: null,
+      visibleSince: state.visibleSince,
+      pending: candidate,
+      dueAt: state.dueAt ?? now + PROGRESS_INITIAL_DELAY_MS,
+      hasPresented: false,
+    };
+  }
+
   if (!state.visible) return createStableProgressState(candidate, now);
-  if (state.visible.id === candidate.id) return { ...state, pending: null, dueAt: null };
+  if (state.visible.id === candidate.id) {
+    return { ...state, visible: candidate, pending: null, dueAt: null };
+  }
 
   const dueAt = state.visibleSince + PROGRESS_LABEL_MINIMUM_MS;
-  if (urgent || now >= dueAt) return createStableProgressState(candidate, now);
+  if (now >= dueAt) return presentedProgressState(candidate, now);
   return { ...state, pending: candidate, dueAt };
 }
 
 export function flushStableProgress(state: StableProgressState, now: number): StableProgressState {
   if (!state.pending || state.dueAt === null || now < state.dueAt) return state;
-  return createStableProgressState(state.pending, now);
+  return presentedProgressState(state.pending, now);
+}
+
+export function analyzingProgressCandidate(): LiveProgressCandidate {
+  return LIVE_PROGRESS_CANDIDATES.analyzing;
+}
+
+export function answeringProgressCandidate(): LiveProgressCandidate {
+  return LIVE_PROGRESS_CANDIDATES.answering;
+}
+
+export function waitingProgressCandidate(): LiveProgressCandidate {
+  return LIVE_PROGRESS_CANDIDATES.waiting;
+}
+
+export function progressCandidateForBlock(block: BlockState): LiveProgressCandidate {
+  if (block.event_type === "confirm_ask" && isUnresolvedConfirmation(block)) {
+    return waitingProgressCandidate();
+  }
+
+  if (block.event_type === "text") return answeringProgressCandidate();
+
+  if (block.event_type === "tool_call") {
+    const toolName = block.metadata.tool_name;
+    if (typeof toolName === "string" && DISCOVERY_TOOL_NAMES.has(toolName)) {
+      return LIVE_PROGRESS_CANDIDATES.discovering;
+    }
+    if (typeof toolName === "string" && MODIFICATION_TOOL_NAMES.has(toolName)) {
+      return LIVE_PROGRESS_CANDIDATES.modifying;
+    }
+    return analyzingProgressCandidate();
+  }
+
+  if (block.event_type === "diff_view") return LIVE_PROGRESS_CANDIDATES.modifying;
+
+  if (block.event_type === "shell" && isSafeVerificationCommand(block.metadata.command)) {
+    return LIVE_PROGRESS_CANDIDATES.verifying;
+  }
+
+  return analyzingProgressCandidate();
 }
 
 export function deriveLiveProgressCandidate(blocks: BlockState[]): LiveProgressCandidate | null {
-  const running = findLast(blocks, (block) => !block.isComplete && isProgressBlock(block));
+  const running = findLast(
+    blocks,
+    (block) => !block.isComplete && isProgressBlock(block) && !isResolvedConfirmation(block),
+  );
   if (!running) return null;
-
-  if (running.event_type === "thinking" || running.event_type === "pending") {
-    return { id: "understanding", label: "正在理解任务" };
-  }
-
-  if (running.event_type === "text") {
-    return { id: "answer:preparing", label: "正在整理回答" };
-  }
-
-  if (running.event_type === "tool_call") {
-    const action = toolAction(running.metadata.tool_name);
-    const name = safeInputBasename(running.metadata.tool_input);
-    if (action && name) return { id: `${action.id}:${name}`, label: `${action.label} ${name}` };
-    if (action) return { id: action.id, label: action.fallback };
-  }
-
-  if (running.event_type === "shell") {
-    const verification = verificationAction(running.metadata.command);
-    if (verification) return verification;
-  }
-
-  return { id: running.block_id || running.event_type, label: "正在执行操作" };
+  return progressCandidateForBlock(running);
 }
 
 export function deriveCompletedProcessLabel(block: BlockState) {
@@ -137,7 +206,7 @@ function truncateObjectName(name: string, maxLength = 36) {
   return `${name.slice(0, maxLength - 1)}…`;
 }
 
-function verificationAction(value: unknown): LiveProgressCandidate | null {
+function verificationAction(value: unknown): { id: string; label: string } | null {
   if (typeof value !== "string") return null;
   if (/\b(?:typecheck|tsc)\b/i.test(value)) return { id: "verify:type", label: "正在检查类型" };
   if (/\b(?:test|vitest|playwright)\b/i.test(value)) return { id: "verify:test", label: "正在运行测试" };
@@ -152,8 +221,57 @@ function isProgressBlock(block: BlockState) {
     || block.event_type === "pending"
     || block.event_type === "text"
     || block.event_type === "tool_call"
-    || block.event_type === "shell";
+    || block.event_type === "shell"
+    || block.event_type === "diff_view"
+    || block.event_type === "confirm_ask";
 }
+
+function isResolvedConfirmation(block: BlockState) {
+  return block.event_type === "confirm_ask" && !isUnresolvedConfirmation(block);
+}
+
+function isUnresolvedConfirmation(block: BlockState) {
+  return block.metadata.confirmed !== true && block.metadata.confirm_interrupted !== true;
+}
+
+function isSafeVerificationCommand(value: unknown) {
+  return typeof value === "string"
+    && /(?:^|[\s:])(?:build|test|vitest|playwright|check|lint|typecheck|tsc)(?=$|[\s:])/i.test(value);
+}
+
+function emptyProgressState(now: number): StableProgressState {
+  return {
+    visible: null,
+    visibleSince: now,
+    pending: null,
+    dueAt: null,
+    hasPresented: false,
+  };
+}
+
+function presentedProgressState(
+  candidate: LiveProgressCandidate,
+  now: number,
+): StableProgressState {
+  return {
+    visible: candidate,
+    visibleSince: now,
+    pending: null,
+    dueAt: null,
+    hasPresented: true,
+  };
+}
+
+const DISCOVERY_TOOL_NAMES = new Set([
+  "read_file",
+  "read",
+  "search_content",
+  "grep",
+  "search_files",
+  "glob",
+]);
+
+const MODIFICATION_TOOL_NAMES = new Set(["write_file", "write", "edit"]);
 
 function findLast<T>(values: T[], predicate: (value: T) => boolean): T | null {
   for (let index = values.length - 1; index >= 0; index -= 1) {
