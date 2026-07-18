@@ -541,8 +541,17 @@ test.beforeEach(async ({ page }) => {
 
   test("conversation live progress enforces anti-flash dwell and keeps the latest stage", async ({ page }) => {
     const sessionId = "conversation-live-progress-timing";
-    const turn = await startConversationTurn(page, sessionId, "整理并验证这个页面");
-    const progress = turn.getByTestId("conversation-progress");
+    await page.addInitScript((id) => {
+      // @ts-expect-error Forge E2E fixture session override
+      window.__mockSessionId = id;
+    }, sessionId);
+    await page.goto("http://localhost:1420");
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+    await page.locator("textarea").fill("整理并验证这个页面");
     await page.evaluate(() => {
       const history: Array<{ label: string; at: number }> = [];
       let lastLabel = "";
@@ -565,9 +574,23 @@ test.beforeEach(async ({ page }) => {
       window.__progressLabelHistory = history;
       // @ts-expect-error retain the observer for the duration of this test
       window.__progressLabelObserver = observer;
+      // @ts-expect-error timing zero installed for this Playwright test only
+      window.__progressTurnStartedAt = performance.now();
       recordProgress();
     });
-    const progressCandidateSentAt = await page.evaluate(() => performance.now());
+    const turnStartedAt = await page.evaluate(() => {
+      // @ts-expect-error timing zero installed above
+      return window.__progressTurnStartedAt as number;
+    });
+    await page.locator("textarea").press("Enter");
+    const turn = page.getByTestId("conversation-turn").last();
+    const progress = turn.getByTestId("conversation-progress");
+    await expect(progress).toHaveCount(0);
+    await page.waitForFunction(
+      (startedAt) => performance.now() - startedAt >= 100,
+      turnStartedAt,
+    );
+    await expect(progress).toHaveCount(0);
     await simulateStream(page, sessionId, [
       {
         event_type: "tool_call_start",
@@ -577,11 +600,6 @@ test.beforeEach(async ({ page }) => {
         tool_input: { path: "/repo/private/AppShell.tsx" },
       },
     ], 1);
-    await expect(progress).toHaveCount(0);
-    await page.waitForFunction(
-      (sentAt) => performance.now() - sentAt >= 100,
-      progressCandidateSentAt,
-    );
     await expect(progress).toHaveCount(0);
     await expect(progress).toHaveCount(1, { timeout: 1_500 });
     await expect(progress).toHaveText("正在查找相关内容");
@@ -640,7 +658,7 @@ test.beforeEach(async ({ page }) => {
       expect(entry, `missing observed progress label: ${label}`).toBeTruthy();
       return entry!;
     });
-    expect(transitions[0].at - progressCandidateSentAt).toBeGreaterThanOrEqual(200);
+    expect(transitions[0].at - turnStartedAt).toBeGreaterThanOrEqual(200);
     for (let index = 1; index < transitions.length; index += 1) {
       expect(transitions[index].at - transitions[index - 1].at).toBeGreaterThanOrEqual(560);
     }
