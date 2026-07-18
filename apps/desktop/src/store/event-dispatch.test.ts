@@ -852,6 +852,76 @@ describe("createOutputEventDispatcher replayed confirmations", () => {
   });
 });
 
+describe("createOutputEventDispatcher conversation turn timing", () => {
+  it("records completed outcome on the latest timed user turn", () => {
+    const { state, dispatch } = createHarness([
+      {
+        block_id: "user-1",
+        event_type: "user_message",
+        content: "Ship it",
+        isComplete: true,
+        metadata: { turn_started_at_ms: 5_000 },
+      },
+    ]);
+    const originalNow = Date.now;
+    Date.now = () => 17_250;
+
+    try {
+      dispatch({
+        event_type: "agent_turn_updated",
+        session_id: "session-1",
+        state: testAgentTurnProjection("completed"),
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.streaming, false);
+    assert.strictEqual(session.blocks[0].metadata.turn_started_at_ms, 5_000);
+    assert.strictEqual(session.blocks[0].metadata.turn_terminal_at_ms, 17_250);
+    assert.strictEqual(session.blocks[0].metadata.turn_outcome, "completed");
+    assert.strictEqual(state.agentTurnBySession.get("session-1")?.status, "completed");
+  });
+
+  it("keeps a stopped outcome closed when a later failed update arrives", () => {
+    const { state, dispatch } = createHarness([
+      {
+        block_id: "user-1",
+        event_type: "user_message",
+        content: "Stop after checking",
+        isComplete: true,
+        metadata: { turn_started_at_ms: 5_000 },
+      },
+    ]);
+    const originalNow = Date.now;
+
+    try {
+      Date.now = () => 8_000;
+      dispatch({
+        event_type: "session_stopped",
+        session_id: "session-1",
+        reason: "user_requested",
+      });
+
+      Date.now = () => 9_000;
+      dispatch({
+        event_type: "agent_turn_updated",
+        session_id: "session-1",
+        state: testAgentTurnProjection("failed"),
+      });
+    } finally {
+      Date.now = originalNow;
+    }
+
+    const session = state.sessions.get("session-1")!;
+    assert.strictEqual(session.status, "stopped");
+    assert.strictEqual(session.blocks[0].metadata.turn_terminal_at_ms, 8_000);
+    assert.strictEqual(session.blocks[0].metadata.turn_outcome, "stopped");
+    assert.strictEqual(state.agentTurnBySession.get("session-1")?.status, "failed");
+  });
+});
+
 function createHarness(blocks: SessionState["blocks"] = []) {
   const state = createDispatcherState([
     [
@@ -909,6 +979,25 @@ function testLoopTaskRecord(): Extract<StreamEvent, { event_type: "loop_runtime_
     completion_contract: {},
     created_at_ms: 1,
     updated_at_ms: 10,
+  };
+}
+
+function testAgentTurnProjection(
+  status: Extract<StreamEvent, { event_type: "agent_turn_updated" }>["state"]["status"],
+): Extract<StreamEvent, { event_type: "agent_turn_updated" }>["state"] {
+  return {
+    session_id: "session-1",
+    status,
+    step_label: status,
+    workspace_path: "/workspace",
+    compact_count: 0,
+    verification_status: "not_needed",
+    model_rounds: 1,
+    tool_call_count: 0,
+    failed_tool_count: status === "failed" ? 1 : 0,
+    estimated_context_tokens: null,
+    stop_reason: null,
+    compact_saved_tokens: 0,
   };
 }
 

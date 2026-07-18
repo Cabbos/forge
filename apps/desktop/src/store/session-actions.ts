@@ -1,5 +1,6 @@
 import { set as idbSet, del as idbDel } from "idb-keyval";
 import type { BlockState } from "../lib/protocol";
+import { startConversationTurnMetadata } from "../lib/conversationTurnTiming";
 import { getModelContextWindow } from "../lib/providers";
 import { hasTauriRuntime } from "../lib/tauri";
 import { workspaceFromPath } from "../lib/workspaces";
@@ -194,6 +195,7 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
       const sessions = new Map(get().sessions);
       const session = sessions.get(sessionId);
       if (!session) return;
+      const startedAtMs = Date.now();
       const blocks = [...session.blocks];
       const filtered = blocks.filter((block) => block.event_type !== "pending");
       const blockId = crypto.randomUUID();
@@ -202,7 +204,7 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
         event_type: "user_message",
         content: text,
         isComplete: true,
-        metadata: {},
+        metadata: startConversationTurnMetadata(startedAtMs),
       });
       filtered.push({
         block_id: "pending-" + crypto.randomUUID(),
@@ -211,7 +213,7 @@ export function createSessionActions(set: StoreSet, get: StoreGet): SessionActio
         isComplete: false,
         metadata: {},
       });
-      sessions.set(sessionId, { ...session, blocks: filtered, updatedAt: Date.now() });
+      sessions.set(sessionId, { ...session, blocks: filtered, updatedAt: startedAtMs });
       set({ sessions });
       persistBlocks(sessionId, filtered);
     },
