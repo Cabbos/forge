@@ -1,291 +1,264 @@
-# Forge Work Panel Quiet Native Redesign
+# Forge Work Panel Embedded Split Redesign
 
 Date: 2026-07-18
-Status: approved in design review
-Scope: Visual and interaction redesign of the desktop Work Panel
-Supersedes: the panel-frame, launcher, tab-chrome, and visual-direction sections of `2026-07-17-forge-work-panel-design.md`
+Status: approved in design discussion; pending written-spec review
+Scope: Desktop Work Panel structure, layout, and interaction
+Supersedes: the panel-frame, launcher, width, responsive, and interaction sections of `2026-07-17-forge-work-panel-design.md`
 
 ## Goal
 
-Redesign the existing Work Panel so it feels like a mature native desktop work surface rather than a collection of product cards. The panel should borrow the restraint of Codex without copying its dark theme: one adaptive surface, clear object tabs, quiet system colors, and no user-facing exposure of memory or experience internals.
+Make the Work Panel feel like a native part of the desktop workspace instead of a large drawer containing another card. The panel must support preview, file inspection, review, temporary terminal verification, and subtask inspection without competing with the conversation or exposing internal memory and experience systems.
 
-The functional model from the original Work Panel specification remains intact:
+This redesign intentionally does not change the theme, palette, typography direction, or other visual tokens already being adjusted elsewhere. It changes structure, hierarchy, spacing, and interaction only.
 
-- previews, files, review, terminal, and subtasks open only after explicit user action;
-- tabs represent concrete objects rather than product categories;
-- the panel restores the current task's latest working state;
-- terminal remains a temporary verification convenience;
-- internal experience, memory, and recall systems remain invisible here.
+## User Model
 
-## Design Read
+The user opens an adjacent workspace, chooses a concrete object, inspects or acts on it, and returns to the conversation without leaving the task.
 
-The product is a high-frequency AI desktop tool for users who need to inspect current work without leaving the conversation. The desired character is native, calm, precise, and content-first.
+The Work Panel follows these rules:
 
-Design dials:
+1. It is an embedded workspace column, not a floating Sheet or modal drawer.
+2. Tabs represent concrete objects, not categories.
+3. Preview, file, and task content opens only after explicit user action.
+4. Review shows the latest useful result instead of a version archive.
+5. Terminal is a temporary verification tool, not a terminal-history product.
+6. Memory, experience, continuity, and recall remain implementation details.
 
-- Design variance: 5/10
-- Motion intensity: 3/10
-- Visual density: 5/10
+## Selected Direction
 
-Selected visual direction: **Quiet Native**.
+The selected direction is **Native Embedded Split**.
 
-Rejected directions:
+Rejected alternatives:
 
-- **Warm Forge** was too close to a content product and would preserve the current beige, card-like character.
-- **Precision Tool** was too hard and developer-tool-specific, and would split the Work Panel visually from the rest of Forge.
+- **Overlay drawer:** preserves conversation width but makes preview and file inspection feel temporary and spatially unstable.
+- **Persistent tool dock:** speeds switching but pushes Forge toward an IDE-style interface and keeps utility chrome visible when it is not useful.
 
-## Product Principles
+## Workspace Structure
 
-1. **One surface, one object.** The Work Panel has one outer boundary. Opened content fills that surface instead of being nested inside another preview card.
-2. **Reveal chrome only when it is useful.** The empty launcher has no `工作面板` title bar. The object bar appears only when content is open.
-3. **State comes from tone, not weight.** Hover and active states move through adjacent surface colors. They do not use a solid black selection block, accent gradient, or heavy shadow.
-4. **Preserve the conversation.** The panel is a resizable adjacent workspace, not a modal overlay on ordinary desktop widths.
-5. **Open objects, not classifications.** The `+` action asks what the user wants to open. It never asks the user to choose a tab category first.
-6. **System theme is a complete design input.** Light and dark themes are each intentionally composed; dark mode is not a color inversion.
+At ordinary desktop widths, the workbench has this structure:
 
-## State Flow
+`Sidebar | Conversation | Resize Divider | Work Panel`
 
-The Work Panel has four visible states.
+The Work Panel:
+
+- touches the top, right, and bottom edges of the available workbench;
+- has no surrounding margin, large radius, outer shadow, or inset frame;
+- shares the same base plane as the conversation;
+- is separated from the conversation by one visually quiet divider;
+- pushes the conversation aside instead of covering it.
+
+The redesign removes the current nested-surface effect. There must not be a rounded application canvas containing a second rounded Work Panel sheet containing a third content card.
+
+## Width And Resize
+
+- Default opened width: `440px` when the available workbench can support it.
+- The user can drag the divider to resize the panel.
+- The visible divider may remain thin while its pointer hit area is wider and easy to acquire.
+- The last explicit width is remembered per task.
+- Resizing is immediate and does not use easing, spring motion, or delayed content reflow.
+- In split mode, the panel minimum is `360px` and the maximum is the lesser of `920px` or the width that leaves at least `400px` for the conversation.
+
+When the available workbench is narrower than `840px`, the Work Panel occupies the workbench instead of forcing two unusable columns. It remains flush to the workbench edges and does not revert to a floating card with a large surrounding frame.
+
+## Visible States
 
 ### 1. Closed
 
-The conversation uses the full workbench. The existing Work Panel trigger remains available in the window chrome. Closing the panel does not destroy its task-scoped tabs.
+The conversation uses the available workbench. Closing the Work Panel hides it without destroying the current task's tabs or remembered width.
 
 ### 2. Empty Launcher
 
-The first open for a task, or closing the final content tab, shows the launcher.
+The first open for a task, or closing the final object tab, shows a titleless launcher.
 
 The launcher:
 
-- has no title, description, search field, project summary, status card, or memory row;
-- places utility controls in the top-right corner;
-- centers five full-width action rows in this order: `审阅`, `终端`, `预览网页`, `打开文件`, `侧边任务`;
-- uses low-contrast filled rows with no border and no individual card shadow;
-- may show a keyboard hint on the right when a stable shortcut exists.
+- contains exactly five actions in this order: `审阅`, `终端`, `预览网页`, `打开文件`, `侧边任务`;
+- presents them as one compact vertical command list centered horizontally and positioned `48px` above the bottom edge;
+- limits the command list to `360px` or the panel width minus `48px`, whichever is smaller;
+- uses `48px` rows with `8px` gaps;
+- has no enclosing card, title, description, status summary, search field, or project archive content;
+- aligns icon, label, and optional shortcut on a consistent baseline;
+- has no default selected or highlighted row;
+- shows hover or keyboard focus only after actual user interaction.
 
-The launcher is an empty state, not a persistent `启动页` tab.
+The launcher occupies only the space needed by the commands. It does not stretch each action into a large full-panel settings row.
 
-### 3. Object Open
+The empty panel has no title bar. Expand and close remain aligned in the shared top control region; they do not float at unrelated coordinates.
 
-Selecting a launcher result replaces the launcher with the selected object. Review, web previews, files, terminal, and subtasks all use the same object-tab model.
+### 3. Choosing An Object
 
-The content fills the Adaptive Sheet interior. A web preview does not sit inside an additional rounded preview card. Object-specific controls are integrated into the object bar or a minimal context row.
+Selecting `审阅` or `终端` opens the object directly.
 
-### 4. New-Object Chooser
+Selecting `预览网页`, `打开文件`, or `侧边任务` replaces the launcher with an in-panel chooser. The launcher does not remain visible as an accordion and the chooser does not open as a second modal card.
 
-Clicking `+` opens a temporary chooser titled `打开新的…`. The chooser presents available object types and relevant recent/discovered targets. Selecting a target creates or focuses its object tab. Cancelling returns to the previously active object.
+After the user chooses a target:
 
-It does not ask for a tab classification, create an empty permanent tab, or automatically select a newly discovered artifact.
+- the chooser exits;
+- the object opens in the same panel;
+- the object receives or reuses a concrete tab;
+- focus moves to the opened object or its first useful control.
 
-## Return And Restore Rules
+Cancelling the chooser returns to the previous object when one exists, otherwise to the empty launcher.
 
-- Closing the final object tab returns to the empty launcher.
-- Closing the panel returns focus to the conversation and preserves existing tabs.
-- Reopening the panel restores the last active tab when valid; otherwise it shows the launcher.
-- Switching tasks restores that task's independent tab state and last width.
-- An invalid restored object remains a concise unavailable tab with retry or close actions; it does not reset the whole panel.
+### 4. Object Open
 
-## Spatial Model
+The active object fills all space below the object bar. Preview, file, review, terminal, and subtask adapters must not add another outer card, large inset, or redundant header.
 
-The panel opens from the right as a floating sheet within the application workbench. It is visually elevated from the application canvas but participates in layout rather than covering the conversation at ordinary desktop widths.
+### 5. Unavailable Object
 
-### Width
+An unavailable preview, file, or task remains local to its tab. It shows a concise reason and relevant `重试`, `返回`, or `关闭` actions in the content area. It does not reset the entire panel or open another dialog.
 
-- Default: 40% of the available workbench.
-- Normal resize range: 34% to 62%.
-- Absolute minimum: 360px.
-- Absolute maximum: 920px.
-- The last explicit width is remembered per task.
-- Double-clicking the resize boundary returns to 40%.
-- The resize handle receives a keyboard-accessible alternative.
+## Object Bar And Tabs
 
-### Responsive Behavior
+Opened content uses one compact object bar.
 
-- At widths below 900px, the panel holds at 360px instead of continuing to scale proportionally.
-- Below 720px, the panel becomes a full-height temporary overlay with an explicit return control.
-- The responsive overlay is a fallback for insufficient space, not the normal desktop presentation.
+- Tab labels are concrete object names such as `localhost:64059`, `README.md`, or `审阅 · 3 个文件`.
+- Tabs do not display product categories.
+- Opening an already-open object focuses and updates the existing tab instead of duplicating it.
+- Review reuses its tab and shows the latest result; it does not create version tabs.
+- `+` opens a chooser containing the same five actions as the empty launcher.
+- Closing the final tab returns to the empty launcher.
+- Closing the panel hides it while preserving its remaining tabs.
+- Reopening the panel restores the last valid active object for that task.
 
-### Outer Shape
+Expand, close, add, overflow, and object-specific actions belong to the same compact top control system. Controls must not float independently in empty space.
 
-- Outer sheet radius: 12px.
-- Launcher row and selected-tab radius: 8px.
-- A single restrained shadow separates the sheet from the workbench.
-- No internal content adapter adds a second outer shadow or rounded container.
+## Content Rules
 
-## Object Bar
+### Review
 
-The selected design uses a fused object bar instead of a tab row plus a full secondary toolbar.
+- Shows the current change set and latest review result only.
+- Sends selected feedback back into the active conversation.
+- Does not expose review-version history or internal reasoning archives.
 
-- Tabs, close affordances, `+`, overflow, and primary object actions share one compact horizontal band.
-- The active tab uses a neighboring surface tone, not an underline plus filled pill plus bold type.
-- A URL or file path may appear in one shallow context row when it materially helps orientation.
-- Web actions such as refresh and external open remain at the right edge.
-- File and review adapters substitute only their relevant actions; they do not introduce a new global header.
-- Tab names remain object names such as `localhost:1420`, `README.md`, or `审阅 · 8 个文件`.
+### Terminal
 
-### Overflow
+- Opens as one temporary task-scoped verification surface.
+- Does not expose Forge execution logs or internal terminal history.
+- Closing the terminal tab ends the temporary session and removes its transient UI state.
 
-- Tabs scroll horizontally when needed.
-- The right side always preserves an overflow menu and `+` action.
-- Labels truncate only after a useful readable width and never collapse into unidentified icons.
-- Reopening an already-open object focuses its existing tab.
+### Preview
 
-## Visual System
+- Opens only after the user selects `预览网页` and chooses a target.
+- Fills the available content area without a preview card wrapper.
+- Reuses an existing tab for the same target.
 
-### Light Theme
+### Files
 
-- Workbench canvas: cool neutral gray, visually behind the panel.
-- Sheet: warm near-white rather than pure white.
-- Launcher rows and inactive controls: low-contrast neutral fill.
-- Hover and active: one and two tonal steps stronger than rest.
-- Primary text: near-black charcoal.
-- Secondary text and icons: middle neutral gray with accessible contrast.
+- Opens only after the user selects `打开文件` and chooses a file.
+- Remains read-oriented and does not become a general code editor.
+- Fills the available content area without redundant outer padding.
 
-### Dark Theme
+### Subtasks
 
-- Workbench canvas: deep charcoal, not pure black.
-- Sheet: a distinct elevated charcoal layer.
-- Launcher rows: a quiet lighter charcoal.
-- Hover and active: tonal lightening rather than a white outline or saturated accent.
-- Primary text: soft off-white.
-- Secondary text and icons: restrained warm gray.
-
-### Typography
-
-- Use the desktop system UI font for labels and navigation.
-- Base interface text: 13px.
-- Secondary context and shortcut text: 12px where space allows.
-- Monospace is reserved for commands, terminal output, paths, URLs, and code.
-- Selection does not rely on large weight changes.
-
-### Iconography
-
-- Use the existing icon family consistently at a shared optical size.
-- Icons are functional markers, not illustrated badges.
-- Do not mix emoji, boxed icons, filled badges, and line icons in the same launcher.
-
-### Prohibited Treatments
-
-- no gradient decoration;
-- no glassmorphism or backdrop-blur panel styling;
-- no bordered card wall;
-- no solid black selected launcher row;
-- no large title or explanatory subtitle inside the launcher;
-- no decorative status pills where plain text is sufficient;
-- no user-facing `经验`, `记忆`, or internal recall labels.
+- Shows the current useful state of the selected subtask.
+- Does not expose orchestration internals or require the user to manage agent architecture.
 
 ## Interaction And Motion
 
-- Panel enter/exit: 160–180ms opacity and horizontal translation.
-- Hover and active tone changes: 120–140ms.
-- Tab content change: short cross-fade only when it does not delay interaction.
-- Resizing: immediate, with no easing or spring behavior.
-- No scale-on-hover, bouncing controls, or ambient animation.
-- `prefers-reduced-motion` removes translation and nonessential fades.
+- Opening and closing the panel uses a `160ms` ease-out width transition shared with the conversation reflow.
+- Object changes may use a `120ms` opacity transition when it does not delay interaction.
+- Launcher actions do not scale, bounce, spring, or simulate thick button presses.
+- A click on an action begins one clear state transition; it must not cause stacked menus, nested cards, or multiple competing focus targets.
+- Loading remains inside the content region and does not flash the whole Work Panel blank.
+- Restoring a task keeps the layout stable and does not visibly jump through default and saved widths.
+- `prefers-reduced-motion` removes nonessential transitions.
 
-Keyboard behavior:
+## Keyboard And Accessibility
 
-- launcher actions and object tabs are reachable in a logical sequence;
-- the tab strip uses standard roving focus and exposes selected state;
-- `Escape` closes only the temporary new-object chooser or another local transient surface;
-- closing the panel returns focus to the Work Panel trigger;
-- focus can move explicitly between the conversation and the panel without cycling through hidden controls.
+- The launcher, tabs, add, close, expand, overflow, and object controls are fully keyboard reachable.
+- Launcher focus follows logical vertical movement and exposes a visible focus state.
+- No launcher row appears selected before pointer or keyboard interaction.
+- The tab list exposes the active tab and uses predictable keyboard navigation.
+- `Escape` closes only the current transient chooser or menu; it does not unexpectedly close the whole panel.
+- Closing the panel returns focus to its trigger.
+- The resize divider has an accessible keyboard alternative.
+- Visible control targets remain usable in dense desktop chrome.
+- Theme contrast remains governed by the existing visual system and is outside this structural redesign.
 
-## Content Adapter Constraints
+## State And Data Flow
 
-The redesign changes presentation, not authority or scope.
+The existing task-scoped Work Panel state remains the source of truth:
 
-- **Review:** shows the current change set only and sends selected feedback into the active conversation.
-- **Terminal:** remains one temporary task-scoped command surface for ad hoc verification. It does not show Forge's internal terminal history.
-- **Preview:** opens only after explicit selection and shows the latest result rather than artifact versions.
-- **Files:** remains read-oriented and does not become a general editor.
-- **Subtasks:** shows the selected subtask's current useful state without exposing orchestration internals.
+1. The panel trigger reveals the current task's stored panel state.
+2. No tabs produces the empty launcher.
+3. An action either opens an immediate object or enters an in-panel chooser.
+4. A completed choice creates or focuses a concrete object tab.
+5. The active tab determines the content adapter.
+6. Tab, active object, open/closed state, and explicit width changes persist at task scope.
+7. Invalid restored objects remain isolated unavailable tabs.
 
-Each adapter must render against the shared sheet and object-bar contract. Adapter failures stay local to their tab.
-
-## Accessibility
-
-- All interactive targets have accessible names and visible focus treatment.
-- Target sizes remain at least 32px in dense chrome and 40px for launcher rows.
-- Color is not the only indicator for selected, unavailable, running, or failed states.
-- Light and dark theme text and controls meet WCAG AA contrast.
-- Resize, maximize, close, overflow, and external-open controls are keyboard operable.
-
-## Implementation Boundaries
-
-The existing Work Panel state and adapter architecture should remain unless implementation discovery finds a concrete blocker. The redesign should be expressed primarily through:
-
-- the panel shell and resize layout;
-- the empty launcher;
-- the fused object bar and overflow behavior;
-- shared Work Panel design tokens;
-- adapter chrome cleanup;
-- responsive and theme styles.
-
-The implementation must not reintroduce Project Archive UI or expose experience/memory management. It must preserve current backend authority checks and task-scoped restoration.
-
-Before editing any indexed symbol, run GitNexus upstream impact analysis and report the risk. Update user-visible documentation and desktop acceptance coverage as required by the repository instructions.
+The implementation should preserve the existing focused component boundaries for layout, shell, launcher, object bar, persistence, and content adapters unless discovery finds a concrete blocker.
 
 ## Verification
 
 ### Visual Acceptance
 
-Verify in both system themes at representative panel widths:
+Capture and compare the implemented Work Panel at the same viewport and state as the supplied reference and current screenshot.
 
-- 360px minimum;
-- 40% default on a standard desktop window;
-- 62% expanded;
-- responsive overlay below 720px.
+Verify:
 
-Capture the empty launcher, one web preview, one file, review, temporary terminal, and new-object chooser. Confirm that there is never more than one outer content boundary.
+- no surrounding Work Panel card or oversized frame;
+- one divider between conversation and Work Panel;
+- `440px` default panel width where the workbench supports it;
+- compact lower launcher without an enclosing card;
+- no default highlighted launcher row;
+- object content fills the panel below one compact object bar;
+- narrow-window fallback remains flush to the workbench edges;
+- existing user-adjusted theme and color treatment is unchanged.
 
 ### Interaction Acceptance
 
-1. First open shows the titleless launcher.
-2. No preview or file opens without explicit user selection.
-3. `+` asks what to open and does not ask for a tab category.
-4. Selecting an existing object focuses its tab instead of duplicating it.
-5. Closing the final tab returns to the launcher.
-6. Closing and reopening restores remaining task-scoped tabs and width.
-7. Resize, overflow, keyboard focus, and responsive fallback work at their boundaries.
-8. Theme changes update the complete visual system without losing contrast.
-9. Terminal remains a temporary command view and never exposes Forge execution logs.
-10. `Project Archive`, `经验`, and internal memory-management UI remain absent.
+1. First open shows the five-action titleless launcher.
+2. The Work Panel pushes the conversation aside at ordinary desktop widths.
+3. The divider resizes the panel and the task remembers the explicit width.
+4. `审阅` and `终端` open directly.
+5. `预览网页`, `打开文件`, and `侧边任务` replace the launcher with an in-panel chooser.
+6. A completed choice opens or focuses one concrete object tab.
+7. The same object does not create duplicate tabs or review versions.
+8. Closing the final tab returns to the launcher.
+9. Closing and reopening the Work Panel restores remaining task-scoped tabs and width.
+10. Loading, unavailable, and retry states remain local to the active content area.
+11. Keyboard navigation and focus restoration work without a default launcher highlight.
+12. Terminal remains temporary and exposes no internal execution history.
 
 ### Regression Coverage
 
-- pure tab-state tests remain green;
-- component and accessibility tests cover the titleless launcher and object bar;
-- desktop acceptance covers explicit preview opening, restoration, and responsive layout;
-- desktop build, TypeScript checks, Rust tests, clippy, and acceptance dry-run remain green.
+- Extend desktop acceptance coverage for the embedded split, default width, resize persistence, titleless launcher, chooser replacement, and content fill.
+- Keep existing tab-state, restoration, adapter, and accessibility tests green.
+- Verify the representative normal, expanded, and narrow viewport states.
+- Run the desktop build and the repository acceptance dry-run before handoff.
 
 ## Documentation Impact
 
-Because this is a user-visible runtime change, implementation must keep these surfaces aligned:
+Implementation of this user-visible change must keep these surfaces aligned:
 
 - `README.md`
 - `apps/desktop/README.md`
 - `CHANGELOG.md`
 - `apps/desktop/e2e/acceptance.spec.ts`
-- `scripts/acceptance.sh --dry-run` descriptions when coverage changes
+- `scripts/acceptance.sh --dry-run` descriptions when advertised coverage changes
 
 ## Out Of Scope
 
-- changing backend memory, continuity, Wiki, or recall systems;
+- changing the current theme, palette, typography direction, or design tokens;
+- backend memory, experience, continuity, Wiki, or recall changes;
 - artifact version history or multi-version comparison;
 - multiple named terminal sessions;
 - a full embedded code editor;
 - arbitrary IDE docking and split layouts;
-- automatic preview opening or active-tab switching;
-- a new subtask scheduler or orchestration authority.
+- automatic preview or file opening;
+- user-facing project experience or memory management.
 
 ## Approved Decisions
 
-- Theme: complete light and dark designs following the system.
-- Surface: Floating Sheet with Adaptive Sheet content behavior.
-- Content chrome: fused object bar.
-- Width: resizable work area, default 40%, range 34%–62%.
-- Empty state: titleless launcher.
-- Launcher rows: quiet tonal fills with no borders or individual shadows.
-- Visual direction: Quiet Native.
-- State flow, responsive behavior, and visual system: approved in review on 2026-07-18.
+- Structure: native embedded split that pushes the conversation aside.
+- Outer frame: none; one divider only.
+- Default width: `440px`, clamped only when the workbench cannot preserve the documented split bounds.
+- Resize: draggable and remembered per task.
+- Empty state: titleless compact five-row launcher, `48px` above the bottom edge.
+- Action transition: launcher exits and the same panel handles selection and content.
+- Tabs: concrete objects, no categories, no duplicate object or review-version tabs.
+- Terminal: temporary verification only.
+- Responsive fallback: flush to the workbench, never a floating framed card.
+- Theme and color treatment: preserved, not part of this redesign.
