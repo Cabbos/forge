@@ -1,6 +1,93 @@
 import { expect, test } from "@playwright/test";
 import { setup } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
+import type { AgentTurnProjection } from "../src/lib/protocol";
+
+function turnProjection(
+  sessionId: string,
+  status: AgentTurnProjection["status"] = "completed",
+  overrides: Partial<AgentTurnProjection> = {},
+): AgentTurnProjection {
+  return {
+    session_id: sessionId,
+    status,
+    step_label: status,
+    workspace_path: "/repo/private",
+    compact_count: 0,
+    verification_status: status === "failed" ? "failed" : "passed",
+    model_rounds: 1,
+    tool_call_count: 0,
+    failed_tool_count: status === "failed" ? 1 : 0,
+    compact_saved_tokens: 0,
+    ...overrides,
+  };
+}
+
+async function waitForCollapsibleOpen(
+  trigger: import("@playwright/test").Locator,
+  panel: import("@playwright/test").Locator,
+) {
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(panel).toHaveAttribute("data-open", "");
+  await expect(panel).toBeVisible();
+  await expect.poll(async () => panel.evaluate((element) => !element
+    .getAnimations({ subtree: true })
+    .some((animation) => animation.playState === "pending" || animation.playState === "running"))).toBe(true);
+}
+
+async function waitForPointerTarget(target: import("@playwright/test").Locator) {
+  await expect(target).toBeVisible();
+  await target.scrollIntoViewIfNeeded();
+  await expect.poll(async () => target.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
+    return getComputedStyle(element).pointerEvents !== "none"
+      && Boolean(hit && (hit === element || element.contains(hit)));
+  })).toBe(true);
+}
+
+async function openProcessDisclosure(disclosure: import("@playwright/test").Locator) {
+  const trigger = disclosure.getByTestId("conversation-process-trigger");
+  await expect(trigger).toBeVisible();
+  if (await trigger.getAttribute("aria-expanded") !== "true") {
+    await waitForPointerTarget(trigger);
+    await trigger.click();
+  }
+  await waitForCollapsibleOpen(
+    trigger,
+    disclosure.locator(":scope > [data-slot='collapsible-content']"),
+  );
+  return disclosure;
+}
+
+async function revealProcessDetails(disclosure: import("@playwright/test").Locator) {
+  await openProcessDisclosure(disclosure);
+  const evidenceTrigger = disclosure.getByTestId("conversation-evidence-trigger");
+  if (await evidenceTrigger.count()) {
+    await waitForPointerTarget(evidenceTrigger);
+    await evidenceTrigger.click();
+    const evidenceRoot = evidenceTrigger.locator("..");
+    await waitForCollapsibleOpen(
+      evidenceTrigger,
+      evidenceRoot.locator(":scope > [data-slot='collapsible-content']"),
+    );
+  }
+  const processItems = disclosure.getByTestId("conversation-process-item");
+  for (let index = 0, count = await processItems.count(); index < count; index += 1) {
+    const processItem = processItems.nth(index);
+    const stageRoot = processItem.locator(":scope > [data-slot='collapsible']");
+    const stageTrigger = stageRoot.locator(":scope > [data-slot='collapsible-trigger']");
+    if (!await stageTrigger.count()) continue;
+    await processItem.hover();
+    await waitForPointerTarget(stageTrigger);
+    await stageTrigger.click();
+    await waitForCollapsibleOpen(
+      stageTrigger,
+      stageRoot.locator(":scope > [data-slot='collapsible-content']"),
+    );
+  }
+  return disclosure;
+}
 
 test("shows one safe live progress row directly below the user message", async ({ page }) => {
   const sessionId = "result-first-live-progress";
@@ -27,8 +114,10 @@ test("shows one safe live progress row directly below the user message", async (
   const turn = page.getByTestId("conversation-turn").last();
   const progress = turn.getByTestId("conversation-progress");
   await expect(progress).toHaveCount(1);
-  await expect(progress).toHaveText("正在查看 AppShell.tsx");
+  await expect(progress).toHaveText("正在查找相关内容");
+  await expect(progress).toHaveAttribute("data-progress-id", "discovering");
   await expect(progress).toHaveAttribute("role", "status");
+  await expect(progress).not.toContainText("AppShell.tsx");
 
   const followsUser = await turn.evaluate((node) => {
     const user = node.querySelector("[data-testid='user-message']");
@@ -108,6 +197,11 @@ test("keeps completed process evidence out of the primary reading path", async (
     { event_type: "text_start", session_id: sessionId, block_id: "answer" },
     { event_type: "text_chunk", session_id: sessionId, block_id: "answer", content: "已经完成并验证通过。" },
     { event_type: "text_end", session_id: sessionId, block_id: "answer" },
+    {
+      event_type: "agent_turn_updated",
+      session_id: sessionId,
+      state: turnProjection(sessionId, "completed", { tool_call_count: 2 }),
+    },
   ], 1);
 
   const turn = page.getByTestId("conversation-turn").last();
@@ -122,46 +216,40 @@ test("keeps completed process evidence out of the primary reading path", async (
   await expect(turn.getByTestId("provider-usage-card")).toHaveCount(0);
   await expect(turn.getByTestId("delivery-summary-grid")).toHaveCount(0);
   await expect(turn.getByTestId("message-block")).toHaveCount(2);
+  await expect(turn).not.toContainText("private reasoning");
 
   const disclosure = turn.getByTestId("conversation-process-disclosure");
   const trigger = disclosure.getByTestId("conversation-process-trigger");
-  await expect(trigger).toHaveAccessibleName("查看过程");
-  await expect(trigger).toContainText("✓ 已完成 · 3 项操作");
+  await expect(trigger).toHaveAccessibleName(
+    /^已完成 · (?:<1 秒|\d+ 秒) · 3 项操作，查看运行过程$/,
+  );
   await expect(trigger).toHaveAttribute("aria-expanded", "false");
   await expect(disclosure.getByTestId("conversation-process-timeline")).toHaveCount(0);
-  const nextAction = disclosure.getByTestId("conversation-next-action");
-  await expect(nextAction).toHaveCount(1);
-  await expect(nextAction).toHaveText("检查这版");
-  await nextAction.click();
-  await expect(page.locator("textarea")).toHaveValue("检查这版");
+  await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(0);
+  await expect(disclosure.getByTestId("conversation-next-action")).toHaveCount(0);
+  await expect(turn.getByRole("button", { name: /工作面板|打开.*文件/ })).toHaveCount(0);
 
-  await trigger.press("Enter");
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(trigger).toHaveAccessibleName("收起过程");
-  await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(4);
-  await expect(disclosure.getByText("已理解任务", { exact: true })).toBeVisible();
-  await expect(disclosure.getByText("已查看 AppShell.tsx", { exact: true })).toBeVisible();
-  await expect(disclosure.getByText("已验证构建", { exact: true })).toBeVisible();
-  await expect(disclosure.getByText("已更新 AppShell.tsx", { exact: true })).toBeVisible();
-  await expect(disclosure.getByTestId("provider-usage-card")).toHaveCount(0);
-  await expect(disclosure.getByTestId("delivery-summary-grid")).toHaveCount(0);
-  await expect(disclosure.getByTestId("conversation-delivery-metadata")).toContainText("构建通过 · 检查点已就绪");
+  await openProcessDisclosure(disclosure);
+  await expect(trigger).toHaveAccessibleName(
+    /^已完成 · (?:<1 秒|\d+ 秒) · 3 项操作，收起运行过程$/,
+  );
+  await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(2);
+  await expect(disclosure.getByText("分析需求", { exact: true })).toBeVisible();
+  await expect(disclosure.getByText("验证结果", { exact: true })).toBeVisible();
+  await expect(disclosure).not.toContainText("private reasoning");
+  await expect(disclosure.getByTestId("tool-card-trigger")).toHaveCount(0);
+  await expect(disclosure.getByTestId("shell-card-trigger")).toHaveCount(0);
+  await expect(disclosure.getByTestId("diff-card")).toHaveCount(0);
 
-  const operation = disclosure.getByTestId("conversation-process-item").filter({ hasText: "已查看 AppShell.tsx" });
-  const openTarget = operation.getByRole("button", { name: "在工作面板打开 AppShell.tsx" });
-  await expect(openTarget).toBeVisible();
-  await openTarget.click();
-  await expect(page.getByRole("complementary", { name: "工作面板" })).toBeVisible();
-  await expect(page.getByTestId("work-panel-file-view")).toHaveAccessibleName(/AppShell\.tsx$/);
-  await expect(page.getByRole("tab", { name: "AppShell.tsx" })).toHaveCount(1);
-  await openTarget.click();
-  await expect(page.getByRole("tab", { name: "AppShell.tsx" })).toHaveCount(1);
-
-  await operation.getByRole("button", { name: "查看 已查看 AppShell.tsx 详情" }).press("Enter");
-  await expect(operation.getByTestId("tool-card-trigger")).toHaveCount(1);
-
-  await disclosure.getByRole("button", { name: "查看模型用量" }).click();
+  await revealProcessDetails(disclosure);
+  await expect(disclosure.getByTestId("tool-card-trigger")).toContainText("AppShell.tsx");
+  await expect(disclosure.getByTestId("shell-card-trigger")).toContainText("npm run build");
+  await expect(disclosure.getByTestId("diff-card")).toHaveCount(1);
   await expect(disclosure.getByTestId("provider-usage-card")).toContainText("deepseek-v4");
+  await expect(disclosure.getByTestId("conversation-delivery-metadata")).toContainText(
+    "构建通过 · 检查点已就绪",
+  );
+  await expect(disclosure).not.toContainText("private reasoning");
 });
 
 test("shows confirmations only while backend authority says they are unresolved", async ({ page }) => {
@@ -199,12 +287,33 @@ test("shows confirmations only while backend authority says they are unresolved"
       approved: true,
       responded_at_ms: Date.now(),
     },
+    { event_type: "text_start", session_id: sessionId, block_id: "confirmation-answer" },
+    {
+      event_type: "text_chunk",
+      session_id: sessionId,
+      block_id: "confirmation-answer",
+      content: "设置已安全更新。",
+    },
+    { event_type: "text_end", session_id: sessionId, block_id: "confirmation-answer" },
+    {
+      event_type: "agent_turn_updated",
+      session_id: sessionId,
+      state: turnProjection(sessionId),
+    },
   ], 1);
 
   await expect(turn.getByText("允许修改设置？", { exact: true })).toHaveCount(0);
+  await expect(turn.getByTestId("assistant-message")).toContainText("设置已安全更新");
+  const disclosure = turn.getByTestId("conversation-process-disclosure");
+  await expect(disclosure.getByTestId("conversation-process-trigger")).toHaveAccessibleName(
+    /^已完成 · (?:<1 秒|\d+ 秒) · 1 项操作，查看运行过程$/,
+  );
+  await openProcessDisclosure(disclosure);
+  await expect(disclosure.getByText("确认已处理", { exact: true })).toBeVisible();
+  await expect(disclosure).not.toContainText("允许修改设置？");
 });
 
-test("promotes a terminal error when no answer can be produced", async ({ page }) => {
+test("keeps a partial result and terminal error visible together", async ({ page }) => {
   const sessionId = "result-first-terminal-error";
   await setup(page);
   await page.addInitScript((id) => {
@@ -217,6 +326,14 @@ test("promotes a terminal error when no answer can be produced", async ({ page }
   await page.locator("textarea").press("Enter");
 
   await simulateStream(page, sessionId, [
+    { event_type: "text_start", session_id: sessionId, block_id: "partial-result" },
+    {
+      event_type: "text_chunk",
+      session_id: sessionId,
+      block_id: "partial-result",
+      content: "已经完成配置检查，但构建尚未完成。",
+    },
+    { event_type: "text_end", session_id: sessionId, block_id: "partial-result" },
     {
       event_type: "error",
       session_id: sessionId,
@@ -224,10 +341,21 @@ test("promotes a terminal error when no answer can be produced", async ({ page }
       message: "构建没有完成，请检查配置。",
       code: "build_failed",
     },
+    {
+      event_type: "agent_turn_updated",
+      session_id: sessionId,
+      state: turnProjection(sessionId, "failed"),
+    },
   ], 1);
 
   const turn = page.getByTestId("conversation-turn").last();
+  await expect(turn.getByTestId("assistant-message")).toContainText("已经完成配置检查");
   await expect(turn.getByTestId("error-card-body")).toContainText("构建没有完成");
-  await expect(turn.getByTestId("assistant-message")).toHaveCount(0);
   await expect(turn.getByTestId("conversation-progress")).toHaveCount(0);
+  const disclosure = turn.getByTestId("conversation-process-disclosure");
+  await expect(disclosure.getByTestId("conversation-process-trigger")).toHaveAccessibleName(
+    /^未完成 · (?:<1 秒|\d+ 秒)，查看运行过程$/,
+  );
+  await openProcessDisclosure(disclosure);
+  await expect(disclosure.getByText("处理异常", { exact: true })).toBeVisible();
 });
