@@ -12,7 +12,7 @@ async function resolveCssColor(locator: import("@playwright/test").Locator, vari
     return resolved;
   }, variable);
 }
-import type { AgentA2ATaskProjection } from "../src/lib/protocol";
+import type { AgentA2ATaskProjection, AgentTurnProjection } from "../src/lib/protocol";
 
 function workPanelSubtask(
   task: Pick<AgentA2ATaskProjection, "task_id" | "title" | "latest_message"> &
@@ -57,6 +57,21 @@ function workPanelSubtask(
     changed_files: [],
     test_report_excerpt: null,
     ...task,
+  };
+}
+
+function completedTurnProjection(sessionId: string): AgentTurnProjection {
+  return {
+    session_id: sessionId,
+    status: "completed",
+    step_label: "completed",
+    workspace_path: "/repo/private",
+    compact_count: 0,
+    verification_status: "passed",
+    model_rounds: 1,
+    tool_call_count: 1,
+    failed_tool_count: 0,
+    compact_saved_tokens: 0,
   };
 }
 
@@ -108,6 +123,72 @@ test.describe("Phase 7 acceptance surfaces", () => {
 
     await page.getByRole("button", { name: "设置" }).click();
     await expect(page.getByRole("dialog")).toBeVisible();
+  });
+
+  test("结果优先对话会把实时阶段收束为可展开的完成摘要", async ({ page }) => {
+    const sessionId = "acceptance-result-first-progress";
+    await page.evaluate((id) => {
+      // @ts-expect-error acceptance mock
+      window.__mockSessionId = id;
+    }, sessionId);
+
+    await page.getByRole("button", { name: "新对话", exact: true }).click();
+    await page.waitForFunction(() => {
+      // @ts-expect-error Tauri listener registry installed by setup()
+      return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+    });
+    await page.locator("textarea").fill("整理工作区");
+    await page.locator("textarea").press("Enter");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "acceptance-result-first-read",
+        tool_name: "read_file",
+        tool_input: { path: "/repo/private/AppShell.tsx", token: "acceptance-secret" },
+      },
+    ], 1);
+
+    const turn = page.getByTestId("conversation-turn").last();
+    const progress = turn.getByTestId("conversation-progress");
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在查找相关内容");
+    await expect(turn).not.toContainText("AppShell.tsx");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "acceptance-result-first-read",
+        result: "read complete",
+        is_error: false,
+        duration_ms: 24,
+      },
+      { event_type: "text_start", session_id: sessionId, block_id: "acceptance-result-first-answer" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "acceptance-result-first-answer",
+        content: "工作区已经整理完成。",
+      },
+      { event_type: "text_end", session_id: sessionId, block_id: "acceptance-result-first-answer" },
+      {
+        event_type: "agent_turn_updated",
+        session_id: sessionId,
+        state: completedTurnProjection(sessionId),
+      },
+    ], 1);
+
+    await expect(progress).toHaveCount(0);
+    const trigger = turn.getByTestId("conversation-process-trigger");
+    await expect(trigger).toContainText(/已完成 · (?:<1 秒|\d+ 秒) · 1 项操作/);
+    await trigger.click();
+    await expect(turn.getByTestId("conversation-process-item")).toHaveCount(1);
+    await expect(turn.getByTestId("conversation-process-item")).toContainText("分析需求");
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn.getByTestId("conversation-process-details")).toHaveCount(0);
+    await expect(turn.getByRole("button", { name: /^查看.*运行证据$/ })).toHaveCount(1);
   });
 
   test("主题切换会同步工作台与新对话", async ({ page }) => {

@@ -2,6 +2,77 @@ import { test, expect } from "@playwright/test";
 import { resolve } from "node:path";
 import { setup } from "./fixtures/app";
 import { simulateStream, fullConversation } from "./mock-ipc";
+import type { AgentTurnProjection } from "../src/lib/protocol";
+
+function turnProjection(
+  sessionId: string,
+  status: AgentTurnProjection["status"] = "completed",
+  overrides: Partial<AgentTurnProjection> = {},
+): AgentTurnProjection {
+  return {
+    session_id: sessionId,
+    status,
+    step_label: status,
+    workspace_path: "/repo/private",
+    compact_count: 0,
+    verification_status: status === "failed" ? "failed" : "passed",
+    model_rounds: 1,
+    tool_call_count: 0,
+    failed_tool_count: status === "failed" ? 1 : 0,
+    compact_saved_tokens: 0,
+    ...overrides,
+  };
+}
+
+async function startConversationTurn(
+  page: import("@playwright/test").Page,
+  sessionId: string,
+  prompt: string,
+) {
+  await page.addInitScript((id) => {
+    // @ts-expect-error Forge E2E fixture session override
+    window.__mockSessionId = id;
+  }, sessionId);
+  await page.goto("http://localhost:1420");
+  await page.getByRole("button", { name: "新对话", exact: true }).click();
+  await page.waitForFunction(() => {
+    // @ts-expect-error Tauri listener registry installed by setup()
+    return (window.__tauriListeners?.["session-output"]?.length ?? 0) > 0;
+  });
+  await page.locator("textarea").fill(prompt);
+  await page.locator("textarea").press("Enter");
+  return page.getByTestId("conversation-turn").last();
+}
+
+function resultFirstConversation(sessionId: string): ReturnType<typeof fullConversation> {
+  const events = fullConversation(sessionId);
+  const finalTextIndex = events.map((event) => event.event_type).lastIndexOf("text_start");
+  const verificationEvents: ReturnType<typeof fullConversation> = [
+    {
+      event_type: "shell_start",
+      session_id: sessionId,
+      block_id: "result-first-verification",
+      command: "npm test",
+    },
+    {
+      event_type: "shell_output",
+      session_id: sessionId,
+      block_id: "result-first-verification",
+      content: "tests passed",
+    },
+    {
+      event_type: "shell_end",
+      session_id: sessionId,
+      block_id: "result-first-verification",
+      exit_code: 0,
+    },
+  ];
+  return [
+    ...events.slice(0, finalTextIndex),
+    ...verificationEvents,
+    ...events.slice(finalTextIndex),
+  ];
+}
 
 async function completeTurn(
   page: import("@playwright/test").Page,
@@ -26,9 +97,15 @@ async function openLatestProcess(page: import("@playwright/test").Page) {
 
 async function revealLatestProcessDetails(page: import("@playwright/test").Page) {
   const disclosure = await openLatestProcess(page);
-  const detailTriggers = disclosure.getByRole("button", { name: /^查看 .* 详情$/ });
-  for (let remaining = await detailTriggers.count(); remaining > 0; remaining -= 1) {
-    await detailTriggers.first().click();
+  const evidenceTrigger = disclosure.getByTestId("conversation-evidence-trigger");
+  if (await evidenceTrigger.count()) {
+    await evidenceTrigger.click();
+  }
+  const stageEvidenceTriggers = disclosure.getByRole("button", { name: /^查看.*运行证据$/ });
+  const stageEvidenceCount = await stageEvidenceTriggers.count();
+  for (let index = 0; index < stageEvidenceCount; index += 1) {
+    await stageEvidenceTriggers.first().focus();
+    await stageEvidenceTriggers.first().press("Enter");
   }
   return disclosure;
 }
@@ -194,7 +271,7 @@ test.beforeEach(async ({ page }) => {
     await completeTurn(page, sessionId, "第二轮完成。");
 
     await expect(page.getByTestId("conversation-process-disclosure")).toHaveCount(2);
-    await expect(page.getByTestId("conversation-next-action")).toHaveCount(2);
+    await expect(page.getByTestId("conversation-next-action")).toHaveCount(0);
     await expect(page.getByTestId("delivery-summary-grid")).toHaveCount(0);
   });
 
@@ -235,7 +312,7 @@ test.beforeEach(async ({ page }) => {
     await completeTurn(page, sessionId, "第一轮用量已记录。");
     const firstDisclosure = await openLatestProcess(page);
     await expect(page.getByTestId("provider-usage-card")).toHaveCount(0);
-    await firstDisclosure.getByRole("button", { name: "查看模型用量" }).click();
+    await firstDisclosure.getByTestId("conversation-evidence-trigger").click();
     const usageCard = firstDisclosure.getByTestId("provider-usage-card");
     await expect(usageCard).toBeVisible();
     await expect(usageCard).toContainText("deepseek-v4-flash[1m]");
@@ -270,7 +347,7 @@ test.beforeEach(async ({ page }) => {
     await completeTurn(page, sessionId, "第二轮用量已记录。");
 
     const secondDisclosure = await openLatestProcess(page);
-    await secondDisclosure.getByRole("button", { name: "查看模型用量" }).click();
+    await secondDisclosure.getByTestId("conversation-evidence-trigger").click();
     const unknownUsageCard = secondDisclosure.getByTestId("provider-usage-card");
     await expect(unknownUsageCard).toContainText("输入 unknown");
     await expect(unknownUsageCard).toContainText("输出 unknown");
@@ -295,7 +372,7 @@ test.beforeEach(async ({ page }) => {
     });
 
     // Simulate a full conversation
-    const events = fullConversation(sessionId);
+    const events = resultFirstConversation(sessionId);
     await simulateStream(page, sessionId, events, 30);
 
     await expect(page.getByTestId("thinking-trigger")).toHaveCount(0);
@@ -304,11 +381,9 @@ test.beforeEach(async ({ page }) => {
     const disclosure = page.getByTestId("conversation-process-disclosure");
     const processSummary = disclosure.getByTestId("conversation-process-trigger");
     await expect(processSummary).toBeVisible({ timeout: 5000 });
-    await expect(processSummary).toContainText("✓ 已完成 · 2 项操作");
-    await processSummary.click();
-    await expect(disclosure.getByText("已理解任务", { exact: true })).toBeVisible();
-    const detailTriggers = disclosure.getByRole("button", { name: /^查看 .* 详情$/ });
-    for (let remaining = await detailTriggers.count(); remaining > 0; remaining -= 1) await detailTriggers.first().click();
+    await expect(processSummary).toContainText("已完成 · 2 项操作");
+    await revealLatestProcessDetails(page);
+    await expect(disclosure.getByText("分析需求", { exact: true })).toBeVisible();
 
     await expect(disclosure.getByTestId("tool-card-trigger").filter({ hasText: "write_to_file" })).toBeVisible({ timeout: 5000 });
 
@@ -316,6 +391,173 @@ test.beforeEach(async ({ page }) => {
 
     // Final text should be visible
     await expect(page.locator("text=The fibonacci function works correctly")).toBeVisible();
+  });
+
+  test("conversation live progress stays singular, safe, and resolves inline", async ({ page }) => {
+    const sessionId = "conversation-live-progress-lifecycle";
+    const privatePath = "/repo/private/AppShell.tsx";
+    const privateToken = "never-show-this";
+    const turn = await startConversationTurn(page, sessionId, "整理这个页面");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "lifecycle-read",
+        tool_name: "read_file",
+        tool_input: { path: privatePath, token: privateToken },
+      },
+    ], 1);
+
+    const progress = turn.getByTestId("conversation-progress");
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在查找相关内容");
+    await expect(progress).toHaveAttribute("data-progress-motion", "live");
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn).not.toContainText(privateToken);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_result",
+        session_id: sessionId,
+        block_id: "lifecycle-read",
+        result: "read complete",
+        is_error: false,
+        duration_ms: 32,
+      },
+      { event_type: "text_start", session_id: sessionId, block_id: "lifecycle-answer" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "lifecycle-answer",
+        content: "页面已经整理好。",
+      },
+    ], 1);
+
+    await expect(turn.getByTestId("assistant-message")).toContainText("页面已经整理好");
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在生成答复");
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn).not.toContainText(privateToken);
+
+    await simulateStream(page, sessionId, [
+      { event_type: "text_end", session_id: sessionId, block_id: "lifecycle-answer" },
+      {
+        event_type: "agent_turn_updated",
+        session_id: sessionId,
+        state: turnProjection(sessionId, "completed", { tool_call_count: 1 }),
+      },
+    ], 1);
+
+    await expect(progress).toHaveCount(0);
+    const disclosure = turn.getByTestId("conversation-process-disclosure");
+    const trigger = disclosure.getByTestId("conversation-process-trigger");
+    await expect(trigger).toContainText(/已完成 · (?:<1 秒|\d+ 秒) · 1 项操作/);
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(0);
+    await expect(disclosure.getByTestId("conversation-process-details")).toHaveCount(0);
+    await expect(disclosure.getByRole("button", { name: /^查看.*运行证据$/ })).toHaveCount(0);
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn).not.toContainText(privateToken);
+
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "true");
+    const processItem = disclosure.getByTestId("conversation-process-item");
+    await expect(processItem).toHaveCount(1);
+    await expect(processItem).toContainText("分析需求");
+    await expect(disclosure.getByTestId("conversation-process-details")).toHaveCount(0);
+    await expect(disclosure.getByTestId("conversation-evidence-trigger")).toHaveCount(0);
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn).not.toContainText(privateToken);
+
+    const stageEvidence = processItem.getByRole("button", { name: /^查看.*运行证据$/ });
+    await expect(stageEvidence).toHaveCount(1);
+    await expect(stageEvidence).toHaveAttribute("aria-expanded", "false");
+    await stageEvidence.click();
+    await expect(stageEvidence).toHaveAttribute("aria-expanded", "true");
+    await expect(processItem.getByTestId("conversation-process-details")).toBeVisible();
+    await expect(processItem.getByTestId("tool-card-trigger")).toContainText("AppShell.tsx");
+    await expect(turn.getByTestId("conversation-next-action")).toHaveCount(0);
+    await expect(turn.getByRole("button", { name: /工作面板|打开.*文件/ })).toHaveCount(0);
+    await trigger.click();
+    await expect(trigger).toHaveAttribute("aria-expanded", "false");
+    await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(0);
+  });
+
+  test("conversation failed and stopped turns resolve to honest terminal summaries", async ({ page }) => {
+    const failedSessionId = "conversation-live-progress-failed";
+    const failedTurn = await startConversationTurn(page, failedSessionId, "运行检查");
+    await simulateStream(page, failedSessionId, [
+      {
+        event_type: "error",
+        session_id: failedSessionId,
+        block_id: "lifecycle-error",
+        message: "构建没有完成。",
+        code: "build_failed",
+      },
+      {
+        event_type: "agent_turn_updated",
+        session_id: failedSessionId,
+        state: turnProjection(failedSessionId, "failed"),
+      },
+    ], 1);
+
+    const failedTrigger = failedTurn.getByTestId("conversation-process-trigger");
+    await expect(failedTrigger).toContainText(/^未完成/);
+    await failedTrigger.click();
+    const failedItem = failedTurn.getByTestId("conversation-process-item");
+    await expect(failedItem).toHaveCount(1);
+    await expect(failedItem).toContainText("处理异常");
+    await expect(failedItem).toContainText("失败");
+
+    const stoppedSessionId = "conversation-live-progress-stopped";
+    const stoppedTurn = await startConversationTurn(page, stoppedSessionId, "到这里就停止");
+    await simulateStream(page, stoppedSessionId, [
+      {
+        event_type: "session_stopped",
+        session_id: stoppedSessionId,
+        reason: "user_request",
+      },
+    ], 1);
+
+    await expect(stoppedTurn.getByTestId("conversation-process-status")).toContainText(/^已停止/);
+    await expect(stoppedTurn.getByTestId("conversation-process-trigger")).toHaveCount(0);
+  });
+
+  test("conversation live progress pauses safely for confirmation with reduced motion", async ({ page }) => {
+    await page.emulateMedia({ reducedMotion: "reduce" });
+    const sessionId = "conversation-live-progress-reduced-motion";
+    const turn = await startConversationTurn(page, sessionId, "检查当前状态");
+
+    await simulateStream(page, sessionId, [
+      { event_type: "thinking_start", session_id: sessionId, block_id: "lifecycle-thinking" },
+    ], 1);
+
+    const progress = turn.getByTestId("conversation-progress");
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在分析");
+    await expect(progress).toHaveAttribute("data-progress-motion", "live");
+    const reducedAnimations = await progress.evaluate((node) => ({
+      dot: getComputedStyle(node.querySelector(".forge-turn-progress-dot")!).animationName,
+      trace: getComputedStyle(node.querySelector(".forge-turn-progress-trace")!).animationName,
+    }));
+    expect(reducedAnimations).toEqual({ dot: "none", trace: "none" });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_ask",
+        session_id: sessionId,
+        block_id: "lifecycle-confirm",
+        question: "允许继续吗？",
+        kind: "ask_user",
+      },
+    ], 1);
+
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveAttribute("data-progress-motion", "paused");
+    await expect(progress).toHaveText("等待你的确认");
+    await expect(turn).not.toContainText("AppShell.tsx");
+    await expect(turn).not.toContainText("npm run build");
   });
 
   test("conversation area uses a compact centered prose lane", async ({ page }) => {
@@ -1621,9 +1863,6 @@ test.beforeEach(async ({ page }) => {
     });
 
     await simulateStream(page, sessionId, [
-      { event_type: "text_start", session_id: sessionId, block_id: "gap-a" },
-      { event_type: "text_chunk", session_id: sessionId, block_id: "gap-a", content: "第一条回复。" },
-      { event_type: "text_end", session_id: sessionId, block_id: "gap-a" },
       {
         event_type: "tool_call_start",
         session_id: sessionId,
@@ -1639,6 +1878,9 @@ test.beforeEach(async ({ page }) => {
         is_error: false,
         duration_ms: 50,
       },
+      { event_type: "text_start", session_id: sessionId, block_id: "gap-a" },
+      { event_type: "text_chunk", session_id: sessionId, block_id: "gap-a", content: "第一条回复。" },
+      { event_type: "text_end", session_id: sessionId, block_id: "gap-a" },
     ], 1);
 
     const layout = await page.evaluate(() => {
@@ -1802,7 +2044,7 @@ test.beforeEach(async ({ page }) => {
 
     await expect(page.getByTestId("context-compact-trigger")).toHaveCount(0);
     const disclosure = await openLatestProcess(page);
-    await expect(disclosure.getByTestId("conversation-process-timeline")).toContainText("已整理上下文");
+    await expect(disclosure.getByTestId("conversation-process-timeline")).toContainText("分析需求");
     await expect(page.getByTestId("assistant-message").last()).toContainText("上下文已经整理好，可以继续。");
   });
 
@@ -1859,8 +2101,6 @@ test.beforeEach(async ({ page }) => {
       },
     ], 5);
 
-    await completeTurn(page, sessionId, "修改已经完成。");
-
     const panels = page.getByTestId("message-panel");
     const confirmPanel = panels.filter({ hasText: "准备修改项目" });
     await expect(confirmPanel).toBeVisible();
@@ -1871,11 +2111,24 @@ test.beforeEach(async ({ page }) => {
     await expect(panels.filter({ hasText: "文件改动" })).toHaveCount(0);
     await expect(panels.filter({ hasText: "本轮交付" })).toHaveCount(0);
 
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "confirm_response",
+        session_id: sessionId,
+        block_id: "style-confirm",
+        question: "Allow write_file?",
+        kind: "file_write",
+        approved: true,
+        responded_at_ms: Date.now(),
+      },
+    ], 1);
+    await completeTurn(page, sessionId, "修改已经完成。");
+
     const disclosure = await revealLatestProcessDetails(page);
     await expect(disclosure.getByTestId("diff-card")).toContainText("src/App.tsx");
     await expect(disclosure.getByRole("button", { name: "复制 diff" })).toBeVisible();
     await expect(disclosure.getByTestId("conversation-delivery-metadata")).toContainText("检查点已就绪");
-    await expect(page.getByTestId("conversation-next-action")).toContainText("检查当前版本");
+    await expect(page.getByTestId("conversation-next-action")).toHaveCount(0);
   });
 
   test("ask_user confirmation explains boolean-only response limits", async ({ page }) => {
@@ -2285,10 +2538,10 @@ test.describe("Timeline Messages", () => {
       await expect(composerFrame).toHaveCSS("backdrop-filter", "none");
       await expect(page.getByTestId("composer-surface")).not.toHaveCSS("box-shadow", "none");
   
-      await simulateStream(page, sessionId, fullConversation(sessionId), 10);
+      await simulateStream(page, sessionId, resultFirstConversation(sessionId), 10);
       const processSummary = page.getByTestId("conversation-process-trigger").first();
       await expect(processSummary).toContainText("已完成 · 2 项操作");
-      await expect(processSummary).toHaveCSS("min-height", "24px");
+      await expect(processSummary).toHaveCSS("min-height", "22px");
     });
   
     test("V3 operating surface keeps conversation focused without the Inspector rail", async ({ page }) => {
@@ -2391,7 +2644,7 @@ test.describe("Timeline Messages", () => {
       expect(decorativeSurfaces.scrollTexture).toBe("none");
       expect(decorativeSurfaces.operatingRail).toBe("none");
   
-      await simulateStream(page, sessionId, fullConversation(sessionId), 10);
+      await simulateStream(page, sessionId, resultFirstConversation(sessionId), 10);
       await expect(page.getByTestId("conversation-process-trigger").first()).toContainText("已完成 · 2 项操作");
       await expect(page.getByRole("complementary", { name: "Inspector" })).toHaveCount(0);
       const turnDecoration = await page.getByTestId("conversation-scroll").evaluate(() => {
