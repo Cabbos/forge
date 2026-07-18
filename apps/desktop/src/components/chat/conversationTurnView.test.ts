@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { BlockState } from "../../lib/protocol.ts";
+import type { BlockState, StreamEvent } from "../../lib/protocol.ts";
+import { eventToBlock } from "../../store/blocks.ts";
 import type {
   ConversationTurn,
   LiveProgressCandidate,
@@ -179,6 +180,61 @@ test("never relabels an incomplete group as done for an authoritative completed 
     view.processDigest.items.some((item) => item.kind === "modification" && item.outcome === "done"),
     false,
   );
+});
+
+test("retains an atomically rendered singleton Store diff after turn completion", () => {
+  const diff = storeDiffBlock();
+  assert.equal(diff.isComplete, false);
+
+  const completedTurns = [
+    conversationTurn([
+      timedUser(100, 500, "completed"),
+      diff,
+      block("answer", "text", "图片修改已经完成。"),
+    ]),
+    conversationTurn([
+      diff,
+      block("answer", "text", "图片修改已经完成。"),
+    ]),
+  ];
+
+  for (const turn of completedTurns) {
+    const view = derive(turn);
+    assert.equal(view.terminalSummary?.outcome, "completed");
+    assert.equal(view.terminalSummary?.operationCount, 1);
+    assert.deepEqual(view.processDigest.items.map((item) => ({
+      kind: item.kind,
+      label: item.label,
+      outcome: item.outcome,
+      evidence: item.evidence.map((evidence) => evidence.block_id),
+    })), [{
+      kind: "modification",
+      label: "完成修改",
+      outcome: "done",
+      evidence: ["singleton-diff"],
+    }]);
+  }
+});
+
+test("keeps singleton Store diff outcomes honest before completion and on interruption", () => {
+  const diff = storeDiffBlock();
+  const running = derive(conversationTurn([
+    block("user", "user_message", "修改图片"),
+    diff,
+  ]));
+  const stopped = derive(conversationTurn([
+    timedUser(100, 500, "stopped"),
+    diff,
+  ]));
+  const failed = derive(conversationTurn([
+    timedUser(100, 500, "failed"),
+    diff,
+  ]));
+
+  assert.equal(running.terminalSummary, null);
+  assert.equal(running.processDigest.items[0]?.outcome, "running");
+  assert.equal(stopped.processDigest.items[0]?.outcome, "stopped");
+  assert.equal(failed.processDigest.items[0]?.outcome, "failed");
 });
 
 test("counts grouped meaningful operations before safe visible compaction", () => {
@@ -367,4 +423,18 @@ function incompleteBlock(
 
 function hasMarker(items: ProcessDigestItem[], marker: string) {
   return items.some((item) => item.evidence.some((block) => block.metadata.marker === marker));
+}
+
+function storeDiffBlock(): BlockState {
+  const event: StreamEvent = {
+    event_type: "diff_view",
+    session_id: "session",
+    block_id: "singleton-diff",
+    file_path: "assets/logo.svg",
+    old_content: "<svg><circle fill=\"red\" /></svg>",
+    new_content: "<svg><circle fill=\"blue\" /></svg>",
+  };
+  const diff = eventToBlock(event);
+  assert.ok(diff);
+  return diff;
 }

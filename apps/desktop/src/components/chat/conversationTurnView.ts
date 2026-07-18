@@ -142,7 +142,7 @@ function deriveProcessDigest(
   const normalizedGroups = mergeDigestGroups(groups);
   const operationCount = normalizedGroups.filter((group) => group.operation).length;
   const terminalizedGroups = normalizedGroups.flatMap((group) => {
-    const outcome = terminalizedOutcome(group.outcome, terminalOutcome);
+    const outcome = terminalizedOutcome(group, terminalOutcome);
     return outcome === null ? [] : [{ ...group, outcome }];
   });
 
@@ -322,12 +322,20 @@ function itemFromGroup(group: DigestGroup): ProcessDigestItem {
 }
 
 function terminalizedOutcome(
-  outcome: ProcessDigestOutcome,
+  group: DigestGroup,
   terminalOutcome: ConversationTurnOutcome | null,
 ): ProcessDigestOutcome | null {
+  const { outcome } = group;
   if (outcome !== "running" || terminalOutcome === null) return outcome;
-  if (terminalOutcome === "completed") return null;
+  if (terminalOutcome === "completed") {
+    return isSafelyCompletableDiffGroup(group) ? "done" : null;
+  }
   return terminalOutcome === "stopped" ? "stopped" : "failed";
+}
+
+function isSafelyCompletableDiffGroup(group: DigestGroup) {
+  return group.evidence.length === 1
+    && group.evidence[0].event_type === "diff_view";
 }
 
 function strongerOutcome(
