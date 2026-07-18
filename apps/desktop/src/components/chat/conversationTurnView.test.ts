@@ -1,84 +1,296 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BlockState } from "../../lib/protocol.ts";
-import type { ConversationTurn } from "./messageGrouping.ts";
+import type {
+  ConversationTurn,
+  LiveProgressCandidate,
+  ProcessDigest,
+  ProcessDigestItem,
+  ProcessDigestKind,
+  TurnTerminalSummary,
+} from "./messageGrouping.ts";
 import * as messageGrouping from "./messageGrouping.ts";
 
-type TurnProjectionModule = {
-  deriveConversationTurnView?: (turn: ConversationTurn) => {
-    userMessage: BlockState | null;
-    finalAnswer: BlockState | null;
-    terminalError: BlockState | null;
-    interruptions: BlockState[];
-    liveProgress: { id: string; label: string } | null;
-    processDigest: {
-      items: Array<{ kind: string; label: string; evidence: BlockState[] }>;
-      operationCount: number;
-      usage: BlockState[];
-      delivery: BlockState | null;
-    };
-  };
+type TurnProjection = {
+  userMessage: BlockState | null;
+  finalAnswer: BlockState | null;
+  terminalError: BlockState | null;
+  interruptions: BlockState[];
+  liveProgress: LiveProgressCandidate | null;
+  terminalSummary: TurnTerminalSummary | null;
+  processDigest: ProcessDigest;
 };
 
-test("derives a result-first view from a mixed completed turn", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView;
-  assert.equal(typeof deriveConversationTurnView, "function");
+type TurnProjectionModule = {
+  deriveConversationTurnView?: (turn: ConversationTurn) => TurnProjection;
+};
 
-  const turn = conversationTurn([
-    block("user", "user_message", "整理这个页面"),
+test("keeps streamed answer text visible with one answering stage", () => {
+  const view = derive(conversationTurn([
+    timedUser(1_000),
     block("thinking", "thinking", "private reasoning"),
-    block("read", "tool_call", "", { tool_name: "read_file", tool_input: { path: "/repo/AppShell.tsx" } }),
-    block("read", "tool_call_result", "file content", { tool_name: "read_file", duration_ms: 18 }),
-    block("check", "shell", "ok", { command: "npm run build", exit_code: 0, duration_ms: 302 }),
-    block("diff", "diff_view", "new source", { file_path: "/repo/AppShell.tsx" }),
-    block("confirm", "confirm_ask", "允许修改？", { confirmed: true, answer: true }),
-    block("usage", "provider_usage", "usage", { model: "forge-test" }),
-    block("delivery", "delivery_summary", "本轮交付", { summary: { next_action: "检查这版" } }),
-    block("answer", "text", "页面已经整理完成。"),
-  ]);
+    incompleteBlock("answer", "text", "正在输出结果"),
+  ]));
 
-  const view = deriveConversationTurnView!(turn);
-
-  assert.equal(view.userMessage?.block_id, "user");
   assert.equal(view.finalAnswer?.block_id, "answer");
-  assert.equal(view.terminalError, null);
-  assert.deepEqual(view.interruptions, []);
+  assert.deepEqual(view.liveProgress, {
+    id: "answering",
+    label: "正在生成答复",
+    motion: "live",
+  });
+  assert.equal(view.terminalSummary, null);
+});
+
+test("derives an honest completed footer and safe compact process digest", () => {
+  const view = derive(conversationTurn([
+    timedUser(1_000, 13_250, "completed"),
+    block("thinking", "thinking", "private chain of thought"),
+    block("read", "tool_call", "", {
+      tool_name: "read_file",
+      tool_input: { path: "/repo/private/App.tsx", token: "never-show-this" },
+    }),
+    block("search", "tool_call", "secret payload", {
+      tool_name: "search_content",
+      tool_input: { path: "/repo/private", query: "password" },
+    }),
+    block("edit", "tool_call", "", {
+      tool_name: "edit_file",
+      tool_input: { path: "/repo/private/App.tsx", replacement: "secret payload" },
+    }),
+    block("diff", "diff_view", "secret diff", { file_path: "/repo/private/App.tsx" }),
+    block("check", "shell", "ok", { command: "npm test", exit_code: 0 }),
+    block("answer", "text", "页面已经整理完成。"),
+  ]));
+
+  assert.deepEqual(view.terminalSummary, {
+    outcome: "completed",
+    durationMs: 12_250,
+    operationCount: 3,
+  });
+  assert.deepEqual(view.processDigest.items.map((item) => item.label), [
+    "分析需求",
+    "完成修改",
+    "验证结果",
+  ]);
   assert.equal(view.liveProgress, null);
+
+  const publicDigest = view.processDigest.items.map(({ id, kind, label, outcome }) => ({
+    id,
+    kind,
+    label,
+    outcome,
+  }));
+  const serialized = JSON.stringify(publicDigest);
+  for (const secret of ["App.tsx", "npm test", "secret payload", "never-show-this", "password"]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+  assert.equal(
+    view.processDigest.items.flatMap((item) => item.evidence).some((item) => item.block_id === "diff"),
+    true,
+  );
+});
+
+test("preserves stopped and failed terminal outcomes", () => {
+  const stopped = derive(conversationTurn([
+    timedUser(1_000, 9_000, "stopped"),
+    incompleteBlock("edit", "tool_call", "", { tool_name: "edit_file" }),
+  ]));
+  const failed = derive(conversationTurn([
+    timedUser(1_000, 13_000, "failed"),
+    block("edit", "tool_call", "", { tool_name: "edit_file", is_error: true }),
+    block("error", "error", "private backend error", { code: "write_failed" }),
+  ]));
+
+  assert.deepEqual(stopped.terminalSummary, {
+    outcome: "stopped",
+    durationMs: 8_000,
+    operationCount: 1,
+  });
+  assert.equal(stopped.processDigest.items.some((item) => item.outcome === "done"), false);
+  assert.equal(stopped.processDigest.items.some((item) => item.outcome === "stopped"), true);
+
+  assert.deepEqual(failed.terminalSummary, {
+    outcome: "failed",
+    durationMs: 12_000,
+    operationCount: 1,
+  });
+  assert.equal(failed.processDigest.items.some((item) => item.outcome === "failed"), true);
+});
+
+test("uses a provisional completed footer for a legacy final answer without inventing duration", () => {
+  const view = derive(conversationTurn([
+    block("user", "user_message", "继续"),
+    block("answer", "text", "已经完成。"),
+  ]));
+
+  assert.deepEqual(view.terminalSummary, {
+    outcome: "completed",
+    durationMs: null,
+    operationCount: 0,
+  });
+});
+
+test("later live activity overrides provisional completion", () => {
+  const view = derive(conversationTurn([
+    block("user", "user_message", "继续"),
+    block("answer", "text", "第一段结果。"),
+    incompleteBlock("later-edit", "tool_call", "", { tool_name: "apply_patch" }),
+  ]));
+
+  assert.equal(view.finalAnswer?.block_id, "answer");
+  assert.equal(view.terminalSummary, null);
+  assert.deepEqual(view.liveProgress, {
+    id: "modifying",
+    label: "正在进行修改",
+    motion: "live",
+  });
+});
+
+test("never relabels an incomplete group as done for an authoritative completed turn", () => {
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    block("thinking", "thinking", "private"),
+    incompleteBlock("running-edit", "tool_call", "", { tool_name: "edit_file" }),
+    block("answer", "text", "完成。"),
+  ]));
+
+  assert.deepEqual(view.terminalSummary, {
+    outcome: "completed",
+    durationMs: 400,
+    operationCount: 1,
+  });
+  assert.equal(view.processDigest.items.some((item) => item.outcome === "running"), false);
+  assert.equal(
+    view.processDigest.items.some((item) => item.kind === "modification" && item.outcome === "done"),
+    false,
+  );
+});
+
+test("counts grouped meaningful operations before safe visible compaction", () => {
+  const view = derive(conversationTurn([
+    timedUser(1_000, 2_000, "completed"),
+    block("thinking", "thinking", "private"),
+    block("pending", "pending", "private"),
+    block("read", "tool_call", "", { tool_name: "read_file" }),
+    block("search", "tool_call", "", { tool_name: "grep" }),
+    block("write", "tool_call", "", { tool_name: "write_to_file" }),
+    block("diff", "diff_view", "diff", {}),
+    block("verify", "shell", "ok", { command: "npm run check:precommit", exit_code: 0 }),
+    block("confirm", "confirm_ask", "允许？", { confirmed: true }),
+    block("usage", "provider_usage", "usage", { model: "test" }),
+    block("delivery", "delivery_summary", "delivery", { summary: { next_action: "继续" } }),
+    block("answer", "text", "完成。"),
+  ]));
+
+  assert.equal(view.processDigest.operationCount, 3);
+  assert.equal(view.terminalSummary?.operationCount, 3);
   assert.deepEqual(view.processDigest.items.map((item) => item.kind), [
-    "understanding",
-    "operation",
+    "analysis",
+    "modification",
     "verification",
-    "operation",
+  ]);
+});
+
+test("limits the public digest while retaining the latest important evidence", () => {
+  const view = derive(conversationTurn([
+    timedUser(0, 5_000, "failed"),
+    block("read", "tool_call", "", { tool_name: "read_file", marker: "first-analysis" }),
+    block("mod-1", "tool_call", "", { tool_name: "edit_file", marker: "old-modification" }),
+    block("verify-1", "shell", "ok", { command: "npm test", marker: "old-verification" }),
+    block("analysis-2", "tool_call", "", { tool_name: "search_content", marker: "later-analysis" }),
+    block("mod-2", "tool_call", "", { tool_name: "apply_patch", marker: "latest-modification" }),
+    block("verify-2", "shell", "ok", { command: "npm run build", marker: "latest-verification" }),
+    block("error", "error", "private failure", { code: "unexpected" }),
+  ]));
+
+  assert.equal(view.processDigest.items.length, 4);
+  assert.deepEqual(view.processDigest.items.map((item) => item.kind), [
+    "analysis",
+    "modification",
+    "verification",
     "exception",
   ]);
-  assert.deepEqual(view.processDigest.items.map((item) => item.label), [
-    "已理解任务",
-    "已查看 AppShell.tsx",
-    "已验证构建",
-    "已更新 AppShell.tsx",
-    "已处理确认",
-  ]);
-  assert.equal(view.processDigest.operationCount, 4);
-  assert.equal(view.processDigest.usage.length, 1);
-  assert.equal(view.processDigest.delivery?.block_id, "delivery");
+  assert.equal(hasMarker(view.processDigest.items, "first-analysis"), true);
+  assert.equal(hasMarker(view.processDigest.items, "latest-modification"), true);
+  assert.equal(hasMarker(view.processDigest.items, "latest-verification"), true);
+  assert.equal(view.processDigest.items.some((item) => item.outcome === "failed"), true);
+  assert.equal(view.processDigest.operationCount, 6);
+});
+
+test("keeps usage and the latest delivery separate and intact", () => {
+  const view = derive(conversationTurn([
+    timedUser(0, 100, "completed"),
+    block("usage-1", "provider_usage", "usage one", { model: "first" }),
+    block("delivery-1", "delivery_summary", "delivery one", { summary: { value: 1 } }),
+    block("usage-2", "provider_usage", "usage two", { model: "second" }),
+    block("delivery-2", "delivery_summary", "delivery two", { summary: { value: 2 } }),
+    block("answer", "text", "完成。"),
+  ]));
+
+  assert.deepEqual(view.processDigest.usage.map((item) => item.block_id), ["usage-1", "usage-2"]);
+  assert.equal(view.processDigest.delivery?.block_id, "delivery-2");
+});
+
+test("classifies all canonical backend write names as modifications", () => {
+  for (const toolName of [
+    "write_to_file",
+    "edit_file",
+    "apply_patch",
+    "create_file",
+    "delete_file",
+    "move_file",
+    "write_file",
+    "write",
+    "edit",
+  ]) {
+    const view = derive(conversationTurn([
+      timedUser(0, 100, "completed"),
+      block(toolName, "tool_call", "", { tool_name: toolName }),
+      block("answer", "text", "完成。"),
+    ]));
+    assert.deepEqual(view.processDigest.items.map((item) => item.kind), ["modification"]);
+    assert.equal(view.processDigest.operationCount, 1);
+  }
+});
+
+test("uses the hardened verification classifier instead of payload substring matching", () => {
+  const view = derive(conversationTurn([
+    timedUser(0, 100, "completed"),
+    block("unsafe", "shell", "", { command: "echo ready && npm test" }),
+    block("safe", "shell", "", { command: "npm test" }),
+    block("answer", "text", "完成。"),
+  ]));
+
+  assert.deepEqual(view.processDigest.items.map((item) => item.kind), ["analysis", "verification"]);
+  assert.equal(view.processDigest.operationCount, 1);
+});
+
+test("keeps messageGrouping compatibility exports available", () => {
+  assert.equal(typeof messageGrouping.deriveConversationTurnView, "function");
+
+  const kind: ProcessDigestKind = "analysis";
+  const item: ProcessDigestItem = {
+    id: "analysis",
+    kind,
+    label: "分析需求",
+    outcome: "done",
+    evidence: [],
+  };
+  assert.equal(item.kind, "analysis");
 });
 
 test("keeps internal context text out of the final answer slot", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const turn = conversationTurn([
+  const view = derive(conversationTurn([
     block("user", "user_message", "继续"),
     block("answer", "text", "这是用户应看到的结果。"),
     block("internal", "text", "Active Skills:\n- private-runtime-context"),
-  ]);
-
-  const view = deriveConversationTurnView(turn);
+  ]));
 
   assert.equal(view.finalAnswer?.block_id, "answer");
 });
 
 test("promotes only unresolved confirmations into the interruption slot", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const turn = conversationTurn([
+  const view = derive(conversationTurn([
     block("user", "user_message", "修改设置"),
     incompleteBlock("pending-confirm", "confirm_ask", "允许修改设置？"),
     block("resolved-confirm", "confirm_ask", "允许读取？", { confirmed: true, answer: true }),
@@ -87,86 +299,17 @@ test("promotes only unresolved confirmations into the interruption slot", () => 
       answer: null,
       confirm_interrupted: true,
     }),
-  ]);
-
-  const view = deriveConversationTurnView(turn);
+  ]));
 
   assert.deepEqual(view.interruptions.map((item) => item.block_id), ["pending-confirm"]);
+  assert.equal(view.liveProgress?.id, "waiting");
 });
 
-test("promotes a terminal error only when the turn has no final answer", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const failed = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "运行检查"),
-    block("error", "error", "构建没有完成", { code: "build_failed" }),
-  ]));
-  const recovered = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "运行检查"),
-    block("error", "error", "第一次检查失败", { code: "build_failed" }),
-    block("answer", "text", "已修复并重新检查通过。"),
-  ]));
-
-  assert.equal(failed.terminalError?.block_id, "error");
-  assert.equal(recovered.terminalError, null);
-  assert.equal(
-    recovered.processDigest.items[recovered.processDigest.items.length - 1]?.kind,
-    "exception",
-  );
-});
-
-test("exposes one live candidate until answer text begins", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const running = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "整理页面"),
-    incompleteBlock("thinking", "thinking", ""),
-  ]));
-  const answering = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "整理页面"),
-    block("thinking", "thinking", "private"),
-    incompleteBlock("answer", "text", "正在输出结果"),
-  ]));
-
-  assert.deepEqual(running.liveProgress, {
-    id: "analyzing",
-    label: "正在分析",
-    motion: "live",
-  });
-  assert.equal(answering.finalAnswer?.block_id, "answer");
-  assert.equal(answering.liveProgress, null);
-});
-
-test("keeps a preparing-result label between text start and visible answer content", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const preparing = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "整理页面"),
-    block("thinking", "thinking", "private"),
-    incompleteBlock("answer", "text", ""),
-  ]));
-
-  assert.deepEqual(preparing.liveProgress, {
-    id: "answering",
-    label: "正在生成答复",
-    motion: "live",
-  });
-  assert.equal(preparing.finalAnswer, null);
-});
-
-test("keeps grouped evidence ordered and restored completed turns collapsed", () => {
-  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView!;
-  const restored = deriveConversationTurnView(conversationTurn([
-    block("user", "user_message", "读取配置"),
-    block("read", "tool_call", "", { tool_name: "read_file" }),
-    block("read", "tool_call_result", "配置内容", { tool_name: "read_file" }),
-    block("answer", "text", "配置读取完成。"),
-  ]));
-
-  assert.equal(restored.liveProgress, null);
-  assert.equal(restored.processDigest.operationCount, 1);
-  assert.deepEqual(
-    restored.processDigest.items[0]?.evidence.map((item) => item.event_type),
-    ["tool_call", "tool_call_result"],
-  );
-});
+function derive(turn: ConversationTurn): TurnProjection {
+  const deriveConversationTurnView = (messageGrouping as TurnProjectionModule).deriveConversationTurnView;
+  assert.equal(typeof deriveConversationTurnView, "function");
+  return deriveConversationTurnView!(turn);
+}
 
 function conversationTurn(blocks: BlockState[]): ConversationTurn {
   return {
@@ -175,6 +318,18 @@ function conversationTurn(blocks: BlockState[]): ConversationTurn {
     hasEvidence: true,
     items: blocks.map((value) => ({ kind: "block" as const, block: value, key: value.block_id })),
   };
+}
+
+function timedUser(
+  startedAtMs: number,
+  terminalAtMs?: number,
+  outcome?: "completed" | "stopped" | "failed",
+): BlockState {
+  return block("user", "user_message", "整理这个页面", {
+    turn_started_at_ms: startedAtMs,
+    ...(terminalAtMs === undefined ? {} : { turn_terminal_at_ms: terminalAtMs }),
+    ...(outcome === undefined ? {} : { turn_outcome: outcome }),
+  });
 }
 
 function block(
@@ -193,4 +348,8 @@ function incompleteBlock(
   metadata: Record<string, unknown> = {},
 ): BlockState {
   return { block_id, event_type, content, metadata, isComplete: false };
+}
+
+function hasMarker(items: ProcessDigestItem[], marker: string) {
+  return items.some((item) => item.evidence.some((block) => block.metadata.marker === marker));
 }
