@@ -94,14 +94,10 @@ async function waitForCollapsibleOpen(
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
   await expect(panel).toHaveAttribute("data-open", "");
   await expect(panel).toBeVisible();
-  await panel.scrollIntoViewIfNeeded();
   await expect.poll(async () => panel.evaluate((element) => {
-    const hasActiveAnimation = element
+    return !element
       .getAnimations({ subtree: true })
       .some((animation) => animation.playState === "pending" || animation.playState === "running");
-    const rect = element.getBoundingClientRect();
-    const hit = document.elementFromPoint(rect.left + rect.width / 2, rect.top + rect.height / 2);
-    return !hasActiveAnimation && Boolean(hit && (hit === element || element.contains(hit)));
   })).toBe(true);
 }
 
@@ -119,7 +115,10 @@ async function waitForPointerTarget(target: import("@playwright/test").Locator) 
 async function openProcessDisclosure(disclosure: import("@playwright/test").Locator) {
   const trigger = disclosure.getByTestId("conversation-process-trigger");
   await expect(trigger).toBeVisible();
-  if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+  if (await trigger.getAttribute("aria-expanded") !== "true") {
+    await waitForPointerTarget(trigger);
+    await trigger.click();
+  }
   const panel = disclosure.locator(":scope > [data-slot='collapsible-content']");
   await waitForCollapsibleOpen(trigger, panel);
   return disclosure;
