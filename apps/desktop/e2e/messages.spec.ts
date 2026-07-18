@@ -484,16 +484,136 @@ test.beforeEach(async ({ page }) => {
     await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(0);
   });
 
-  test("conversation failed and stopped turns resolve to honest terminal summaries", async ({ page }) => {
+  test("conversation live progress enforces anti-flash dwell and keeps the latest stage", async ({ page }) => {
+    const sessionId = "conversation-live-progress-timing";
+    const turn = await startConversationTurn(page, sessionId, "整理并验证这个页面");
+    const progress = turn.getByTestId("conversation-progress");
+    await page.evaluate(() => {
+      const history: Array<{ label: string; at: number }> = [];
+      let lastLabel = "";
+      const recordProgress = () => {
+        const label = document.querySelector<HTMLElement>("[data-testid='conversation-progress']")
+          ?.innerText.trim() ?? "";
+        if (!label || label === lastLabel) return;
+        lastLabel = label;
+        history.push({ label, at: performance.now() });
+      };
+      const observer = new MutationObserver(recordProgress);
+      observer.observe(document.body, {
+        attributes: true,
+        attributeFilter: ["data-progress-id"],
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+      // @ts-expect-error timing probe installed for this Playwright test only
+      window.__progressLabelHistory = history;
+      // @ts-expect-error retain the observer for the duration of this test
+      window.__progressLabelObserver = observer;
+      recordProgress();
+    });
+    const antiFlashStartedAt = await page.evaluate(() => performance.now());
+
+    await page.waitForFunction(
+      (startedAt) => performance.now() - startedAt >= 100,
+      antiFlashStartedAt,
+    );
+    await expect(progress).toHaveCount(0);
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "timing-read",
+        tool_name: "read_file",
+        tool_input: { path: "/repo/private/AppShell.tsx" },
+      },
+    ], 1);
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在查找相关内容");
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "tool_call_start",
+        session_id: sessionId,
+        block_id: "timing-write",
+        tool_name: "write_file",
+        tool_input: { path: "/repo/private/AppShell.tsx", content: "updated" },
+      },
+    ], 1);
+    await expect(progress).toHaveText("正在查找相关内容");
+    await expect(progress).toHaveText("正在进行修改", { timeout: 1_500 });
+
+    await simulateStream(page, sessionId, [
+      {
+        event_type: "shell_start",
+        session_id: sessionId,
+        block_id: "timing-verification",
+        command: "npm test",
+      },
+    ], 1);
+    await expect(progress).toHaveText("正在进行修改");
+    await expect(progress).toHaveText("正在验证结果", { timeout: 1_500 });
+
+    await simulateStream(page, sessionId, [
+      { event_type: "thinking_start", session_id: sessionId, block_id: "timing-latest-thinking" },
+      { event_type: "text_start", session_id: sessionId, block_id: "timing-latest-answer" },
+      {
+        event_type: "text_chunk",
+        session_id: sessionId,
+        block_id: "timing-latest-answer",
+        content: "正在收束最终结果。",
+      },
+    ], 1);
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveText("正在验证结果");
+    await expect(progress).toHaveText("正在生成答复", { timeout: 1_500 });
+    await expect(progress).toHaveCount(1);
+    await expect(progress).toHaveAttribute("data-progress-id", "answering");
+
+    const labelHistory = await page.evaluate(() => {
+      // @ts-expect-error timing probe installed above
+      return window.__progressLabelHistory as Array<{ label: string; at: number }>;
+    });
+    const expectedLabels = [
+      "正在查找相关内容",
+      "正在进行修改",
+      "正在验证结果",
+      "正在生成答复",
+    ];
+    const transitions = expectedLabels.map((label) => {
+      const entry = labelHistory.find((item) => item.label === label);
+      expect(entry, `missing observed progress label: ${label}`).toBeTruthy();
+      return entry!;
+    });
+    for (let index = 1; index < transitions.length; index += 1) {
+      expect(transitions[index].at - transitions[index - 1].at).toBeGreaterThanOrEqual(560);
+    }
+    const verificationIndex = labelHistory.findIndex((item) => item.label === "正在验证结果");
+    expect(labelHistory.slice(verificationIndex).map((item) => item.label)).toEqual([
+      "正在验证结果",
+      "正在生成答复",
+    ]);
+  });
+
+  test("conversation live progress failed and stopped turns resolve to honest terminal summaries", async ({ page }) => {
     const failedSessionId = "conversation-live-progress-failed";
     const failedTurn = await startConversationTurn(page, failedSessionId, "运行检查");
     await simulateStream(page, failedSessionId, [
       {
-        event_type: "error",
+        event_type: "tool_call_start",
         session_id: failedSessionId,
-        block_id: "lifecycle-error",
-        message: "构建没有完成。",
-        code: "build_failed",
+        block_id: "lifecycle-failed-read",
+        tool_name: "read_file",
+        tool_input: { path: "/repo/private/AppShell.tsx" },
+      },
+      {
+        event_type: "tool_call_result",
+        session_id: failedSessionId,
+        block_id: "lifecycle-failed-read",
+        result: "read failed",
+        is_error: true,
+        duration_ms: 24,
       },
       {
         event_type: "agent_turn_updated",
@@ -503,11 +623,13 @@ test.beforeEach(async ({ page }) => {
     ], 1);
 
     const failedTrigger = failedTurn.getByTestId("conversation-process-trigger");
-    await expect(failedTrigger).toContainText(/^未完成/);
+    await expect(failedTrigger).toContainText(
+      /^未完成 · (?:<1 秒|\d+ 秒) · 1 项操作/,
+    );
     await failedTrigger.click();
     const failedItem = failedTurn.getByTestId("conversation-process-item");
     await expect(failedItem).toHaveCount(1);
-    await expect(failedItem).toContainText("处理异常");
+    await expect(failedItem).toContainText("分析需求");
     await expect(failedItem).toContainText("失败");
 
     const stoppedSessionId = "conversation-live-progress-stopped";
@@ -520,7 +642,9 @@ test.beforeEach(async ({ page }) => {
       },
     ], 1);
 
-    await expect(stoppedTurn.getByTestId("conversation-process-status")).toContainText(/^已停止/);
+    await expect(stoppedTurn.getByTestId("conversation-process-status")).toContainText(
+      /^已停止 · (?:<1 秒|\d+ 秒)$/,
+    );
     await expect(stoppedTurn.getByTestId("conversation-process-trigger")).toHaveCount(0);
   });
 
