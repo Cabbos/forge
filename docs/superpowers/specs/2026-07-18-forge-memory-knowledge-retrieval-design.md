@@ -1,7 +1,7 @@
 # Forge Memory and Knowledge Retrieval Design
 
 Date: 2026-07-18
-Status: revised after architecture review; pending user re-review
+Status: approved for workstream decomposition
 Scope: Forge desktop local memory foundation and read-only Feishu knowledge retrieval
 
 ## Goal
