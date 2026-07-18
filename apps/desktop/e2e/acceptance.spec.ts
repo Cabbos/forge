@@ -1,6 +1,17 @@
 import { test, expect } from "@playwright/test";
 import { setup } from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
+
+async function resolveCssColor(locator: import("@playwright/test").Locator, variable: string) {
+  return locator.evaluate((element, name) => {
+    const probe = document.createElement("span");
+    probe.style.color = getComputedStyle(element).getPropertyValue(name).trim();
+    element.append(probe);
+    const resolved = getComputedStyle(probe).color;
+    probe.remove();
+    return resolved;
+  }, variable);
+}
 import type { AgentA2ATaskProjection } from "../src/lib/protocol";
 
 function workPanelSubtask(
@@ -139,6 +150,9 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.locator("iframe")).toHaveCount(0);
     await expect(panel.getByText("经验回忆")).toHaveCount(0);
     await expect(panel.getByText("项目档案", { exact: true })).toHaveCount(0);
+    await expect(panel.getByRole("option", { selected: true })).toHaveCount(0);
+    await page.keyboard.press("ArrowDown");
+    await expect(panel.getByRole("option", { name: /^审阅/ })).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("ArrowDown");
     await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("aria-selected", "true");
     await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("data-selected", "true");
@@ -154,14 +168,19 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const panel = page.getByRole("complementary", { name: "工作面板" });
     const review = panel.getByRole("option", { name: /^审阅/ });
     await shell.evaluate((element) => element.setAttribute("data-theme", "light"));
-    await expect(review).toHaveAttribute("aria-selected", "true");
+    await expect(panel.getByRole("option", { selected: true })).toHaveCount(0);
     await expect(review).not.toHaveClass(/data-selected:bg-muted/);
-    await expect(review).toHaveCSS("background-color", "rgb(231, 232, 226)");
+    const lightRow = await resolveCssColor(review, "--forge-work-panel-row");
+    const lightActive = await resolveCssColor(review, "--forge-work-panel-row-active");
+    await expect(review).toHaveCSS("background-color", lightRow);
     await review.hover();
-    await expect(review).toHaveCSS("background-color", "rgb(231, 232, 226)");
+    await expect(review).toHaveCSS("background-color", lightActive);
 
     await shell.evaluate((element) => element.setAttribute("data-theme", "dark"));
-    await expect(review).toHaveCSS("background-color", "rgb(58, 61, 56)");
+    await panel.getByTestId("work-panel-launcher").locator("[data-slot='command']").focus();
+    await page.keyboard.press("ArrowDown");
+    await expect(review).toHaveAttribute("aria-selected", "true");
+    await expect(review).toHaveCSS("background-color", await resolveCssColor(review, "--forge-work-panel-row-active"));
     const darkContrast = await review.evaluate((element) => {
       const channels = (value: string) => value.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [];
       const luminance = (value: string) => channels(value).map((channel) => {
@@ -173,12 +192,11 @@ test.describe("Phase 7 acceptance surfaces", () => {
       return (lighter + 0.05) / (darker + 0.05);
     });
     expect(darkContrast).toBeGreaterThanOrEqual(4.5);
-    await panel.getByTestId("work-panel-launcher").locator("[data-slot='command']").focus();
     await page.keyboard.press("ArrowDown");
     await expect(panel.getByRole("option", { name: /^终端/ })).toHaveAttribute("aria-selected", "true");
   });
 
-  test("work panel desktop sheet keeps its outer breathing room inside the workbench", async ({ page }) => {
+  test("work panel is a flush embedded split instead of a framed sheet", async ({ page }) => {
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.getByRole("button", { name: "打开工作面板" }).click();
     await expect(page.getByRole("complementary", { name: "工作面板" })).toHaveAttribute("data-viewport-mode", "split");
@@ -188,11 +206,23 @@ test.describe("Phase 7 acceptance surfaces", () => {
       if (!panel || !workbench) return null;
       const panelRect = panel.getBoundingClientRect();
       const workbenchRect = workbench.getBoundingClientRect();
-      return { panelTop: panelRect.top, panelBottom: panelRect.bottom, workbenchTop: workbenchRect.top, workbenchBottom: workbenchRect.bottom };
+      const style = getComputedStyle(panel);
+      return {
+        panelTop: panelRect.top,
+        panelBottom: panelRect.bottom,
+        workbenchTop: workbenchRect.top,
+        workbenchBottom: workbenchRect.bottom,
+        margin: style.margin,
+        radius: style.borderTopLeftRadius,
+        shadow: style.boxShadow,
+      };
     });
     expect(metrics).not.toBeNull();
-    expect(metrics!.panelTop - metrics!.workbenchTop).toBeGreaterThanOrEqual(9);
-    expect(metrics!.panelBottom).toBeLessThanOrEqual(metrics!.workbenchBottom - 9);
+    expect(Math.abs(metrics!.panelTop - metrics!.workbenchTop)).toBeLessThanOrEqual(1);
+    expect(Math.abs(metrics!.panelBottom - metrics!.workbenchBottom)).toBeLessThanOrEqual(1);
+    expect(metrics!.margin).toBe("0px");
+    expect(metrics!.radius).toBe("0px");
+    expect(metrics!.shadow).toBe("none");
   });
 
   test("work panel overlay starts below the app titlebar and preserves a reachable close control", async ({ page }) => {
@@ -349,8 +379,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     await expect(panel.locator("iframe[title='localhost:1420']")).toBeVisible();
     const panelSurface = panel;
     const viewport = panel.locator(".forge-work-panel-preview-viewport");
-    await expect(panelSurface).toHaveCSS("border-radius", "12px");
-    await expect(panelSurface).toHaveCSS("box-shadow", /0px (?:18px 42px|16px 38px)/);
+    await expect(panelSurface).toHaveCSS("border-radius", "0px");
+    await expect(panelSurface).toHaveCSS("box-shadow", "none");
     await expect(viewport).toHaveCSS("border-top-width", "0px");
     await expect(viewport).toHaveCSS("box-shadow", "none");
     await panel.getByRole("button", { name: "新建工作面板标签" }).click();
@@ -677,7 +707,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
       blockId: "trust-pending-confirm",
       approved: true,
     });
-    await expect(confirmPanel).toContainText("已继续");
+    await expect(confirmPanel).toHaveCount(0);
   });
 
   test("composer trust does not approve non-write confirmations", async ({ page }) => {
@@ -789,7 +819,7 @@ test.describe("Phase 7 acceptance surfaces", () => {
       blockId: "composer-full-access-confirm",
       approved: true,
     });
-    await expect(confirmPanel).toContainText("已继续");
+    await expect(confirmPanel).toHaveCount(0);
   });
 
   test("composer full access does not approve an external-path confirmation card", async ({ page }) => {
@@ -1144,10 +1174,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
       },
     ], 1);
 
-    await expect(confirmPanel).toContainText("已取消");
-    await expect(confirmPanel).not.toContainText("确认已中断");
-    await expect(confirmPanel.getByTestId("confirm-approve")).toHaveCount(0);
-    await expect(confirmPanel.getByTestId("confirm-cancel")).toHaveCount(0);
+    await expect(confirmPanel).toHaveCount(0);
+    await expect(page.getByText("确认已中断", { exact: true })).toHaveCount(0);
   });
 
   test("startup transcript hydration resolves a confirmation card", async ({ page }) => {
@@ -1203,10 +1231,8 @@ test.describe("Phase 7 acceptance surfaces", () => {
     expect(transcriptArgs).toMatchObject({ sessionId });
 
     const confirmPanel = page.getByTestId("message-panel").filter({ hasText: "Allow hydrated confirmation?" });
-    await expect(confirmPanel).toContainText("已取消");
-    await expect(confirmPanel).not.toContainText("确认已中断");
-    await expect(confirmPanel.getByTestId("confirm-approve")).toHaveCount(0);
-    await expect(confirmPanel.getByTestId("confirm-cancel")).toHaveCount(0);
+    await expect(confirmPanel).toHaveCount(0);
+    await expect(page.getByText("确认已中断", { exact: true })).toHaveCount(0);
   });
 
   test("fresh same-session output clears stale session health alert", async ({ page }) => {

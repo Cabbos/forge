@@ -325,6 +325,7 @@ test.describe("Frontend maintainability guardrails", () => {
       "src/components/context/WikiSectionChrome.tsx",
     ].map((path) => readFileSync(resolve(process.cwd(), path), "utf8")).join("\n");
     const workPanelShell = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelShell.tsx"), "utf8");
+    const workPanelObjectBar = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelObjectBar.tsx"), "utf8");
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
 
     expect(projectStatus).toContain("@/components/primitives/surface");
@@ -374,8 +375,9 @@ test.describe("Frontend maintainability guardrails", () => {
 
     expect(workPanelShell).toContain("@/components/primitives/icon-button");
     expect(workPanelShell).toContain("ForgeIconButton");
-    expect(workPanelShell).toContain("ButtonPrimitive");
+    expect(workPanelObjectBar).toContain("ButtonPrimitive");
     expect(workPanelShell).not.toContain("<button");
+    expect(workPanelObjectBar).not.toContain("<button");
 
     expect(messageList).toContain("@/components/primitives/control-button");
     expect(messageList).toContain("ForgeControlButton");
@@ -701,17 +703,17 @@ test.describe("Frontend maintainability guardrails", () => {
     const layout = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelLayout.tsx"), "utf8");
     const shell = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelShell.tsx"), "utf8");
     const launcher = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelLauncher.tsx"), "utf8");
+    const objectBar = readFileSync(resolve(process.cwd(), "src/components/workpanel/WorkPanelObjectBar.tsx"), "utf8");
     const packageJson = readFileSync(resolve(process.cwd(), "package.json"), "utf8");
 
     expect(layout).toContain("react-resizable-panels");
     expect(shell).toContain("@/components/ui/tabs");
-    expect(shell).toContain("@base-ui/react/button");
+    expect(objectBar).toContain("@base-ui/react/button");
     expect(launcher).toContain("@/components/ui/command");
     expect(shell).toContain("useGSAP");
     expect(shell).toContain("prefersReducedMotion");
     expect(packageJson).toContain("react-resizable-panels");
     expect(packageJson).toContain("cmdk");
-    expect(packageJson).toContain("@xterm/xterm");
     expect(packageJson).toContain("react-diff-viewer-continued");
   });
 
@@ -948,7 +950,7 @@ test.describe("Frontend maintainability guardrails", () => {
 
     expect(globals).toContain('@import "./work-panel.css";');
     expect(globals).toContain('@import "./project-status.css";');
-    for (const selector of [".forge-work-panel", ".forge-work-panel-launcher", ".forge-work-panel-tab-rail"]) {
+    for (const selector of [".forge-work-panel", ".forge-work-panel-launcher", ".forge-work-panel-object-bar"]) {
       expect(workPanel).toContain(selector);
       expect(globals).not.toContain(selector);
     }
@@ -1788,10 +1790,13 @@ test.describe("Frontend maintainability guardrails", () => {
   test("message block routing is owned by the block renderer", () => {
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
     const conversationLane = readFileSync(resolve(process.cwd(), "src/components/chat/ConversationLane.tsx"), "utf8");
+    const conversationTurn = readFileSync(resolve(process.cwd(), "src/components/chat/ConversationTurn.tsx"), "utf8");
     const blockRenderer = readFileSync(resolve(process.cwd(), "src/components/chat/BlockRenderer.tsx"), "utf8");
 
     expect(messageList).toContain("ConversationLane");
-    expect(conversationLane).toContain("MemoizedBlockRenderer");
+    expect(conversationLane).toContain("ConversationTurn");
+    expect(conversationTurn).toContain("MemoizedBlockRenderer");
+    expect(conversationTurn).toContain("ConversationProcessDisclosure");
     expect(blockRenderer).toContain("function BlockRenderer");
     expect(blockRenderer).toContain("switch (block.event_type)");
     expect(blockRenderer).toContain("MissingApiKeyCard");
@@ -1804,12 +1809,14 @@ test.describe("Frontend maintainability guardrails", () => {
     const messageList = readFileSync(resolve(process.cwd(), "src/components/chat/MessageList.tsx"), "utf8");
     const scrollHookPath = resolve(process.cwd(), "src/components/chat/useConversationScroll.ts");
     const lanePath = resolve(process.cwd(), "src/components/chat/ConversationLane.tsx");
+    const turnPath = resolve(process.cwd(), "src/components/chat/ConversationTurn.tsx");
 
     expect(existsSync(scrollHookPath), "useConversationScroll should own bottom lock and scroll handlers").toBe(true);
     expect(existsSync(lanePath), "ConversationLane should own turn rendering").toBe(true);
 
     const scrollHook = existsSync(scrollHookPath) ? readFileSync(scrollHookPath, "utf8") : "";
     const lane = existsSync(lanePath) ? readFileSync(lanePath, "utf8") : "";
+    const turn = existsSync(turnPath) ? readFileSync(turnPath, "utf8") : "";
 
     expect(messageList).toContain("useConversationScroll");
     expect(messageList).toContain("ConversationLane");
@@ -1822,9 +1829,10 @@ test.describe("Frontend maintainability guardrails", () => {
     expect(scrollHook).toContain("handleScroll");
     expect(scrollHook).toContain("scrollToBottom");
     expect(lane).toContain("conversationTurns.map");
-    expect(lane).toContain("ToolActivityGroup");
-    expect(lane).toContain("MemoizedBlockRenderer");
+    expect(lane).toContain("ConversationTurn");
     expect(lane).toContain("StartReadinessCard");
+    expect(turn).toContain("MemoizedBlockRenderer");
+    expect(turn).toContain("ConversationProcessDisclosure");
   });
 
   test("markdown rendering is owned by the markdown renderer module", () => {

@@ -52,9 +52,7 @@ interface WorkPanelLauncherProps {
 export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLauncherProps) {
   const launcherCommandRef = useRef<HTMLDivElement>(null);
   const [selection, setSelection] = useState<PickerAction | null>(null);
-  const [selectedActionId, setSelectedActionId] = useState<WorkPanelLauncherAction>(
-    WORK_PANEL_LAUNCHER_ACTIONS[0].id,
-  );
+  const [selectedActionId, setSelectedActionId] = useState<WorkPanelLauncherAction | null>(null);
   const [query, setQuery] = useState("");
   const deferredQuery = useDeferredValue(query.trim());
   const activeSessionId = useStore((state) => state.activeSessionId);
@@ -64,8 +62,7 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
     ? state.agentA2ABySession.get(activeSessionId)?.tasks ?? []
     : []);
   const searchesFiles = selection === "files" || selection === "preview";
-  const selectedAction = WORK_PANEL_LAUNCHER_ACTIONS.find((action) => action.id === selectedActionId)
-    ?? WORK_PANEL_LAUNCHER_ACTIONS[0];
+  const selectedAction = WORK_PANEL_LAUNCHER_ACTIONS.find((action) => action.id === selectedActionId) ?? null;
   const fileSearch = useSearchWorkspaceFilesQuery(
     deferredQuery,
     activeSessionId ?? undefined,
@@ -105,9 +102,11 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
       event.stopPropagation();
       setSelectedActionId((id) => {
         const index = WORK_PANEL_LAUNCHER_ACTIONS.findIndex((action) => action.id === id);
-        const nextIndex = event.key === "ArrowDown"
-          ? (index + 1) % WORK_PANEL_LAUNCHER_ACTIONS.length
-          : (index - 1 + WORK_PANEL_LAUNCHER_ACTIONS.length) % WORK_PANEL_LAUNCHER_ACTIONS.length;
+        const nextIndex = id === null
+          ? event.key === "ArrowDown" ? 0 : WORK_PANEL_LAUNCHER_ACTIONS.length - 1
+          : event.key === "ArrowDown"
+            ? (index + 1) % WORK_PANEL_LAUNCHER_ACTIONS.length
+            : (index - 1 + WORK_PANEL_LAUNCHER_ACTIONS.length) % WORK_PANEL_LAUNCHER_ACTIONS.length;
         return WORK_PANEL_LAUNCHER_ACTIONS[nextIndex].id;
       });
       return;
@@ -116,7 +115,7 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
-      handleAction(selectedAction.id);
+      if (selectedAction) handleAction(selectedAction.id);
     }
   };
 
@@ -214,12 +213,7 @@ export function WorkPanelLauncher({ mode, taskKey, onOpenTab }: WorkPanelLaunche
       <Command
         ref={launcherCommandRef}
         tabIndex={0}
-        value={selectedActionId}
-        onValueChange={(value) => {
-          if (WORK_PANEL_LAUNCHER_ACTIONS.some((action) => action.id === value)) {
-            setSelectedActionId(value as WorkPanelLauncherAction);
-          }
-        }}
+        value={selectedActionId ?? "__none__"}
         className="forge-work-panel-command forge-work-panel-launcher-command"
         onKeyDown={handleKeyDown}
       >

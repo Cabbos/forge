@@ -32,16 +32,16 @@
   .forge-work-panel {
     container-type: inline-size;
     display: flex;
-    height: calc(100% - 20px);
+    height: 100%;
     min-width: 0;
     flex-direction: column;
-    margin: 10px 10px 10px 0;
+    margin: 0;
     overflow: hidden;
-    border: 1px solid var(--forge-work-panel-border);
-    border-radius: 12px;
+    border: 0;
+    border-radius: 0;
     background: var(--forge-work-panel-sheet);
     color: var(--forge-text-primary);
-    box-shadow: var(--forge-work-panel-shadow);
+    box-shadow: none;
   }
 
   .forge-work-panel-tabs {
@@ -138,9 +138,9 @@
     display: grid;
     min-height: 0;
     flex: 1;
-    align-items: center;
+    align-items: end;
     overflow: auto;
-    padding: clamp(2rem, 10vh, 7rem) clamp(1rem, 8cqw, 4.5rem) 15vh;
+    padding: 0 clamp(1rem, 8cqw, 4.5rem) 48px;
   }
 
   .forge-work-panel-launcher-actions {
@@ -164,7 +164,8 @@
     display: grid;
     grid-template-columns: 1.5rem minmax(0, 1fr) auto;
     width: 100%;
-    min-height: 46px;
+    min-height: 48px;
+    height: 48px;
     align-items: center;
     gap: 0.75rem;
     border: 0;
@@ -201,9 +202,9 @@
   }
 
   .forge-work-panel-launcher-command {
-    width: min(100%, 620px);
+    width: min(100%, 360px);
     height: auto !important;
-    margin: auto;
+    margin: 0 auto;
   }
 
   .forge-work-panel-launcher-command [data-slot="command-list"] {
