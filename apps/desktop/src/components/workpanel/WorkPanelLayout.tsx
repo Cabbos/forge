@@ -4,6 +4,7 @@ import { WorkPanelShell } from "./WorkPanelShell";
 import { closeWorkPanelTab, focusWorkPanelTab, openWorkPanelLauncher, openWorkPanelTab, restoreTaskPanelState } from "./workPanelState";
 import { clampWorkPanelWidthPercent, getWorkbenchWidth, getWorkPanelBounds, getWorkPanelViewportMode, MIN_WORK_PANEL_WIDTH_PX, normalizeWorkPanelWidthPercent } from "./workPanelDimensions";
 import { loadWorkPanelTasks, saveWorkPanelTask } from "./workPanelPersistence";
+import { OPEN_WORK_PANEL_TAB_EVENT, workPanelTabFromEvent } from "./workPanelEvents";
 import type { WorkPanelTab, WorkPanelTaskState } from "./workPanelTypes";
 
 interface WorkPanelLayoutProps {
@@ -59,6 +60,12 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
   useEffect(() => {
     const toggle = () => setOpen((current) => !current);
     const show = () => setOpen(true);
+    const showTab = (event: Event) => {
+      const tab = workPanelTabFromEvent(event);
+      if (!tab) return;
+      setOpen(true);
+      updateState((current) => openWorkPanelTab(current, tab));
+    };
     const resize = () => {
       const nextMode = getWorkPanelViewportMode(window.innerWidth);
       if (modeRef.current === "overlay" && nextMode === "split") {
@@ -73,13 +80,15 @@ export function WorkPanelLayout({ children, taskKey }: WorkPanelLayoutProps) {
     };
     window.addEventListener("toggle-work-panel", toggle);
     window.addEventListener("open-work-panel", show);
+    window.addEventListener(OPEN_WORK_PANEL_TAB_EVENT, showTab);
     window.addEventListener("resize", resize);
     return () => {
       window.removeEventListener("toggle-work-panel", toggle);
       window.removeEventListener("open-work-panel", show);
+      window.removeEventListener(OPEN_WORK_PANEL_TAB_EVENT, showTab);
       window.removeEventListener("resize", resize);
     };
-  }, [cancelPendingRestore]);
+  }, [cancelPendingRestore, updateState]);
 
   useEffect(() => {
     modeRef.current = mode;

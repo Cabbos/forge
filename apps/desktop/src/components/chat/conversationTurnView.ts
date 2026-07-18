@@ -1,6 +1,6 @@
 import type { BlockState } from "../../lib/protocol.ts";
 import type { ConversationTurn, MessageItem } from "./messageGrouping.ts";
-import { deriveLiveProgressCandidate } from "./conversationProgress.ts";
+import { deriveCompletedProcessLabel, deriveLiveProgressCandidate } from "./conversationProgress.ts";
 
 export { deriveLiveProgressCandidate } from "./conversationProgress.ts";
 
@@ -99,7 +99,7 @@ function deriveProcessDigest(
           existing.outcome = block.metadata.is_error === true ? "failed" : block.isComplete ? "done" : "running";
           existing.durationMs = finiteNumber(block.metadata.duration_ms) ?? existing.durationMs;
         } else {
-          const item = digestItem(block, "operation", "执行操作", groupId);
+          const item = digestItem(block, "operation", deriveCompletedProcessLabel(block), groupId);
           items.push(item);
           groupedOperations.set(groupId, item);
         }
@@ -109,11 +109,11 @@ function deriveProcessDigest(
         items.push(digestItem(
           block,
           isVerificationCommand(block.metadata.command) ? "verification" : "operation",
-          isVerificationCommand(block.metadata.command) ? "已验证结果" : "已执行命令",
+          deriveCompletedProcessLabel(block),
         ));
         break;
       case "diff_view":
-        items.push(digestItem(block, "operation", "已更新文件"));
+        items.push(digestItem(block, "operation", deriveCompletedProcessLabel(block)));
         break;
       case "confirm_ask":
         if (!isUnresolvedInterruption(block)) items.push(digestItem(block, "exception", "已处理确认"));

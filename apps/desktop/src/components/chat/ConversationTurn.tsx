@@ -2,6 +2,7 @@ import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import type { ConversationTurn as RawConversationTurn } from "@/components/chat/messageGrouping";
 import { deriveConversationTurnView } from "@/components/chat/conversationTurnView";
 import { TurnProgress } from "@/components/chat/TurnProgress";
+import { ConversationProcessDisclosure } from "@/components/chat/ConversationProcessDisclosure";
 
 export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTurn; sessionId?: string }) {
   const view = deriveConversationTurnView(turn);
@@ -39,6 +40,10 @@ export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTur
           role={view.finalAnswer ? "assistant" : "artifact"}
           sessionId={sessionId}
         />
+      )}
+
+      {primaryResult && (
+        <ConversationProcessDisclosure digest={view.processDigest} sessionId={sessionId} />
       )}
     </section>
   );
