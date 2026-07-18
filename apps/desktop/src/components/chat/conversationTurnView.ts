@@ -184,8 +184,9 @@ function digestGroupForBlock(
     case "confirm_ask":
       if (isUnresolvedInterruption(block)) return null;
       return {
-        ...digestGroup(block, { kind: "exception", operation: true }),
+        ...digestGroup(block, { kind: "exception", operation: false }),
         label: "确认已处理",
+        outcome: block.metadata.confirm_interrupted === true ? "stopped" : "done",
       };
     case "tool_call":
     case "tool_call_result":

@@ -372,8 +372,8 @@ test("counts grouped meaningful operations before safe visible compaction", () =
     block("answer", "text", "完成。"),
   ]));
 
-  assert.equal(view.processDigest.operationCount, 4);
-  assert.equal(view.terminalSummary?.operationCount, 4);
+  assert.equal(view.processDigest.operationCount, 3);
+  assert.equal(view.terminalSummary?.operationCount, 3);
   assert.deepEqual(view.processDigest.items.map((item) => item.kind), [
     "analysis",
     "modification",
@@ -382,45 +382,96 @@ test("counts grouped meaningful operations before safe visible compaction", () =
   ]);
 });
 
-test("folds a resolved Store confirmation into one safe inspectable digest stage", () => {
-  const resolvedConfirm = storeResolvedConfirmBlocks();
-  assert.equal(resolvedConfirm.length, 1);
-  assert.equal(resolvedConfirm[0].event_type, "confirm_ask");
-  assert.equal(resolvedConfirm[0].metadata.confirmed, true);
+test("keeps approved and declined Store confirmations as non-operation done evidence", () => {
+  for (const approved of [true, false]) {
+    const resolvedConfirm = storeConfirmBlocks(approved);
+    assert.equal(resolvedConfirm.length, 1);
+    assert.equal(resolvedConfirm[0].event_type, "confirm_ask");
+    assert.equal(resolvedConfirm[0].metadata.confirmed, true);
+    assert.equal(resolvedConfirm[0].metadata.answer, approved);
+
+    const view = derive(conversationTurn([
+      timedUser(100, 500, "completed"),
+      ...resolvedConfirm,
+      block("answer", "text", "已按你的选择继续。"),
+    ]));
+
+    assert.deepEqual(view.interruptions, []);
+    assert.equal(view.terminalSummary?.operationCount, 0);
+    assert.deepEqual(view.processDigest.items.map((item) => ({
+      kind: item.kind,
+      label: item.label,
+      outcome: item.outcome,
+    })), [{
+      kind: "exception",
+      label: "确认已处理",
+      outcome: "done",
+    }]);
+
+    const publicDigest = view.processDigest.items.map(({ id, kind, label, outcome }) => ({
+      id,
+      kind,
+      label,
+      outcome,
+    }));
+    const serialized = JSON.stringify(publicDigest);
+    for (const secret of ["删除 private.key", "/workspace/private", "rm private.key"]) {
+      assert.equal(serialized.includes(secret), false);
+    }
+    assert.equal(view.processDigest.items[0].evidence[0], resolvedConfirm[0]);
+    assert.deepEqual(
+      view.processDigest.items[0].evidence[0].metadata.permission_evidence,
+      resolvedConfirm[0].metadata.permission_evidence,
+    );
+  }
+});
+
+test("marks a restore-interrupted Store confirmation as stopped non-operation evidence", () => {
+  const interruptedConfirm = storeConfirmBlocks(null);
+  assert.equal(interruptedConfirm[0].metadata.confirm_interrupted, true);
 
   const view = derive(conversationTurn([
     timedUser(100, 500, "completed"),
-    ...resolvedConfirm,
-    block("answer", "text", "已按你的选择继续。"),
+    ...interruptedConfirm,
+    block("answer", "text", "已恢复会话。"),
   ]));
 
-  assert.deepEqual(view.interruptions, []);
-  assert.equal(view.terminalSummary?.operationCount, 1);
   assert.deepEqual(view.processDigest.items.map((item) => ({
-    kind: item.kind,
     label: item.label,
     outcome: item.outcome,
   })), [{
-    kind: "exception",
     label: "确认已处理",
-    outcome: "done",
+    outcome: "stopped",
   }]);
+  assert.equal(view.terminalSummary?.operationCount, 0);
+});
 
-  const publicDigest = view.processDigest.items.map(({ id, kind, label, outcome }) => ({
-    id,
-    kind,
-    label,
-    outcome,
-  }));
-  const serialized = JSON.stringify(publicDigest);
-  for (const secret of ["删除 private.key", "/workspace/private", "rm private.key"]) {
-    assert.equal(serialized.includes(secret), false);
-  }
-  assert.equal(view.processDigest.items[0].evidence[0], resolvedConfirm[0]);
-  assert.deepEqual(
-    view.processDigest.items[0].evidence[0].metadata.permission_evidence,
-    resolvedConfirm[0].metadata.permission_evidence,
-  );
+test("counts a Store write with a resolved confirmation as one operation", () => {
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    ...toolBackedStoreDiff("write-with-confirm", "write_to_file"),
+    ...storeConfirmBlocks(true),
+    block("answer", "text", "修改完成。"),
+  ]));
+
+  assert.equal(view.terminalSummary?.operationCount, 1);
+  assert.deepEqual(view.processDigest.items.map((item) => item.kind), [
+    "modification",
+    "exception",
+  ]);
+});
+
+test("keeps an unresolved Store confirmation only in interruption and waiting", () => {
+  const pendingConfirm = storePendingConfirmBlocks();
+  const view = derive(conversationTurn([
+    block("user", "user_message", "继续"),
+    ...pendingConfirm,
+  ]));
+
+  assert.deepEqual(view.interruptions, pendingConfirm);
+  assert.equal(view.liveProgress?.id, "waiting");
+  assert.equal(view.processDigest.items.length, 0);
+  assert.equal(view.processDigest.operationCount, 0);
 });
 
 test("limits the public digest while retaining the latest important evidence", () => {
@@ -636,22 +687,31 @@ function toolBackedStoreDiff(blockId: string, toolName: string): BlockState[] {
   return events.reduce(applyTranscriptEventToBlocks, []);
 }
 
-function storeResolvedConfirmBlocks(): BlockState[] {
+function storeConfirmBlocks(approved: boolean | null): BlockState[] {
   const permissionEvidence = {
-    kind: "user_approved" as const,
+    kind: approved === true
+      ? "user_approved" as const
+      : approved === false
+        ? "user_declined" as const
+        : "manual_required" as const,
     workspace_path: "/workspace/private",
     session_id: "session",
     risk_tier: "high" as const,
     affected_files: ["private.key"],
     operation: "rm private.key",
     permission_mode: "manual_confirm" as const,
-    reason: "user_response",
+    reason: approved === null ? "session_restored" : "user_response",
   };
+  const blockId = approved === true
+    ? "approved-confirm"
+    : approved === false
+      ? "declined-confirm"
+      : "interrupted-confirm";
   const events: StreamEvent[] = [
     {
       event_type: "confirm_ask",
       session_id: "session",
-      block_id: "resolved-confirm",
+      block_id: blockId,
       question: "删除 private.key？",
       kind: "file_delete",
       permission_evidence: { ...permissionEvidence, kind: "manual_required" },
@@ -659,17 +719,28 @@ function storeResolvedConfirmBlocks(): BlockState[] {
     {
       event_type: "confirm_response",
       session_id: "session",
-      block_id: "resolved-confirm",
+      block_id: blockId,
       question: "删除 private.key？",
       kind: "file_delete",
       permission_evidence: permissionEvidence,
-      approved: true,
+      approved,
       responded_at_ms: 120,
-      reason: "user_response",
+      reason: approved === null ? "session_restored" : "user_response",
+      replayed: approved === null,
     },
   ];
 
   return events.reduce(applyTranscriptEventToBlocks, []);
+}
+
+function storePendingConfirmBlocks(): BlockState[] {
+  return applyTranscriptEventToBlocks([], {
+    event_type: "confirm_ask",
+    session_id: "session",
+    block_id: "pending-store-confirm",
+    question: "继续写入吗？",
+    kind: "file_write",
+  });
 }
 
 function storeAnswerAndError(answer: string, error: string): BlockState[] {
