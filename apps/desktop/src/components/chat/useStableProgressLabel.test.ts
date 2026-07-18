@@ -154,6 +154,27 @@ test("does not flush before dueAt and clears state honestly for null", () => {
   assert.deepEqual(cleared, emptyState(100));
 });
 
+test("keeps presented progress visible across a tool-result gap into the answer stream", () => {
+  const module = stableModule();
+  const discovering = candidate("discovering", "正在查找相关内容");
+  const answering = candidate("answering", "正在生成答复");
+  const presented = module.flushStableProgress(
+    module.createStableProgressState(discovering, 0),
+    240,
+  );
+  const toolResultGap = module.updateStableProgress(presented, null, 300);
+  const answerQueued = module.updateStableProgress(toolResultGap, answering, 320);
+  const answerVisible = module.flushStableProgress(answerQueued, 840);
+
+  assert.equal(toolResultGap.visible?.id, "discovering");
+  assert.equal(toolResultGap.hasPresented, true);
+  assert.equal(answerQueued.visible?.id, "discovering");
+  assert.equal(answerQueued.pending?.id, "answering");
+  assert.equal(answerQueued.dueAt, 840);
+  assert.equal(answerVisible.visible?.id, "answering");
+  assert.equal(answerVisible.pending, null);
+});
+
 test("scheduler rounds up, reschedules an early wakeup, and flushes exactly once", () => {
   const schedule = (stableHook as StableHookModule).scheduleStableProgressFlush;
   assert.equal(typeof schedule, "function");
