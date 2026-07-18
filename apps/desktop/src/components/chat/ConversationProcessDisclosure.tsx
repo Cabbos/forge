@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import { ConversationProcessItem } from "@/components/chat/ConversationProcessItem";
 import type { ProcessDigest } from "@/components/chat/conversationTurnView";
@@ -42,14 +43,14 @@ export function ConversationProcessDisclosure({
           </ForgeCollapsibleTrigger>
 
           {nextAction && (
-            <button
+            <ButtonPrimitive
               type="button"
               data-testid="conversation-next-action"
               className="forge-process-next-action"
               onClick={() => setPendingInput(nextAction)}
             >
               {actionLabel(nextAction)}
-            </button>
+            </ButtonPrimitive>
           )}
         </div>
 

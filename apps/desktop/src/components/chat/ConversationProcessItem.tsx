@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import { deriveConversationProcessTarget } from "@/components/chat/conversationProcessTarget";
 import type { ProcessDigestItem } from "@/components/chat/conversationTurnView";
@@ -30,14 +31,14 @@ export function ConversationProcessItem({
           <span className="forge-process-digest-duration">{formatDuration(item.durationMs)}</span>
         )}
         {target && (
-          <button
+          <ButtonPrimitive
             type="button"
             aria-label={target.accessibleLabel}
             className="forge-process-target-trigger"
             onClick={() => openWorkPanelTabInLayout(target.tab)}
           >
             打开
-          </button>
+          </ButtonPrimitive>
         )}
       </div>
 

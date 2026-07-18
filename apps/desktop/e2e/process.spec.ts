@@ -24,6 +24,36 @@ async function forceDarkWorkbench(page: import("@playwright/test").Page) {
   });
 }
 
+async function completeTurn(
+  page: import("@playwright/test").Page,
+  sessionId: string,
+  content = "已经完成。",
+) {
+  const blockId = `result-${crypto.randomUUID()}`;
+  await simulateStream(page, sessionId, [
+    { event_type: "text_start", session_id: sessionId, block_id: blockId },
+    { event_type: "text_chunk", session_id: sessionId, block_id: blockId, content },
+    { event_type: "text_end", session_id: sessionId, block_id: blockId },
+  ], 1);
+}
+
+async function openLatestProcess(page: import("@playwright/test").Page) {
+  const disclosure = page.getByTestId("conversation-process-disclosure").last();
+  const trigger = disclosure.getByTestId("conversation-process-trigger");
+  await expect(trigger).toBeVisible();
+  if (await trigger.getAttribute("aria-expanded") !== "true") await trigger.click();
+  return disclosure;
+}
+
+async function revealLatestProcessDetails(page: import("@playwright/test").Page) {
+  const disclosure = await openLatestProcess(page);
+  const detailTriggers = disclosure.getByRole("button", { name: /^查看 .* 详情$/ });
+  for (let remaining = await detailTriggers.count(); remaining > 0; remaining -= 1) {
+    await detailTriggers.first().click();
+  }
+  return disclosure;
+}
+
 test.beforeEach(async ({ page }) => {
   await setup(page);
   await forceDarkWorkbench(page);
@@ -49,20 +79,20 @@ test.beforeEach(async ({ page }) => {
 
     await simulateStream(page, sessionId, fullConversation(sessionId), 10);
 
-    const thinkingTrigger = page.getByTestId("thinking-trigger").first();
-    const processSummary = page.getByTestId("tool-activity-summary").first();
-    await expect(thinkingTrigger).toBeVisible();
+    const disclosure = page.getByTestId("conversation-process-disclosure").first();
+    const processSummary = disclosure.getByTestId("conversation-process-trigger");
+    await expect(page.getByTestId("thinking-trigger")).toHaveCount(0);
+    await expect(page.getByTestId("tool-activity-summary")).toHaveCount(0);
     await expect(processSummary).toBeVisible();
     await expect(processSummary).toHaveAttribute("aria-expanded", "false");
+    await expect(processSummary).toContainText("已完成 · 2 项操作");
 
     const widths = await page.evaluate(() => {
-      const thinking = document.querySelector("[data-testid='thinking-trigger']")?.getBoundingClientRect();
-      const process = document.querySelector("[data-testid='tool-activity-summary']")?.getBoundingClientRect();
-      const processNode = document.querySelector<HTMLElement>("[data-testid='tool-activity-summary']");
+      const process = document.querySelector("[data-testid='conversation-process-trigger']")?.getBoundingClientRect();
+      const processNode = document.querySelector<HTMLElement>("[data-testid='conversation-process-trigger']");
       const processStyle = processNode ? getComputedStyle(processNode) : null;
-      return thinking && process
+      return process
         ? {
-          thinking: Math.round(thinking.width),
           process: Math.round(process.width),
           processBorderTop: processStyle ? Math.round(Number.parseFloat(processStyle.borderTopWidth)) : -1,
           processBackground: processStyle?.backgroundColor ?? "",
@@ -70,15 +100,16 @@ test.beforeEach(async ({ page }) => {
         : null;
     });
     expect(widths).not.toBeNull();
-    expect(widths!.thinking).toBeLessThanOrEqual(220);
     expect(widths!.process).toBeLessThanOrEqual(520);
-    await expect(thinkingTrigger).toHaveCSS("border-top-width", "0px");
     expect(widths!.processBorderTop).toBe(0);
     expect(widths!.processBackground).toBe("rgba(0, 0, 0, 0)");
 
     await processSummary.click();
-    const toolTrigger = page.getByTestId("tool-card-trigger").first();
-    const shellTrigger = page.getByTestId("shell-card-trigger").first();
+    await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(3);
+    const detailTriggers = disclosure.getByRole("button", { name: /^查看 .* 详情$/ });
+    for (let remaining = await detailTriggers.count(); remaining > 0; remaining -= 1) await detailTriggers.first().click();
+    const toolTrigger = disclosure.getByTestId("tool-card-trigger").first();
+    const shellTrigger = disclosure.getByTestId("shell-card-trigger").first();
     await expect(toolTrigger).toBeVisible();
     await expect(shellTrigger).toBeVisible();
     await toolTrigger.click();
@@ -154,9 +185,9 @@ test.beforeEach(async ({ page }) => {
     await page.locator("textarea").press("Enter");
     await expectHeldSendInput(page, "继续把对话区域靠近 Codex。");
 
-    const pending = page.getByTestId("pending-block");
+    const pending = page.getByTestId("conversation-progress");
     await expect(pending).toBeVisible();
-    await expect(pending).toHaveText(/正在组织回答/);
+    await expect(pending).toHaveText(/正在理解任务/);
     await expect(pending).toHaveCSS("border-top-width", "0px");
     await expect(page.getByTestId("composer-surface")).toHaveAttribute("data-state", "running");
     await releaseHeldSendInput(page);
@@ -246,7 +277,7 @@ test.beforeEach(async ({ page }) => {
 
     await simulateStream(page, sessionId, [
       {
-        event_type: "tool_call",
+        event_type: "tool_call_start",
         session_id: sessionId,
         block_id: "compact-tool",
         tool_name: "read_file",
@@ -265,75 +296,28 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_end", session_id: sessionId, block_id: "compact-shell", exit_code: 0 },
     ], 1);
 
-    await page.getByTestId("tool-activity-summary").click();
+    await completeTurn(page, sessionId);
+    const disclosure = await openLatestProcess(page);
+    await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(2);
+    await expect(disclosure.getByText("已查看 App.tsx", { exact: true })).toBeVisible();
+    await expect(disclosure.getByText("已验证构建", { exact: true })).toBeVisible();
+    await expect(disclosure.getByTestId("tool-card-trigger")).toHaveCount(0);
+    await expect(disclosure.getByTestId("shell-card-trigger")).toHaveCount(0);
 
-    const metrics = await page.evaluate(() => {
-      const root = document.documentElement;
-      const group = document.querySelector("[data-testid='tool-activity-group']");
-      const summary = document.querySelector("[data-testid='tool-activity-summary']");
-      const list = document.querySelector(".forge-tool-activity-list");
-      const tool = document.querySelector("[data-testid='tool-card-trigger']");
-      const shell = document.querySelector("[data-testid='shell-card-trigger']");
-      if (!group || !summary || !list || !tool || !shell) return null;
-      const shellWrapper = shell.closest(".shell-reel");
-      const shellBody = shell.closest(".shell-reel-body");
-      const groupStyle = getComputedStyle(group);
-      const summaryStyle = getComputedStyle(summary);
-      const listStyle = getComputedStyle(list);
-      const toolStyle = getComputedStyle(tool);
-      const shellWrapperStyle = shellWrapper ? getComputedStyle(shellWrapper) : null;
-      const shellBodyStyle = shellBody ? getComputedStyle(shellBody) : null;
+    const metrics = await disclosure.evaluate((node) => {
+      const rows = [...node.querySelectorAll<HTMLElement>(".forge-process-digest-row")];
+      const content = node.querySelector<HTMLElement>(".forge-process-disclosure-content");
       return {
-        token: getComputedStyle(root).getPropertyValue("--forge-log-row-height").trim(),
-        groupWidth: Math.round(group.getBoundingClientRect().width),
-        groupBorderLeft: Math.round(Number.parseFloat(groupStyle.borderLeftWidth)),
-        summaryHeight: Math.round(summary.getBoundingClientRect().height),
-        summaryDisplay: summaryStyle.display,
-        summaryBackground: summaryStyle.backgroundColor,
-        summaryBorderTop: Math.round(Number.parseFloat(summaryStyle.borderTopWidth)),
-        listGap: Math.round(Number.parseFloat(listStyle.gap)),
-        toolHeight: Math.round(tool.getBoundingClientRect().height),
-        toolRadius: Number.parseFloat(toolStyle.borderTopLeftRadius),
-        toolBorder: toolStyle.borderTopColor,
-        toolBackground: toolStyle.backgroundColor,
-        shellHeight: Math.round(shell.getBoundingClientRect().height),
-        toolMargin: getComputedStyle(tool.parentElement as Element).marginBottom,
-        shellMargin: getComputedStyle(shell.parentElement as Element).marginBottom,
-        toolMeterCount: document.querySelectorAll(".tool-machine-meter").length,
-        toolLedCount: document.querySelectorAll(".tool-machine-led").length,
-        shellCapCount: document.querySelectorAll(".shell-reel-cap").length,
-        shellWrapperMarginTop: shellWrapperStyle ? Math.round(Number.parseFloat(shellWrapperStyle.marginTop)) : -1,
-        shellWrapperBackground: shellWrapperStyle?.backgroundColor ?? "",
-        shellBodyRadius: shellBodyStyle ? Number.parseFloat(shellBodyStyle.borderTopLeftRadius) : 0,
-        shellBodyBorder: shellBodyStyle?.borderTopColor ?? "",
-        shellBodyBackground: shellBodyStyle?.backgroundColor ?? "",
+        rowHeights: rows.map((row) => Math.round(row.getBoundingClientRect().height)),
+        rowBackgrounds: rows.map((row) => getComputedStyle(row).backgroundColor),
+        contentWidth: content ? Math.round(content.getBoundingClientRect().width) : 0,
+        detailCount: node.querySelectorAll(".forge-process-detail-trigger").length,
       };
     });
-
-    expect(metrics).not.toBeNull();
-    expect(metrics!.token).toBe("22px");
-    expect(metrics!.groupWidth).toBeLessThanOrEqual(760);
-    expect(metrics!.groupBorderLeft).toBe(0);
-    expect(metrics!.summaryHeight).toBeLessThanOrEqual(24);
-    expect(metrics!.summaryDisplay).toBe("inline-flex");
-    expect(metrics!.summaryBackground).toBe("rgba(0, 0, 0, 0)");
-    expect(metrics!.summaryBorderTop).toBe(0);
-    expect(metrics!.listGap).toBe(2);
-    expect(metrics!.toolHeight).toBe(28);
-    expect(metrics!.toolRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.toolBorder).toBe("rgba(0, 0, 0, 0)");
-    expect(metrics!.toolBackground).toBe("rgba(0, 0, 0, 0)");
-    expect(metrics!.shellHeight).toBe(40);
-    expect(metrics!.toolMargin).toBe("0px");
-    expect(metrics!.shellMargin).toBe("0px");
-    expect(metrics!.toolMeterCount).toBe(0);
-    expect(metrics!.toolLedCount).toBe(0);
-    expect(metrics!.shellCapCount).toBe(0);
-    expect(metrics!.shellWrapperMarginTop).toBe(0);
-    expect(metrics!.shellWrapperBackground).toBe("rgba(0, 0, 0, 0)");
-    expect(metrics!.shellBodyRadius).toBeLessThanOrEqual(8);
-    expect(metrics!.shellBodyBorder).toBe("rgb(221, 210, 195)");
-    expect(metrics!.shellBodyBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics.rowHeights.every((height) => height <= 24)).toBe(true);
+    expect(metrics.rowBackgrounds.every((value) => value === "rgba(0, 0, 0, 0)")).toBe(true);
+    expect(metrics.contentWidth).toBeLessThanOrEqual(620);
+    expect(metrics.detailCount).toBe(2);
   });
 
   test("process rows keep long evidence and status anchored", async ({ page }) => {
@@ -380,7 +364,8 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_end", session_id: sessionId, block_id: "anchored-shell", exit_code: 0 },
     ], 1);
 
-    await page.getByTestId("tool-activity-summary").click();
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
 
     const metrics = await page.evaluate(() => {
       const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
@@ -478,6 +463,8 @@ test.beforeEach(async ({ page }) => {
       },
     ], 1);
 
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
     await page.getByTestId("tool-card-trigger").click();
     await expect(page.getByTestId("sub-agent-trace")).toBeVisible();
     await page.getByTestId("sub-agent-round-trigger").click();
@@ -566,39 +553,39 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_end", session_id: sessionId, block_id: "dense-check", exit_code: 0 },
     ], 1);
 
-    const metrics = await page.getByTestId("tool-activity-summary").evaluate((node) => {
-      const summary = node as HTMLElement;
+    await completeTurn(page, sessionId);
+    const disclosure = page.getByTestId("conversation-process-disclosure").last();
+    const summary = disclosure.getByTestId("conversation-process-trigger");
+    await expect(summary).toContainText("✓ 已完成 · 6 项操作");
+    await expect(summary).toHaveAttribute("aria-expanded", "false");
+    await expect(disclosure.getByTestId("conversation-process-timeline")).toHaveCount(0);
+
+    const collapsedMetrics = await summary.evaluate((node) => {
       const lane = document.querySelector<HTMLElement>("[data-testid='message-lane']");
-      const items = Array.from(summary.querySelectorAll<HTMLElement>(".forge-tool-activity-summary-item"));
-      const summaryStyle = getComputedStyle(summary);
-      const itemStyles = items.map((item) => {
-        const style = getComputedStyle(item);
-        return {
-          overflow: style.overflow,
-          textOverflow: style.textOverflow,
-          whiteSpace: style.whiteSpace,
-          width: Math.round(item.getBoundingClientRect().width),
-        };
-      });
+      const style = getComputedStyle(node);
       return {
-        itemCount: items.length,
-        summaryHeight: Math.round(summary.getBoundingClientRect().height),
-        summaryWidth: Math.round(summary.getBoundingClientRect().width),
+        height: Math.round(node.getBoundingClientRect().height),
+        width: Math.round(node.getBoundingClientRect().width),
         laneWidth: lane ? Math.round(lane.getBoundingClientRect().width) : 0,
-        overflow: summaryStyle.overflow,
-        whiteSpace: summaryStyle.whiteSpace,
-        itemStyles,
+        background: style.backgroundColor,
       };
     });
+    expect(collapsedMetrics.height).toBeLessThanOrEqual(28);
+    expect(collapsedMetrics.width).toBeLessThanOrEqual(collapsedMetrics.laneWidth);
+    expect(collapsedMetrics.background).toBe("rgba(0, 0, 0, 0)");
 
-    expect(metrics.itemCount).toBeGreaterThanOrEqual(5);
-    expect(metrics.summaryHeight).toBeLessThanOrEqual(28);
-    expect(metrics.summaryWidth).toBeLessThanOrEqual(metrics.laneWidth);
-    expect(metrics.overflow).toBe("hidden");
-    expect(metrics.whiteSpace).toBe("nowrap");
-    expect(metrics.itemStyles.every((item) => item.overflow === "hidden")).toBe(true);
-    expect(metrics.itemStyles.every((item) => item.textOverflow === "ellipsis")).toBe(true);
-    expect(metrics.itemStyles.every((item) => item.whiteSpace === "nowrap")).toBe(true);
+    await summary.click();
+    await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(6);
+    const labels = disclosure.locator(".forge-process-digest-label");
+    await expect(labels).toHaveCount(6);
+    for (let index = 0; index < await labels.count(); index += 1) {
+      const style = await labels.nth(index).evaluate((node) => ({
+        overflow: getComputedStyle(node).overflow,
+        textOverflow: getComputedStyle(node).textOverflow,
+        whiteSpace: getComputedStyle(node).whiteSpace,
+      }));
+      expect(style).toEqual({ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+    }
   });
 
   test("expanded logs share one detail surface", async ({ page }) => {
@@ -618,7 +605,7 @@ test.beforeEach(async ({ page }) => {
 
     await simulateStream(page, sessionId, [
       {
-        event_type: "tool_call",
+        event_type: "tool_call_start",
         session_id: sessionId,
         block_id: "detail-tool",
         tool_name: "read_file",
@@ -642,7 +629,8 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_end", session_id: sessionId, block_id: "detail-shell", exit_code: 0 },
     ], 1);
 
-    await page.getByTestId("tool-activity-summary").click();
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
     await page.getByTestId("tool-card-trigger").click();
     await page.getByTestId("shell-card-trigger").click();
 
@@ -706,6 +694,8 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_output", session_id: sessionId, block_id: "material-shell", content: "done" },
       { event_type: "shell_end", session_id: sessionId, block_id: "material-shell", exit_code: 0 },
     ], 1);
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
     await page.getByTestId("shell-card-trigger").click();
     await openWorkPanel(page);
     await page.getByRole("button", { name: /模型：DeepSeek V4 Flash 1M/ }).click();
@@ -750,14 +740,14 @@ test.beforeEach(async ({ page }) => {
       const detail = document.querySelector<HTMLElement>("[data-testid='log-detail-surface']");
       const menu = document.querySelector<HTMLElement>(".forge-composer-model-menu");
       const panel = document.querySelector<HTMLElement>("aside.forge-work-panel");
-      const panelHeader = panel?.querySelector<HTMLElement>(".forge-work-panel-header");
+      const panelUtilities = panel?.querySelector<HTMLElement>(".forge-work-panel-launcher-utilities");
       const separator = document.querySelector<HTMLElement>(".forge-work-panel-separator");
-      if (!composer || !detail || !menu || !panel || !panelHeader || !separator) return null;
+      if (!composer || !detail || !menu || !panel || !panelUtilities || !separator) return null;
       const composerStyle = getComputedStyle(composer);
       const detailStyle = getComputedStyle(detail);
       const menuStyle = getComputedStyle(menu);
       const panelStyle = getComputedStyle(panel);
-      const panelHeaderStyle = getComputedStyle(panelHeader);
+      const panelUtilitiesStyle = getComputedStyle(panelUtilities);
       return {
         materialBorder,
         materialBorderColor,
@@ -779,9 +769,11 @@ test.beforeEach(async ({ page }) => {
         menuBorder: menuStyle.borderTopColor,
         menuBackground: menuStyle.backgroundColor,
         panelBackground: panelStyle.backgroundColor,
-        panelDepth: resolveColor(root.getPropertyValue("--forge-bg-depth").trim()),
-        panelHeaderHeight: Math.round(panelHeader.getBoundingClientRect().height),
-        panelHeaderBorder: panelHeaderStyle.borderBottomColor,
+        panelSheet: resolveColor(root.getPropertyValue("--forge-work-panel-sheet").trim()),
+        panelRadius: panelStyle.borderTopLeftRadius,
+        panelShadow: panelStyle.boxShadow,
+        panelUtilitiesHeight: Math.round(panelUtilities.getBoundingClientRect().height),
+        panelUtilitiesBorder: panelUtilitiesStyle.borderBottomWidth,
         separatorWidth: Math.round(separator.getBoundingClientRect().width),
       };
     });
@@ -796,9 +788,11 @@ test.beforeEach(async ({ page }) => {
     expect(metrics!.detailBackground).toBe(metrics!.materialRaised);
     expect(metrics!.menuBorder).toBe(metrics!.materialBorderColor);
     expect(metrics!.menuBackground).toBe(metrics!.materialPopover);
-    expect(metrics!.panelBackground).toBe(metrics!.panelDepth);
-    expect(metrics!.panelHeaderHeight).toBe(44);
-    expect(metrics!.panelHeaderBorder).toBe(metrics!.materialBorderColor);
+    expect(metrics!.panelBackground).toBe(metrics!.panelSheet);
+    expect(metrics!.panelRadius).toBe("0px");
+    expect(metrics!.panelShadow).toBe("none");
+    expect(metrics!.panelUtilitiesHeight).toBeLessThanOrEqual(40);
+    expect(metrics!.panelUtilitiesBorder).toBe("0px");
     expect(metrics!.separatorWidth).toBe(1);
   });
 
@@ -961,39 +955,18 @@ test.beforeEach(async ({ page }) => {
     const pendingHeight = await card.evaluate((node) => Math.round(node.getBoundingClientRect().height));
     await card.getByRole("button", { name: "继续" }).click();
 
-    await expect(card).toHaveAttribute("data-confirm-state", "resolved");
-    await expect(card.getByTestId("confirm-resolved-summary")).toBeVisible();
-    await expect(card.getByText("已继续", { exact: true })).toBeVisible();
-    await expect(card.getByRole("button", { name: "继续" })).toHaveCount(0);
-    await expect(card.getByRole("button", { name: "取消" })).toHaveCount(0);
-    await expect(card.getByTestId("confirm-boundary-grid")).toHaveCount(0);
-    await expect(card.getByTestId("confirm-warning")).toHaveCount(0);
-    await expect(card.getByTestId("confirm-action-bar")).toHaveCount(0);
+    await expect(card).toHaveCount(0);
+    await expect(page.getByText("已继续", { exact: true })).toHaveCount(0);
+    await completeTurn(page, sessionId);
 
-    const metrics = await card.evaluate((node) => {
-      const style = getComputedStyle(node);
-      const header = node.querySelector<HTMLElement>(".forge-message-panel-header");
-      const summary = node.querySelector<HTMLElement>("[data-testid='confirm-resolved-summary']");
-      const status = node.querySelector<HTMLElement>(".forge-confirm-resolved");
-      return {
-        height: Math.round(node.getBoundingClientRect().height),
-        background: style.backgroundColor,
-        borderColor: style.borderTopColor,
-        headerHeight: header ? Math.round(header.getBoundingClientRect().height) : 0,
-        summaryHeight: summary ? Math.round(summary.getBoundingClientRect().height) : 0,
-        summaryDisplay: summary ? getComputedStyle(summary).display : "",
-        statusHeight: status ? Math.round(status.getBoundingClientRect().height) : 0,
-      };
-    });
-
-    expect(metrics.height).toBeLessThan(pendingHeight - 80);
-    expect(metrics.height).toBeLessThanOrEqual(68);
-    expect(metrics.background).not.toBe("rgba(0, 0, 0, 0)");
-    expect(metrics.borderColor).not.toBe("rgba(184, 138, 86, 0.22)");
-    expect(metrics.headerHeight).toBeLessThanOrEqual(32);
-    expect(metrics.summaryHeight).toBeLessThanOrEqual(30);
-    expect(metrics.summaryDisplay).toBe("flex");
-    expect(metrics.statusHeight).toBeLessThanOrEqual(20);
+    const disclosure = page.getByTestId("conversation-process-disclosure").last();
+    const trigger = disclosure.getByTestId("conversation-process-trigger");
+    const collapsedHeight = await trigger.evaluate((node) => Math.round(node.getBoundingClientRect().height));
+    expect(collapsedHeight).toBeLessThan(pendingHeight - 80);
+    expect(collapsedHeight).toBeLessThanOrEqual(28);
+    await trigger.click();
+    await expect(disclosure.getByText("已处理确认", { exact: true })).toBeVisible();
+    await expect(disclosure.getByText("Allow write_file?", { exact: true })).toHaveCount(0);
   });
 
   test("write confirmation bounds long file paths and commands", async ({ page }) => {
@@ -1097,12 +1070,15 @@ test.beforeEach(async ({ page }) => {
       },
     ], 5);
 
-    const card = page.getByTestId("message-panel").filter({ hasText: "本轮交付" });
-    await expect(card.getByText("自动记录")).toHaveCount(0);
-    await expect(card.getByText("建议更新项目记录")).toHaveCount(0);
-    await expect(card.getByRole("button", { name: "检查这版" })).toBeVisible();
-    await card.getByRole("button", { name: "检查这版" }).click();
-    await expect(page.locator("textarea")).toHaveValue(/检查当前版本/);
+    await completeTurn(page, sessionId);
+    const disclosure = page.getByTestId("conversation-process-disclosure").last();
+    await expect(page.getByTestId("delivery-summary-grid")).toHaveCount(0);
+    await expect(disclosure.getByText("自动记录")).toHaveCount(0);
+    await expect(disclosure.getByText("建议更新项目记录")).toHaveCount(0);
+    const nextAction = disclosure.getByTestId("conversation-next-action");
+    await expect(nextAction).toHaveText("下一步：交付状态可以继续验收。");
+    await nextAction.click();
+    await expect(page.locator("textarea")).toHaveValue("下一步：交付状态可以继续验收。");
   });
 
   test("diff views read like a professional patch surface", async ({ page }) => {
@@ -1145,6 +1121,8 @@ test.beforeEach(async ({ page }) => {
       },
     ], 1);
 
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
     const diff = page.getByTestId("diff-card");
     await expect(diff).toBeVisible();
     await expect(diff.getByTestId("diff-file-path")).toHaveText("src/components/App.tsx");
@@ -1258,7 +1236,7 @@ test.beforeEach(async ({ page }) => {
 
   test("diff file actions stay scoped to the active workspace", async ({ page }) => {
     const sessionId = crypto.randomUUID();
-    const projectPath = "/Users/cabbos/project/forge-test-app";
+    const projectPath = "/Users/cabbos/project/forge";
     await page.addInitScript(({ sessionId, projectPath }) => {
       window.localStorage.clear();
       window.localStorage.setItem("forge-working-dir", projectPath);
@@ -1301,6 +1279,8 @@ test.beforeEach(async ({ page }) => {
       },
     ], 1);
 
+    await completeTurn(page, sessionId);
+    await revealLatestProcessDetails(page);
     const diff = page.getByTestId("diff-card");
     await diff.getByRole("button", { name: "打开文件" }).click();
     await expect.poll(async () => page.evaluate(() => {
@@ -1355,16 +1335,20 @@ test.beforeEach(async ({ page }) => {
       { event_type: "text_end", session_id: sessionId, block_id: "tool-story-b" },
     ], 1);
 
-    const group = page.getByTestId("tool-activity-group");
-    await expect(group).toHaveCount(1);
-    await expect(group.getByTestId("tool-activity-summary")).toHaveAttribute("aria-expanded", "true");
-    await expect(group.getByText("处理遇到问题")).toBeVisible();
-    await expect(group.getByText("3 步")).toBeVisible();
-    await expect(group.getByText("已读取文件")).toBeVisible();
+    const group = await revealLatestProcessDetails(page);
+    await expect(group.getByTestId("conversation-process-item")).toHaveCount(3);
+    await expect(group.getByText("已查看 App.tsx", { exact: true })).toBeVisible();
+    await expect(group.getByText("已验证构建", { exact: true })).toBeVisible();
+    await expect(group.getByText("已调整 App.tsx", { exact: true })).toBeVisible();
+    await expect(group.locator(".forge-process-digest-node[data-outcome='failed']")).toHaveCount(2);
+
+    const failedShell = group.getByTestId("shell-card-trigger");
+    await expect(failedShell).toHaveAttribute("aria-expanded", "true");
+    const failedTool = group.getByTestId("tool-card-trigger").last();
+    await expect(failedTool).toHaveAttribute("aria-expanded", "true");
     await expect(group.getByTestId("shell-exit-code")).toHaveText("exit 1");
     await expect(group.getByTestId("tool-result-summary")).toContainText("权限不足");
     await expect(group.getByTestId("shell-output-section").filter({ hasText: "stderr" })).toContainText("Cannot find module");
-    await expect(group.getByText("完成", { exact: true })).toHaveCount(0);
 
     const failureMetrics = await group.evaluate((node) => {
       const detail = node.querySelector<HTMLElement>("[data-testid='log-detail-surface']");
@@ -1413,17 +1397,15 @@ test.beforeEach(async ({ page }) => {
       { event_type: "tool_call_result", session_id: sessionId, block_id: "success-write", result: "ok", is_error: false, duration_ms: 31 },
     ], 1);
 
-    const group = page.getByTestId("tool-activity-group");
-    await expect(group).toHaveCount(1);
-    const summary = group.getByTestId("tool-activity-summary");
+    await completeTurn(page, sessionId);
+    const group = page.getByTestId("conversation-process-disclosure").last();
+    const summary = group.getByTestId("conversation-process-trigger");
     await expect(summary).toBeVisible();
     await expect(summary).toHaveAttribute("aria-expanded", "false");
-    await expect(summary).toContainText("过程已收起 · 3 步");
-    await expect(summary).toContainText("查看 1 个文件");
-    await expect(summary).toContainText("运行 1 次检查");
-    await expect(group.getByText("过程证据")).toHaveCount(0);
-    await expect(group.getByText("已读取文件")).toHaveCount(0);
-    await expect(group.getByText("npm run build")).toHaveCount(0);
+    await expect(summary).toContainText("✓ 已完成 · 3 项操作");
+    await expect(group.getByTestId("conversation-process-timeline")).toHaveCount(0);
+    await expect(group.getByText("已查看 App.tsx", { exact: true })).toHaveCount(0);
+    await expect(group.getByText("已验证构建", { exact: true })).toHaveCount(0);
 
     const metrics = await summary.evaluate((node) => {
       const style = getComputedStyle(node);
@@ -1439,8 +1421,9 @@ test.beforeEach(async ({ page }) => {
 
     await summary.click();
     await expect(summary).toHaveAttribute("aria-expanded", "true");
-    await expect(group.getByText("已读取文件")).toBeVisible();
-    await expect(group.getByText("npm run build")).toBeVisible();
+    await expect(group.getByText("已查看 App.tsx", { exact: true })).toBeVisible();
+    await expect(group.getByText("已验证构建", { exact: true })).toBeVisible();
+    await expect(group.getByText("已调整 App.tsx", { exact: true })).toBeVisible();
   });
 
   test("waiting and thinking states stay quiet but specific", async ({ page }) => {
@@ -1464,12 +1447,11 @@ test.beforeEach(async ({ page }) => {
     await page.locator("textarea").press("Enter");
     await expectHeldSendInput(page, "继续优化等待状态");
 
-    const pending = page.getByTestId("pending-block");
-    await expect(pending).toHaveText(/正在组织回答/);
+    const pending = page.getByTestId("conversation-progress");
+    await expect(pending).toHaveText(/正在理解任务/);
     await expect(pending).toHaveAttribute("role", "status");
     await expect(pending).toHaveAttribute("aria-live", "polite");
-    await expect(pending).toHaveAttribute("data-state", "running");
-    await expect(pending.getByTestId("pending-dots")).toBeVisible();
+    await expect(pending.locator(".forge-turn-progress-dot")).toBeVisible();
     await expect(pending).toHaveCSS("border-top-width", "0px");
     const pendingMetrics = await pending.evaluate((node) => ({
       height: Math.round(node.getBoundingClientRect().height),
@@ -1486,13 +1468,12 @@ test.beforeEach(async ({ page }) => {
       { event_type: "thinking_chunk", session_id: sessionId, block_id: "quiet-thinking", content: "Need to inspect the failure before editing." },
     ], 1);
 
-    const thinking = page.getByTestId("thinking-trigger");
-    await expect(thinking).toHaveText(/正在梳理思路/);
-    await expect(thinking).toHaveAttribute("data-state", "running");
-    await expect(thinking.getByTestId("thinking-dots")).toBeVisible();
+    const thinking = page.getByTestId("conversation-progress");
+    await expect(thinking).toHaveText(/正在理解任务/);
+    await expect(page.getByText("Need to inspect the failure before editing.")).toHaveCount(0);
 
     const metrics = await page.evaluate(() => {
-      const thinking = document.querySelector("[data-testid='thinking-trigger']");
+      const thinking = document.querySelector("[data-testid='conversation-progress']");
       if (!thinking) return null;
       return {
         thinkingHeight: Math.round(thinking.getBoundingClientRect().height),
@@ -1506,16 +1487,14 @@ test.beforeEach(async ({ page }) => {
     });
 
     expect(metrics).not.toBeNull();
-    expect(pendingMetrics.minHeight).toBe(22);
-    expect(metrics!.thinkingMinHeight).toBe(22);
-    expect(pendingMetrics.height).toBeGreaterThanOrEqual(22);
-    expect(pendingMetrics.height).toBeLessThanOrEqual(24);
-    expect(metrics!.thinkingHeight).toBeGreaterThanOrEqual(22);
-    expect(metrics!.thinkingHeight).toBeLessThanOrEqual(24);
-    expect(pendingMetrics.fontSize).toBeCloseTo(10.5);
-    expect(metrics!.thinkingFontSize).toBeCloseTo(10.5);
-    expect(pendingMetrics.gap).toBe(6);
-    expect(metrics!.thinkingGap).toBe(6);
+    expect(pendingMetrics.minHeight).toBe(24);
+    expect(metrics!.thinkingMinHeight).toBe(24);
+    expect(pendingMetrics.height).toBeGreaterThanOrEqual(24);
+    expect(metrics!.thinkingHeight).toBeGreaterThanOrEqual(24);
+    expect(pendingMetrics.fontSize).toBeCloseTo(12);
+    expect(metrics!.thinkingFontSize).toBeCloseTo(12);
+    expect(pendingMetrics.gap).toBe(8);
+    expect(metrics!.thinkingGap).toBe(8);
     expect(pendingMetrics.background).toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.thinkingBackground).toBe("rgba(0, 0, 0, 0)");
     expect(pendingMetrics.borderTop).toBe(0);
@@ -1524,7 +1503,7 @@ test.beforeEach(async ({ page }) => {
     await releaseHeldSendInput(page);
   });
 
-  test("thinking block expands and shows content", async ({ page }) => {
+  test("completed thinking stays private and folds into the process digest", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -1539,28 +1518,25 @@ test.beforeEach(async ({ page }) => {
     });
 
     const thinkingId = crypto.randomUUID();
+    const answerId = crypto.randomUUID();
     await simulateStream(page, sessionId, [
       { event_type: "session_started", session_id: sessionId, agent_type: "deepseek", model: "deepseek-v4-flash" },
       { event_type: "thinking_start", session_id: sessionId, block_id: thinkingId },
       { event_type: "thinking_chunk", session_id: sessionId, block_id: thinkingId, content: "I need to analyze the auth system first." },
       { event_type: "thinking_end", session_id: sessionId, block_id: thinkingId },
-      { event_type: "text_start", session_id: sessionId, block_id: crypto.randomUUID() },
-      { event_type: "text_chunk", session_id: sessionId, block_id: crypto.randomUUID(), content: "Done analyzing." },
-      { event_type: "text_end", session_id: sessionId, block_id: crypto.randomUUID() },
+      { event_type: "text_start", session_id: sessionId, block_id: answerId },
+      { event_type: "text_chunk", session_id: sessionId, block_id: answerId, content: "Done analyzing." },
+      { event_type: "text_end", session_id: sessionId, block_id: answerId },
     ], 30);
 
-    // Thinking trigger should be visible
-    const thinkingTrigger = page.getByRole("button", { name: /思考已收起/ });
-    await expect(thinkingTrigger).toBeVisible({ timeout: 5000 });
-
-    // Click to expand
-    await thinkingTrigger.click();
-
-    // Thinking content should be visible
-    await expect(page.getByText("I need to analyze the auth system first.")).toBeVisible();
+    await expect(page.getByTestId("assistant-message")).toContainText("Done analyzing.");
+    await expect(page.getByTestId("thinking-trigger")).toHaveCount(0);
+    await expect(page.getByText("I need to analyze the auth system first.")).toHaveCount(0);
+    const disclosure = await openLatestProcess(page);
+    await expect(disclosure.getByText("已理解任务", { exact: true })).toBeVisible();
   });
 
-  test("tool card shows running then done status", async ({ page }) => {
+  test("tool work moves from one live progress row into completed evidence", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -1581,10 +1557,10 @@ test.beforeEach(async ({ page }) => {
       { event_type: "tool_call_start", session_id: sessionId, block_id: toolId, tool_name: "read_file", tool_input: { path: "test.rs" } },
     ], 30);
 
-    // Should show running status
-    const runningTool = page.getByRole("button", { name: /正在读取文件/ });
+    const runningTool = page.getByTestId("conversation-progress");
     await expect(runningTool).toBeVisible({ timeout: 3000 });
-    await expect(runningTool).toHaveAttribute("data-state", "running");
+    await expect(runningTool).toHaveText("正在查看 test.rs");
+    await expect(runningTool).toHaveAttribute("data-progress-id", "read:test.rs");
     await expect(page.getByText("进行中", { exact: true })).toHaveCount(0);
 
     // Send tool_result (done state)
@@ -1592,15 +1568,18 @@ test.beforeEach(async ({ page }) => {
       { event_type: "tool_call_result", session_id: sessionId, block_id: toolId, result: "fn main() {}", is_error: false, duration_ms: 100 },
     ], 30);
 
-    // Should show done
-    const doneTool = page.getByRole("button", { name: /已读取文件/ });
+    await completeTurn(page, sessionId);
+    const disclosure = await openLatestProcess(page);
+    await expect(disclosure.getByText("已查看 test.rs", { exact: true })).toBeVisible();
+    await disclosure.getByRole("button", { name: "查看 已查看 test.rs 详情" }).click();
+    const doneTool = disclosure.getByTestId("tool-card-trigger");
     await expect(doneTool).toBeVisible({ timeout: 3000 });
     await expect(doneTool).toHaveAttribute("data-state", "done");
     await expect(doneTool).toContainText("100ms");
-    await expect(page.getByText("完成", { exact: true })).toHaveCount(0);
+    await expect(disclosure.getByText("完成", { exact: true })).toHaveCount(1);
   });
 
-  test("shell card exposes a restrained running state before exit", async ({ page }) => {
+  test("shell work moves from one live progress row into completed evidence", async ({ page }) => {
     const sessionId = crypto.randomUUID();
     await page.addInitScript((sessionId) => {
       // @ts-expect-error mock
@@ -1621,35 +1600,33 @@ test.beforeEach(async ({ page }) => {
       { event_type: "shell_output", session_id: sessionId, block_id: shellId, content: "stdout:\nbuilding..." },
     ], 30);
 
-    const runningShell = page.getByTestId("shell-card-trigger");
+    const runningShell = page.getByTestId("conversation-progress");
     await expect(runningShell).toBeVisible({ timeout: 3000 });
-    await expect(runningShell).toHaveAttribute("data-state", "running");
+    await expect(runningShell).toHaveText("正在验证构建");
+    await expect(runningShell).toHaveAttribute("data-progress-id", "verify:build");
     const runningMetrics = await runningShell.evaluate((node) => {
-      const status = node.querySelector<HTMLElement>(".forge-log-status");
       const style = getComputedStyle(node);
-      const statusStyle = status ? getComputedStyle(status) : null;
       return {
         minHeight: Math.round(Number.parseFloat(getComputedStyle(node).minHeight)),
         background: style.backgroundColor,
         borderTop: Math.round(Number.parseFloat(style.borderTopWidth)),
-        statusTone: status?.getAttribute("data-tone") ?? "",
-        statusTitle: status?.getAttribute("title") ?? "",
-        statusColor: statusStyle?.color ?? "",
       };
     });
-    expect(runningMetrics.minHeight).toBe(44);
-    expect(runningMetrics.background).not.toBe("rgba(0, 0, 0, 0)");
+    expect(runningMetrics.minHeight).toBe(24);
+    expect(runningMetrics.background).toBe("rgba(0, 0, 0, 0)");
     expect(runningMetrics.borderTop).toBe(0);
-    expect(runningMetrics.statusTone).toBe("running");
-    expect(runningMetrics.statusTitle).toBe("运行中");
-    expect(runningMetrics.statusColor).not.toBe("rgb(184, 138, 86)");
 
     await simulateStream(page, sessionId, [
       { event_type: "shell_end", session_id: sessionId, block_id: shellId, exit_code: 0 },
     ], 30);
 
-    await expect(runningShell).toHaveAttribute("data-state", "done");
-    const doneTone = await runningShell.evaluate((node) =>
+    await completeTurn(page, sessionId);
+    const disclosure = await openLatestProcess(page);
+    await expect(disclosure.getByText("已验证构建", { exact: true })).toBeVisible();
+    await disclosure.getByRole("button", { name: "查看 已验证构建 详情" }).click();
+    const doneShell = disclosure.getByTestId("shell-card-trigger");
+    await expect(doneShell).toHaveAttribute("data-state", "done");
+    const doneTone = await doneShell.evaluate((node) =>
       node.querySelector<HTMLElement>(".forge-log-status")?.getAttribute("data-tone"),
     );
     expect(doneTone).toBe("success");
