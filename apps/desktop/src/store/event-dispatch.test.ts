@@ -862,6 +862,13 @@ describe("createOutputEventDispatcher conversation turn timing", () => {
         isComplete: true,
         metadata: { turn_started_at_ms: 5_000 },
       },
+      {
+        block_id: "pending-1",
+        event_type: "pending",
+        content: "",
+        isComplete: false,
+        metadata: {},
+      },
     ]);
     const originalNow = Date.now;
     Date.now = () => 17_250;
@@ -878,6 +885,8 @@ describe("createOutputEventDispatcher conversation turn timing", () => {
 
     const session = state.sessions.get("session-1")!;
     assert.strictEqual(session.streaming, false);
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks.some((block) => block.event_type === "pending"), false);
     assert.strictEqual(session.blocks[0].metadata.turn_started_at_ms, 5_000);
     assert.strictEqual(session.blocks[0].metadata.turn_terminal_at_ms, 17_250);
     assert.strictEqual(session.blocks[0].metadata.turn_outcome, "completed");
@@ -892,6 +901,13 @@ describe("createOutputEventDispatcher conversation turn timing", () => {
         content: "Stop after checking",
         isComplete: true,
         metadata: { turn_started_at_ms: 5_000 },
+      },
+      {
+        block_id: "pending-1",
+        event_type: "pending",
+        content: "",
+        isComplete: false,
+        metadata: {},
       },
     ]);
     const originalNow = Date.now;
@@ -916,6 +932,8 @@ describe("createOutputEventDispatcher conversation turn timing", () => {
 
     const session = state.sessions.get("session-1")!;
     assert.strictEqual(session.status, "stopped");
+    assert.strictEqual(session.blocks.length, 1);
+    assert.strictEqual(session.blocks.some((block) => block.event_type === "pending"), false);
     assert.strictEqual(session.blocks[0].metadata.turn_terminal_at_ms, 8_000);
     assert.strictEqual(session.blocks[0].metadata.turn_outcome, "stopped");
     assert.strictEqual(state.agentTurnBySession.get("session-1")?.status, "failed");

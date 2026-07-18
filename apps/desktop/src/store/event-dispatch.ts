@@ -120,7 +120,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
 
       const sessions = new Map(get().sessions);
       const blocks = markLatestConversationTurnTerminal(
-        session.blocks,
+        session.blocks.filter((block) => block.event_type !== "pending"),
         outcome,
         Date.now(),
       );
@@ -271,6 +271,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
 
     if (event_type === "session_stopped") {
       blocks = closeInterruptedConfirmBlocks(blocks, "session_stopped");
+      blocks = blocks.filter((block) => block.event_type !== "pending");
       blocks = markLatestConversationTurnTerminal(blocks, "stopped", Date.now());
       sessions.set(session_id, {
         ...session,
