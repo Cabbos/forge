@@ -130,6 +130,21 @@ test("uses a provisional completed footer for a legacy final answer without inve
   });
 });
 
+test("omits an incomplete pre-answer operation from a provisional completed digest", () => {
+  const view = derive(conversationTurn([
+    block("user", "user_message", "继续"),
+    incompleteBlock("legacy-edit", "tool_call", "", { tool_name: "edit_file" }),
+    block("answer", "text", "已经完成。"),
+  ]));
+
+  assert.deepEqual(view.terminalSummary, {
+    outcome: "completed",
+    durationMs: null,
+    operationCount: 1,
+  });
+  assert.deepEqual(view.processDigest.items, []);
+});
+
 test("later live activity overrides provisional completion", () => {
   const view = derive(conversationTurn([
     block("user", "user_message", "继续"),
