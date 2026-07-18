@@ -1,8 +1,15 @@
 import type { BlockState } from "../../lib/protocol.ts";
 import type { ConversationTurn, MessageItem } from "./messageGrouping.ts";
-import { deriveCompletedProcessLabel, deriveLiveProgressCandidate } from "./conversationProgress.ts";
+import {
+  deriveCompletedProcessLabel,
+  deriveLiveProgressCandidate,
+  type LiveProgressCandidate,
+} from "./conversationProgress.ts";
 
-export { deriveLiveProgressCandidate } from "./conversationProgress.ts";
+export {
+  deriveLiveProgressCandidate,
+  type LiveProgressCandidate,
+} from "./conversationProgress.ts";
 
 export type ProcessDigestKind = "understanding" | "operation" | "verification" | "exception";
 
@@ -20,11 +27,6 @@ export interface ProcessDigest {
   operationCount: number;
   usage: BlockState[];
   delivery: BlockState | null;
-}
-
-export interface LiveProgressCandidate {
-  id: string;
-  label: string;
 }
 
 export interface ConversationTurnView {

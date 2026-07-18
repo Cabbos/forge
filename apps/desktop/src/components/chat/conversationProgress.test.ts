@@ -1,120 +1,170 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { BlockState } from "../../lib/protocol.ts";
-import * as turnView from "./conversationTurnView.ts";
+import * as progress from "./conversationProgress.ts";
+import type { LiveProgressCandidate } from "./conversationProgress.ts";
 
 type ProgressModule = {
-  deriveLiveProgressCandidate?: (blocks: BlockState[]) => { id: string; label: string } | null;
+  deriveLiveProgressCandidate?: (blocks: BlockState[]) => LiveProgressCandidate | null;
 };
 
-test("derives a specific safe label for an active file read", () => {
-  const deriveLiveProgressCandidate = (turnView as ProgressModule).deriveLiveProgressCandidate;
-  assert.equal(typeof deriveLiveProgressCandidate, "function");
-
-  const candidate = deriveLiveProgressCandidate!([
+test("maps an active file read to the finite discovering stage", () => {
+  const candidate = derive([
     incompleteBlock("read", "tool_call", {
       tool_name: "read_file",
-      tool_input: { path: "/Users/demo/project/src/AppShell.tsx" },
+      tool_input: { path: "/repo/private/AppShell.tsx", token: "never-show-this" },
     }),
   ]);
 
   assert.deepEqual(candidate, {
-    id: "read:AppShell.tsx",
-    label: "正在查看 AppShell.tsx",
+    id: "discovering",
+    label: "正在查找相关内容",
+    motion: "live",
   });
 });
 
-test("classifies allow-listed search and edit tools without exposing their payload", () => {
-  const deriveLiveProgressCandidate = (turnView as ProgressModule).deriveLiveProgressCandidate!;
+test("maps allow-listed writes and diffs to the finite modifying stage", () => {
+  for (const tool_name of ["write_file", "write", "edit"]) {
+    assert.deepEqual(
+      derive([
+        incompleteBlock(`tool-${tool_name}`, "tool_call", {
+          tool_name,
+          tool_input: { file_path: "/repo/private/Secret.tsx", replacement: "token" },
+        }),
+      ]),
+      liveCandidate("modifying", "正在进行修改"),
+    );
+  }
 
   assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("search", "tool_call", {
-        tool_name: "search_content",
-        tool_input: { path: "/repo/src/components", query: "password=never-show-this" },
+    derive([
+      incompleteBlock("diff", "diff_view", {
+        file_path: "/repo/private/Secret.tsx",
+        diff: "token=never-show-this",
       }),
     ]),
-    { id: "search:components", label: "正在查找 components" },
+    liveCandidate("modifying", "正在进行修改"),
   );
+});
+
+test("maps only known verification shell commands to verifying", () => {
+  for (const command of [
+    "npm run build",
+    "pnpm test apps/desktop",
+    "npm run check",
+    "npm run lint",
+    "npm run typecheck",
+    "npx tsc --noEmit",
+  ]) {
+    assert.deepEqual(
+      derive([incompleteBlock(`shell-${command}`, "shell", { command })]),
+      liveCandidate("verifying", "正在验证结果"),
+    );
+  }
+});
+
+test("maps thinking, pending, unknown tools, and arbitrary shell activity to analyzing", () => {
+  for (const block of [
+    incompleteBlock("thinking", "thinking", {}),
+    incompleteBlock("pending", "pending", {}),
+    incompleteBlock("unknown-tool", "tool_call", {
+      tool_name: "custom_private_tool",
+      tool_input: { token: "never-show-this" },
+    }),
+    incompleteBlock("unknown-shell", "shell", { command: "curl https://secret.invalid?token=never-show-this" }),
+  ]) {
+    assert.deepEqual(derive([block]), liveCandidate("analyzing", "正在分析"));
+  }
+});
+
+test("maps streamed answer text to answering", () => {
   assert.deepEqual(
-    deriveLiveProgressCandidate([
+    derive([incompleteBlock("answer", "text", {}, "这里是答案")]),
+    liveCandidate("answering", "正在生成答复"),
+  );
+});
+
+test("maps an unresolved confirmation to urgent paused waiting", () => {
+  assert.deepEqual(
+    derive([incompleteBlock("confirm", "confirm_ask", { confirmed: false })]),
+    {
+      id: "waiting",
+      label: "等待你的确认",
+      motion: "paused",
+      urgent: true,
+    },
+  );
+
+  assert.equal(
+    derive([
+      incompleteBlock("confirm", "confirm_ask", {
+        confirmed: true,
+        confirm_interrupted: false,
+      }),
+    ]),
+    null,
+  );
+});
+
+test("never serializes sensitive block payloads into a candidate", () => {
+  const candidates = [
+    derive([
+      incompleteBlock("read", "tool_call", {
+        tool_name: "read_file",
+        tool_input: { path: "/repo/private/Secret.tsx", token: "never-show-this" },
+      }),
+    ]),
+    derive([
+      incompleteBlock("shell", "shell", {
+        command: "npm test && curl https://private.invalid?token=never-show-this",
+      }),
+    ]),
+    derive([
+      incompleteBlock("tool", "tool_call", {
+        tool_name: "private_tool",
+        tool_input: { raw: "Secret.tsx curl token never-show-this" },
+      }),
+    ]),
+  ];
+  const serialized = JSON.stringify(candidates);
+
+  assert.equal(serialized.includes("Secret.tsx"), false);
+  assert.equal(serialized.includes("curl"), false);
+  assert.equal(serialized.includes("token"), false);
+  assert.equal(serialized.includes("never-show-this"), false);
+});
+
+test("uses the newest relevant incomplete activity without exposing its payload", () => {
+  assert.deepEqual(
+    derive([
+      incompleteBlock("read", "tool_call", {
+        tool_name: "read_file",
+        tool_input: { path: "/repo/private/Secret.tsx" },
+      }),
       incompleteBlock("edit", "tool_call", {
         tool_name: "edit",
-        tool_input: { file_path: "/repo/src/AppShell.tsx", replacement: "secret body" },
+        tool_input: { path: "/repo/private/Token.tsx" },
       }),
     ]),
-    { id: "edit:AppShell.tsx", label: "正在调整 AppShell.tsx" },
+    liveCandidate("modifying", "正在进行修改"),
   );
 });
 
-test("classifies verification commands without rendering the command", () => {
-  const deriveLiveProgressCandidate = (turnView as ProgressModule).deriveLiveProgressCandidate!;
+function derive(blocks: BlockState[]) {
+  const deriveLiveProgressCandidate = (progress as ProgressModule).deriveLiveProgressCandidate;
+  assert.equal(typeof deriveLiveProgressCandidate, "function");
+  return deriveLiveProgressCandidate!(blocks);
+}
 
-  assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("build", "shell", { command: "npm run build -- --token never-show-this" }),
-    ]),
-    { id: "verify:build", label: "正在验证构建" },
-  );
-  assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("test", "shell", { command: "pnpm test apps/desktop" }),
-    ]),
-    { id: "verify:test", label: "正在运行测试" },
-  );
-  assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("check", "shell", { command: "npm run typecheck" }),
-    ]),
-    { id: "verify:type", label: "正在检查类型" },
-  );
-  assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("lint", "shell", { command: "npm run lint" }),
-    ]),
-    { id: "verify:lint", label: "正在检查代码" },
-  );
-  assert.deepEqual(
-    deriveLiveProgressCandidate([
-      incompleteBlock("check", "shell", { command: "npm run check" }),
-    ]),
-    { id: "verify:check", label: "正在验证结果" },
-  );
-});
-
-test("redacts sensitive names and bounds every visible object label", () => {
-  const deriveLiveProgressCandidate = (turnView as ProgressModule).deriveLiveProgressCandidate!;
-  const secret = deriveLiveProgressCandidate([
-    incompleteBlock("secret", "tool_call", {
-      tool_name: "read_file",
-      tool_input: { path: "/repo/config/.env.production", token: "never-show-this" },
-    }),
-  ]);
-  const url = deriveLiveProgressCandidate([
-    incompleteBlock("url", "tool_call", {
-      tool_name: "read_file",
-      tool_input: { path: "https://localhost/src/App.tsx?token=never-show-this" },
-    }),
-  ]);
-  const longName = deriveLiveProgressCandidate([
-    incompleteBlock("long", "tool_call", {
-      tool_name: "edit",
-      tool_input: { path: "/repo/ThisFileNameIsDeliberatelyLongEnoughToOverflowTheProgressRow.tsx" },
-    }),
-  ]);
-
-  assert.deepEqual(secret, { id: "read", label: "正在查看相关内容" });
-  assert.deepEqual(url, { id: "read:App.tsx", label: "正在查看 App.tsx" });
-  assert.ok((longName?.label.length ?? 100) <= 52);
-  assert.equal(longName?.label.includes("ThisFileNameIsDeliberately"), true);
-  assert.equal(longName?.label.endsWith(".tsx"), true);
-  assert.equal(JSON.stringify([secret, url, longName]).includes("never-show-this"), false);
-});
+function liveCandidate(id: LiveProgressCandidate["id"], label: string): LiveProgressCandidate {
+  return { id, label, motion: "live" };
+}
 
 function incompleteBlock(
   block_id: string,
   event_type: string,
   metadata: Record<string, unknown>,
+  content = "",
 ): BlockState {
-  return { block_id, event_type, content: "", metadata, isComplete: false };
+  return { block_id, event_type, content, metadata, isComplete: false };
 }
