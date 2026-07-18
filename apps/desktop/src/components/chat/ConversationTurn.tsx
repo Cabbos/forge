@@ -7,14 +7,21 @@ import { ConversationProcessDisclosure } from "@/components/chat/ConversationPro
 export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTurn; sessionId?: string }) {
   const view = deriveConversationTurnView(turn);
   const primaryResult = view.finalAnswer ?? view.terminalError;
+  const showTerminalFooter = Boolean(view.terminalSummary);
   const hasAssistantRail = Boolean(
     view.liveProgress
       || view.interruptions.length > 0
       || primaryResult
-      || view.processDigest.items.length > 0,
+      || showTerminalFooter,
   );
 
-  if (!view.userMessage && !view.liveProgress && view.interruptions.length === 0 && !primaryResult) return null;
+  if (
+    !view.userMessage
+    && !view.liveProgress
+    && view.interruptions.length === 0
+    && !primaryResult
+    && !showTerminalFooter
+  ) return null;
 
   return (
     <section
@@ -42,8 +49,12 @@ export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTur
         />
       )}
 
-      {primaryResult && (
-        <ConversationProcessDisclosure digest={view.processDigest} sessionId={sessionId} />
+      {view.terminalSummary && (
+        <ConversationProcessDisclosure
+          digest={view.processDigest}
+          terminal={view.terminalSummary}
+          sessionId={sessionId}
+        />
       )}
     </section>
   );

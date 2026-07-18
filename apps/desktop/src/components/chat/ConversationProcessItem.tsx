@@ -1,14 +1,11 @@
 import { useState } from "react";
-import { Button as ButtonPrimitive } from "@base-ui/react/button";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
-import { deriveConversationProcessTarget } from "@/components/chat/conversationProcessTarget";
 import type { ProcessDigestItem } from "@/components/chat/conversationTurnView";
 import {
   ForgeCollapsible,
   ForgeCollapsibleContent,
   ForgeCollapsibleTrigger,
 } from "@/components/primitives/collapsible";
-import { openWorkPanelTabInLayout } from "@/components/workpanel/workPanelEvents";
 
 export function ConversationProcessItem({
   item,
@@ -18,8 +15,7 @@ export function ConversationProcessItem({
   sessionId?: string;
 }) {
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const canShowDetails = item.kind !== "analysis" && item.evidence.length > 0;
-  const target = deriveConversationProcessTarget(item);
+  const canShowDetails = item.evidence.length > 0;
 
   return (
     <li data-testid="conversation-process-item" data-process-kind={item.kind} className="forge-process-digest-item">
@@ -27,27 +23,17 @@ export function ConversationProcessItem({
         <span aria-hidden="true" className="forge-process-digest-node" data-outcome={item.outcome} />
         <span className="forge-process-digest-label">{item.label}</span>
         <span className="forge-process-digest-outcome">{outcomeLabel(item.outcome)}</span>
-        {target && (
-          <ButtonPrimitive
-            type="button"
-            aria-label={target.accessibleLabel}
-            className="forge-process-target-trigger"
-            onClick={() => openWorkPanelTabInLayout(target.tab)}
-          >
-            打开
-          </ButtonPrimitive>
-        )}
       </div>
 
       {canShowDetails && (
         <ForgeCollapsible open={detailsOpen} onOpenChange={setDetailsOpen}>
           <ForgeCollapsibleTrigger
             type="button"
-            aria-label={`${detailsOpen ? "收起" : "查看"} ${item.label} 详情`}
+            aria-label={`${detailsOpen ? "收起" : "查看"}${item.label}运行证据`}
             className="forge-process-detail-trigger"
           >
             <span aria-hidden="true" data-open={detailsOpen ? "true" : "false"}>›</span>
-            {detailsOpen ? "收起详情" : "查看详情"}
+            {detailsOpen ? "收起证据" : "查看证据"}
           </ForgeCollapsibleTrigger>
           {detailsOpen && (
             <ForgeCollapsibleContent>
@@ -70,6 +56,7 @@ export function ConversationProcessItem({
 
 function outcomeLabel(outcome: ProcessDigestItem["outcome"]) {
   if (outcome === "failed") return "失败";
+  if (outcome === "stopped") return "已停止";
   if (outcome === "running") return "进行中";
   return "完成";
 }
