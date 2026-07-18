@@ -1,4 +1,4 @@
-import { useId, useState } from "react";
+import { useState } from "react";
 import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
 import { ConversationProcessItem } from "@/components/chat/ConversationProcessItem";
 import type {
@@ -22,12 +22,14 @@ export function ConversationProcessDisclosure({
 }) {
   const [open, setOpen] = useState(false);
   const [evidenceOpen, setEvidenceOpen] = useState(false);
-  const contentId = `forge-process-${useId().replace(/:/g, "")}`;
-  const hasEvidence = digest.items.length > 0 || digest.usage.length > 0 || Boolean(digest.delivery);
-  const hasRuntimeEvidence = digest.usage.length > 0 || Boolean(digest.delivery);
+  const runtimeEvidence = runtimeEvidenceForDigest(digest);
+  const hasRuntimeEvidence = runtimeEvidence.usage !== null
+    || runtimeEvidence.verification !== null
+    || runtimeEvidence.checkpoint !== null;
+  const hasDetails = digest.items.length > 0 || hasRuntimeEvidence;
   const summary = terminalSummaryLabel(terminal);
 
-  if (!hasEvidence) {
+  if (!hasDetails) {
     return (
       <div
         data-testid="conversation-process-status"
@@ -50,8 +52,6 @@ export function ConversationProcessDisclosure({
           type="button"
           data-testid="conversation-process-trigger"
           aria-label={`${summary}，${open ? "收起运行过程" : "查看运行过程"}`}
-          aria-expanded={open}
-          aria-controls={contentId}
           className="forge-process-disclosure-trigger"
         >
           <span className="forge-process-disclosure-status">{summary}</span>
@@ -65,7 +65,7 @@ export function ConversationProcessDisclosure({
         </ForgeCollapsibleTrigger>
 
         {open && (
-          <ForgeCollapsibleContent id={contentId}>
+          <ForgeCollapsibleContent>
             <div className="forge-process-disclosure-content">
               {digest.items.length > 0 && (
                 <ol data-testid="conversation-process-timeline" className="forge-process-digest-list">
@@ -94,7 +94,7 @@ export function ConversationProcessDisclosure({
                   </ForgeCollapsibleTrigger>
                   {evidenceOpen && (
                     <ForgeCollapsibleContent>
-                      <DigestMetadata digest={digest} sessionId={sessionId} />
+                      <DigestMetadata evidence={runtimeEvidence} sessionId={sessionId} />
                     </ForgeCollapsibleContent>
                   )}
                 </ForgeCollapsible>
@@ -107,19 +107,24 @@ export function ConversationProcessDisclosure({
   );
 }
 
-function DigestMetadata({
-  digest,
-  sessionId,
-}: {
-  digest: ProcessDigest;
-  sessionId?: string;
-}) {
+function runtimeEvidenceForDigest(digest: ProcessDigest) {
   const deliverySummary = digest.delivery?.metadata.summary;
   const delivery = isRecord(deliverySummary) ? deliverySummary : null;
-  const verification = stringValue(delivery?.verification_label);
-  const checkpoint = stringValue(delivery?.checkpoint_label);
-  const usage = digest.usage[digest.usage.length - 1] ?? null;
-  if (!usage && !verification && !checkpoint) return null;
+  return {
+    verification: stringValue(delivery?.verification_label),
+    checkpoint: stringValue(delivery?.checkpoint_label),
+    usage: digest.usage[digest.usage.length - 1] ?? null,
+  };
+}
+
+function DigestMetadata({
+  evidence,
+  sessionId,
+}: {
+  evidence: ReturnType<typeof runtimeEvidenceForDigest>;
+  sessionId?: string;
+}) {
+  const { verification, checkpoint, usage } = evidence;
 
   return (
     <div className="forge-process-digest-metadata">

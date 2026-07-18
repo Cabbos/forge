@@ -61,6 +61,7 @@ const files = {
   conversationLane: read("src/components/chat/ConversationLane.tsx"),
   conversationTurnComponent: read("src/components/chat/ConversationTurn.tsx"),
   turnProgressComponent: read("src/components/chat/TurnProgress.tsx"),
+  conversationProcessDisclosureComponent: read("src/components/chat/ConversationProcessDisclosure.tsx"),
   conversationTurnCss: read("src/styles/conversation-turn.css"),
   textBlock: read("src/components/messages/TextBlock.tsx"),
   userMessage: read("src/components/messages/UserMessage.tsx"),
@@ -98,6 +99,9 @@ assertNotIncludes(turnProgressBlock, "background:", "live progress row material"
 assertNotIncludes(turnProgressBlock, "border:", "live progress row frame");
 assertIncludes(files.conversationTurnCss, "@media (prefers-reduced-motion: reduce)", "live progress reduced motion fallback");
 assertIncludes(files.turnProgressComponent, "data-progress-motion={visible.motion}", "live progress motion marker");
+assertIncludes(files.conversationProcessDisclosureComponent, "const runtimeEvidence = runtimeEvidenceForDigest(digest);", "terminal evidence is derived once");
+assertIncludes(files.conversationProcessDisclosureComponent, "const hasDetails = digest.items.length > 0 || hasRuntimeEvidence;", "empty terminal evidence stays noninteractive");
+assertNotIncludes(files.conversationProcessDisclosureComponent, "aria-controls=", "Base UI owns mounted collapsible relationships");
 
 assertIncludes(files.globals, '.forge-app-shell[data-theme="light"],', "app shell light theme scope");
 assertIncludes(files.globals, 'body:has(.forge-app-shell[data-theme="light"])', "body portal light theme scope");
