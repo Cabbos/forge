@@ -8,6 +8,12 @@
 
 **Tech Stack:** React 18, TypeScript, Zustand, Base UI collapsible primitives, CSS layers and media queries, Node test runner, Playwright, GitNexus.
 
+## Implementation Status (2026-07-19)
+
+- Tasks 1–5 are implemented on `cabbos/conversation-result-first`; Task 6 is the remaining documentation and final-verification gate.
+- Task 1 includes a durability amendment: transcript replay injects each record's authoritative `recorded_at_ms`, then restores `turn_started_at_ms`, `turn_terminal_at_ms`, and `turn_outcome` when hydrating or tailing a session. Legacy records without sufficient timing evidence keep a `null` duration instead of receiving a fabricated elapsed time.
+- Task 5 covers the singular safe live row, anti-flash and dwell timing, answer-stream continuity, completed/failed/stopped semantics, reduced motion, nested raw/runtime evidence, and the product-level result-first acceptance lifecycle. Rich preview regressions remain covered behind the explicit second-level evidence controls.
+
 ---
 
 ## Scope and Risk Record

@@ -81,7 +81,7 @@ flowchart LR
 | Provider 适配 | `apps/desktop/src-tauri/src/adapters/`：`anthropic.rs` 与 `openai_compatible.rs` 两族手写流式 HTTP，`provider_registry.rs` 注册目录与 transport 路由 |
 | 子代理协作 | `apps/desktop/src-tauri/src/agent/a2a/`：worktree 隔离的子任务、父子事件胶囊、审阅门 |
 | 动态工作面板 | `apps/desktop/src/components/workpanel/`：首次打开是无标题、无默认选中的选择器，用户只会明确选择审阅、临时终端、预览、文件或聚焦子任务五类对象；打开后以去重的融合对象栏 Tab 呈现。面板与主对话使用无外框的原生分屏和一条分隔线，默认宽度为 40%，按任务保存，分屏可在 34–62% 间调整，窄窗口改为 overlay；主题 light/dark 由整个工作台消费。临时终端只用于最近输出验证，并非嵌入式终端管理器；记忆与 continuity 只作为后台实现上下文，不进入面板导航 |
-| 结果优先对话 | `apps/desktop/src/components/chat/`：每轮主路径只保留用户消息、一个实时安全进度和最终结果；思考、工具、Shell、Diff、用量与交付证据在完成后折叠到结果下方的“已完成 · 查看过程”，未处理确认仍会显式打断 |
+| 结果优先对话 | `apps/desktop/src/components/chat/`：每轮主路径只保留用户消息、一个延迟出现且稳定切换的安全高层阶段和最终结果；进度不会暴露文件名、命令、工具名或内部思考。答案完成后，同一状态收束为带整轮耗时和有效操作数的最新结果页脚，点击只在原位展开 2–4 个安全阶段；原始证据和运行证据继续分层收起，不跳转 Work Panel，也不提供下一动作按钮。等待、停止与失败保持真实语义。 |
 | 记忆与上下文预算 | `apps/desktop/src-tauri/src/memory/`、`agent/prepared_turn.rs`：统一记忆视图、召回计划与 token 预算分桶；模型用量与上下文余量在 UI 上是两个独立指标 |
 | eval 打分与信任门 | `apps/eval-runner/app/scoring.py`、`app/trust_gates.py`、`app/execution.py`：completed 不等于 trusted，缺证据是 UNKNOWN 不是 pass |
 
