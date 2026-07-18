@@ -7,9 +7,11 @@ import {
   closeInterruptedConfirmBlocks,
   eventToBlock,
   SESSION_RESTORED_TOOL_INTERRUPTION_MESSAGE,
+  transcriptEventsToBlocks,
 } from "./blocks.ts";
 import type { PermissionLedgerEvent, StreamEvent } from "../lib/protocol.ts";
 import type { SubagentRuntimePayload } from "../lib/protocol.ts";
+import { readConversationTurnTiming } from "../lib/conversationTurnTiming.ts";
 import {
   applyLoopRuntimeUpdate,
   applySubagentRuntimeEvent,
@@ -276,6 +278,115 @@ describe("applyTranscriptEventToBlocks provider_usage", () => {
     assert.strictEqual(blocks[0].event_type, "provider_usage");
     assert.strictEqual(blocks[0].isComplete, true);
     assert.strictEqual(blocks[0].metadata.model, "claude-sonnet");
+  });
+});
+
+describe("transcript conversation turn timing", () => {
+  it("restores replayed user start and completed terminal timestamps", () => {
+    let blocks = applyTranscriptEventToBlocks([], replayedEvent({
+      event_type: "user_message",
+      session_id: "s1",
+      block_id: "user-1",
+      content: "Ship it",
+    }, 1_000));
+
+    blocks = applyTranscriptEventToBlocks(blocks, replayedEvent({
+      event_type: "agent_turn_updated",
+      session_id: "s1",
+      state: testAgentTurnProjection("running_tools"),
+    }, 2_000));
+    assert.deepStrictEqual(readConversationTurnTiming(blocks[0]), {
+      startedAtMs: 1_000,
+      terminalAtMs: null,
+      outcome: null,
+      durationMs: null,
+    });
+
+    blocks = applyTranscriptEventToBlocks(blocks, replayedEvent({
+      event_type: "agent_turn_updated",
+      session_id: "s1",
+      state: testAgentTurnProjection("completed"),
+    }, 13_000));
+    assert.deepStrictEqual(readConversationTurnTiming(blocks[0]), {
+      startedAtMs: 1_000,
+      terminalAtMs: 13_000,
+      outcome: "completed",
+      durationMs: 12_000,
+    });
+  });
+
+  it("uses replayed session_stopped as the terminal fallback", () => {
+    const blocks = transcriptEventsToBlocks([
+      replayedEvent({
+        event_type: "user_message",
+        session_id: "s1",
+        block_id: "user-1",
+        content: "Check then stop",
+      }, 1_000),
+      replayedEvent({
+        event_type: "session_stopped",
+        session_id: "s1",
+        reason: "user_requested",
+      }, 9_000),
+    ]);
+
+    assert.deepStrictEqual(readConversationTurnTiming(blocks[0]), {
+      startedAtMs: 1_000,
+      terminalAtMs: 9_000,
+      outcome: "stopped",
+      durationMs: 8_000,
+    });
+  });
+
+  it("keeps legacy raw transcript events honest when timing is unavailable", () => {
+    const initial = applyTranscriptEventToBlocks([], {
+      event_type: "user_message",
+      session_id: "s1",
+      block_id: "user-legacy",
+      content: "Legacy turn",
+    });
+    const blocks = applyTranscriptEventToBlocks(initial, {
+      event_type: "agent_turn_updated",
+      session_id: "s1",
+      state: testAgentTurnProjection("completed"),
+    });
+
+    assert.strictEqual(blocks, initial);
+    assert.deepStrictEqual(blocks[0].metadata, {});
+    assert.deepStrictEqual(readConversationTurnTiming(blocks[0]), {
+      startedAtMs: null,
+      terminalAtMs: null,
+      outcome: null,
+      durationMs: null,
+    });
+  });
+
+  it("does not overwrite an already terminal replayed outcome", () => {
+    const blocks = transcriptEventsToBlocks([
+      replayedEvent({
+        event_type: "user_message",
+        session_id: "s1",
+        block_id: "user-1",
+        content: "Ship it",
+      }, 1_000),
+      replayedEvent({
+        event_type: "agent_turn_updated",
+        session_id: "s1",
+        state: testAgentTurnProjection("completed"),
+      }, 2_000),
+      replayedEvent({
+        event_type: "agent_turn_updated",
+        session_id: "s1",
+        state: testAgentTurnProjection("failed"),
+      }, 3_000),
+    ]);
+
+    assert.deepStrictEqual(readConversationTurnTiming(blocks[0]), {
+      startedAtMs: 1_000,
+      terminalAtMs: 2_000,
+      outcome: "completed",
+      durationMs: 1_000,
+    });
   });
 });
 
@@ -1027,6 +1138,32 @@ describe("subagent runtime projections", () => {
     );
   });
 });
+
+function replayedEvent<T extends StreamEvent>(
+  event: T,
+  recordedAtMs: number,
+): T & { recorded_at_ms: number } {
+  return { ...event, recorded_at_ms: recordedAtMs };
+}
+
+function testAgentTurnProjection(
+  status: Extract<StreamEvent, { event_type: "agent_turn_updated" }>["state"]["status"],
+): Extract<StreamEvent, { event_type: "agent_turn_updated" }>["state"] {
+  return {
+    session_id: "s1",
+    status,
+    step_label: status,
+    workspace_path: "/workspace",
+    compact_count: 0,
+    verification_status: "not_needed",
+    model_rounds: 1,
+    tool_call_count: 0,
+    failed_tool_count: status === "failed" ? 1 : 0,
+    estimated_context_tokens: null,
+    stop_reason: null,
+    compact_saved_tokens: 0,
+  };
+}
 
 function testLoopTaskRecord() {
   return {
