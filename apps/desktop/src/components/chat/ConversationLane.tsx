@@ -1,13 +1,10 @@
-import { Fragment, type Ref } from "react";
-import { ToolActivityGroup } from "@/components/messages/ToolActivityGroup";
+import type { Ref } from "react";
 import { StartReadinessCard } from "@/components/session/StartReadinessCard";
-import { MemoizedBlockRenderer } from "@/components/chat/BlockRenderer";
-import type { ConversationTurn, MessageItem } from "@/components/chat/messageGrouping";
-import { deriveConversationTurnView } from "@/components/chat/conversationTurnView";
-import { TurnProgress } from "@/components/chat/TurnProgress";
+import type { ConversationTurn as ConversationTurnModel } from "@/components/chat/messageGrouping";
+import { ConversationTurn } from "@/components/chat/ConversationTurn";
 
 interface ConversationLaneProps {
-  conversationTurns: ConversationTurn[];
+  conversationTurns: ConversationTurnModel[];
   laneRef: Ref<HTMLDivElement>;
   sessionId?: string;
   empty?: boolean;
@@ -26,71 +23,10 @@ export function ConversationLane({ conversationTurns, laneRef, sessionId, empty 
       {empty ? (
         <StartReadinessCard sessionId={sessionId} />
       ) : (
-        conversationTurns.map((turn) => {
-          const turnView = deriveConversationTurnView(turn);
-          return (
-          <section
-            key={turn.key}
-            data-testid="conversation-turn"
-            data-turn-shape={turn.hasEvidence ? "with-evidence" : "direct"}
-            data-turn-start={turn.startsWithUser ? "user" : "system"}
-            data-turn-rail={getConversationTurnRail(turn)}
-            className="forge-conversation-turn"
-          >
-            {turn.items.map((item) => (
-              <Fragment key={item.key}>
-                <div
-                  data-testid="message-block"
-                  data-block-role={getMessageBlockRole(item)}
-                  className="forge-message-block"
-                >
-                  {item.kind === "tool_group"
-                    ? <ToolActivityGroup blocks={item.blocks} />
-                    : <MemoizedBlockRenderer block={item.block} sessionId={sessionId} />}
-                </div>
-                {isUserMessageItem(item) && <TurnProgress candidate={turnView.liveProgress} />}
-              </Fragment>
-            ))}
-          </section>
-          );
-        })
+        conversationTurns.map((turn) => (
+          <ConversationTurn key={turn.key} turn={turn} sessionId={sessionId} />
+        ))
       )}
     </div>
   );
-}
-
-function isUserMessageItem(item: MessageItem) {
-  return item.kind === "block" && item.block.event_type === "user_message";
-}
-
-function getMessageBlockRole(item: MessageItem) {
-  if (item.kind === "tool_group") return "trace";
-
-  switch (item.block.event_type) {
-    case "user_message":
-      return "user";
-    case "text":
-      return "assistant";
-    case "thinking":
-    case "pending":
-    case "tool_call":
-    case "tool_call_result":
-    case "shell":
-    case "context_compact_start":
-    case "context_compacted":
-    case "context_compact_skipped":
-    case "provider_usage":
-      return "trace";
-    case "diff_view":
-    case "confirm_ask":
-    case "delivery_summary":
-    case "error":
-      return "artifact";
-    default:
-      return item.block.content ? "assistant" : "trace";
-  }
-}
-
-function getConversationTurnRail(turn: ConversationTurn) {
-  return turn.items.some((item) => getMessageBlockRole(item) !== "user") ? "assistant" : "user";
 }

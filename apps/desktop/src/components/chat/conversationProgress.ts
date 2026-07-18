@@ -45,6 +45,10 @@ export function deriveLiveProgressCandidate(blocks: BlockState[]): LiveProgressC
     return { id: "understanding", label: "正在理解任务" };
   }
 
+  if (running.event_type === "text") {
+    return { id: "answer:preparing", label: "正在整理回答" };
+  }
+
   if (running.event_type === "tool_call") {
     const action = toolAction(running.metadata.tool_name);
     const name = safeInputBasename(running.metadata.tool_input);
@@ -113,6 +117,7 @@ function verificationAction(value: unknown): LiveProgressCandidate | null {
 function isProgressBlock(block: BlockState) {
   return block.event_type === "thinking"
     || block.event_type === "pending"
+    || block.event_type === "text"
     || block.event_type === "tool_call"
     || block.event_type === "shell";
 }

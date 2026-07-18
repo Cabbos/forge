@@ -52,6 +52,11 @@
     );
     animation: forge-turn-progress-trace 1.6s ease-in-out infinite;
   }
+
+  .forge-result-first-turn > .forge-turn-progress + .forge-message-block,
+  .forge-result-first-turn > .forge-message-block[data-block-role="artifact"] + .forge-message-block {
+    margin-top: 0.625rem;
+  }
 }
 
 @keyframes forge-turn-progress-breathe {

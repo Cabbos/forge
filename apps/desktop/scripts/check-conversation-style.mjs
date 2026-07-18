@@ -59,6 +59,7 @@ const files = {
   sessionView: read("src/components/session/SessionView.tsx"),
   sidebarComponent: read("src/components/layout/Sidebar.tsx"),
   conversationLane: read("src/components/chat/ConversationLane.tsx"),
+  conversationTurn: read("src/components/chat/ConversationTurn.tsx"),
   textBlock: read("src/components/messages/TextBlock.tsx"),
   userMessage: read("src/components/messages/UserMessage.tsx"),
   composerToolbar: read("src/components/session/ComposerToolbar.tsx"),
@@ -67,7 +68,9 @@ const files = {
 assertIncludes(files.appShell, 'data-design-version="v4-quiet-native"', "app shell design version");
 assertIncludes(files.appShell, "data-theme={theme}", "app shell theme scope");
 assertIncludes(files.sessionView, "data-conversation-theme={theme}", "SessionView theme scope");
-assertIncludes(files.conversationLane, "data-turn-rail={getConversationTurnRail(turn)}", "conversation turn rail marker");
+assertIncludes(files.conversationLane, "<ConversationTurn", "result-first conversation turn composition");
+assertIncludes(files.conversationTurn, 'data-turn-rail={hasAssistantRail ? "assistant" : "user"}', "conversation turn rail marker");
+assertIncludes(files.conversationTurn, "deriveConversationTurnView(turn)", "conversation turn projection");
 assertIncludes(files.textBlock, "data-state={block.isComplete ? \"complete\" : \"streaming\"}", "assistant streaming state");
 assertIncludes(files.textBlock, "forge-assistant-name", "assistant visible name");
 assertIncludes(files.userMessage, 'data-message-role="user"', "user message role marker");
