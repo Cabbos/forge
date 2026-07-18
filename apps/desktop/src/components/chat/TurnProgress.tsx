@@ -10,6 +10,7 @@ export function TurnProgress({ candidate }: { candidate: LiveProgressCandidate |
     <div
       data-testid="conversation-progress"
       data-progress-id={visible.id}
+      data-progress-motion={visible.motion}
       className="forge-turn-progress"
       role="status"
       aria-live="polite"

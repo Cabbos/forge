@@ -59,7 +59,9 @@ const files = {
   sessionView: read("src/components/session/SessionView.tsx"),
   sidebarComponent: read("src/components/layout/Sidebar.tsx"),
   conversationLane: read("src/components/chat/ConversationLane.tsx"),
-  conversationTurn: read("src/components/chat/ConversationTurn.tsx"),
+  conversationTurnComponent: read("src/components/chat/ConversationTurn.tsx"),
+  turnProgressComponent: read("src/components/chat/TurnProgress.tsx"),
+  conversationTurnCss: read("src/styles/conversation-turn.css"),
   textBlock: read("src/components/messages/TextBlock.tsx"),
   userMessage: read("src/components/messages/UserMessage.tsx"),
   composerToolbar: read("src/components/session/ComposerToolbar.tsx"),
@@ -69,8 +71,8 @@ assertIncludes(files.appShell, 'data-design-version="v4-quiet-native"', "app she
 assertIncludes(files.appShell, "data-theme={theme}", "app shell theme scope");
 assertIncludes(files.sessionView, "data-conversation-theme={theme}", "SessionView theme scope");
 assertIncludes(files.conversationLane, "<ConversationTurn", "result-first conversation turn composition");
-assertIncludes(files.conversationTurn, 'data-turn-rail={hasAssistantRail ? "assistant" : "user"}', "conversation turn rail marker");
-assertIncludes(files.conversationTurn, "deriveConversationTurnView(turn)", "conversation turn projection");
+assertIncludes(files.conversationTurnComponent, 'data-turn-rail={hasAssistantRail ? "assistant" : "user"}', "conversation turn rail marker");
+assertIncludes(files.conversationTurnComponent, "deriveConversationTurnView(turn)", "conversation turn projection");
 assertIncludes(files.textBlock, "data-state={block.isComplete ? \"complete\" : \"streaming\"}", "assistant streaming state");
 assertIncludes(files.textBlock, "forge-assistant-name", "assistant visible name");
 assertIncludes(files.userMessage, 'data-message-role="user"', "user message role marker");
@@ -89,6 +91,13 @@ assertIncludes(files.tokens, "--forge-success-muted:", "A2A success status token
 assertIncludes(files.tokens, "--forge-amber-muted:", "A2A warning status token");
 assertIncludes(files.tokens, "--forge-amber-rgb:", "A2A warning rgb token");
 assertIncludes(files.tokens, "--forge-danger-rgb:", "A2A danger rgb token");
+
+const turnProgressBlock = selectorBlock(files.conversationTurnCss, ".forge-turn-progress");
+assertIncludes(turnProgressBlock, "min-height: 22px;", "live progress compact height");
+assertNotIncludes(turnProgressBlock, "background:", "live progress row material");
+assertNotIncludes(turnProgressBlock, "border:", "live progress row frame");
+assertIncludes(files.conversationTurnCss, "@media (prefers-reduced-motion: reduce)", "live progress reduced motion fallback");
+assertIncludes(files.turnProgressComponent, "data-progress-motion={visible.motion}", "live progress motion marker");
 
 assertIncludes(files.globals, '.forge-app-shell[data-theme="light"],', "app shell light theme scope");
 assertIncludes(files.globals, 'body:has(.forge-app-shell[data-theme="light"])', "body portal light theme scope");
