@@ -205,7 +205,7 @@ function classificationForBlock(
   }
 
   if (block.event_type === "diff_view") {
-    return { kind: "modification", operation: true };
+    return classificationForDiffBlock(block, toolNames);
   }
 
   let projection = block;
@@ -232,6 +232,28 @@ function classificationForBlock(
   };
 }
 
+function classificationForDiffBlock(
+  block: BlockState,
+  toolNames: Map<string, string>,
+): DigestClassification {
+  const toolName = toolNameForBlock(block, toolNames);
+  if (!toolName) return { kind: "analysis", operation: true };
+
+  const stage = progressCandidateForBlock({
+    ...block,
+    event_type: "tool_call",
+    metadata: { ...block.metadata, tool_name: toolName },
+  }).id;
+
+  if (stage === "modifying") {
+    return { kind: "modification", operation: false };
+  }
+  if (stage === "discovering") {
+    return { kind: "analysis", operation: false };
+  }
+  return { kind: "analysis", operation: true };
+}
+
 function buildToolNameIndex(blocks: BlockState[]) {
   const names = new Map<string, string>();
   for (const block of blocks) {
@@ -241,6 +263,26 @@ function buildToolNameIndex(blocks: BlockState[]) {
       && typeof block.metadata.tool_name === "string"
     ) {
       names.set(block.block_id, block.metadata.tool_name);
+    }
+  }
+
+  for (let index = 1; index < blocks.length; index += 1) {
+    const block = blocks[index];
+    if (block.event_type !== "diff_view" || names.has(block.block_id)) continue;
+
+    const previous = blocks[index - 1];
+    if (previous.event_type !== "tool_call" && previous.event_type !== "tool_call_result") continue;
+    const toolName = toolNameForBlock(previous, names);
+    if (!toolName) continue;
+    const projection = previous.event_type === "tool_call"
+      ? previous
+      : {
+          ...previous,
+          event_type: "tool_call",
+          metadata: { ...previous.metadata, tool_name: toolName },
+        };
+    if (progressCandidateForBlock(projection).id === "modifying") {
+      names.set(block.block_id, toolName);
     }
   }
   return names;
