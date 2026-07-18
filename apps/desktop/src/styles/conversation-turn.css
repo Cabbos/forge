@@ -1,0 +1,97 @@
+@layer components {
+  .forge-turn-progress {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 24px;
+    margin-top: 0.5rem;
+    padding-inline: 0.125rem;
+    color: var(--forge-text-muted);
+    font-size: 12px;
+    line-height: 18px;
+  }
+
+  .forge-turn-progress-dot {
+    width: 6px;
+    height: 6px;
+    flex: 0 0 auto;
+    border-radius: 999px;
+    background: var(--forge-led-running);
+    box-shadow: 0 0 0 0 rgba(var(--forge-accent-rgb), 0.2);
+    animation: forge-turn-progress-breathe 1.8s ease-in-out infinite;
+  }
+
+  .forge-turn-progress-label {
+    min-width: 0;
+    overflow: hidden;
+    color: var(--forge-text-secondary);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    animation: forge-turn-progress-label-in 120ms ease-out both;
+  }
+
+  .forge-turn-progress-track {
+    position: relative;
+    width: 40px;
+    height: 1px;
+    flex: 0 0 40px;
+    overflow: hidden;
+    background: var(--forge-border-subtle);
+  }
+
+  .forge-turn-progress-trace {
+    position: absolute;
+    inset-block: 0;
+    left: -32px;
+    width: 32px;
+    background: linear-gradient(
+      90deg,
+      rgba(var(--forge-accent-rgb), 0),
+      rgba(var(--forge-accent-rgb), 0.78),
+      rgba(var(--forge-accent-rgb), 0)
+    );
+    animation: forge-turn-progress-trace 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes forge-turn-progress-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+    box-shadow: 0 0 0 0 rgba(var(--forge-accent-rgb), 0.12);
+  }
+
+  50% {
+    opacity: 1;
+    box-shadow: 0 0 0 4px rgba(var(--forge-accent-rgb), 0);
+  }
+}
+
+@keyframes forge-turn-progress-label-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes forge-turn-progress-trace {
+  0% { transform: translateX(0); opacity: 0; }
+  20% { opacity: 1; }
+  80% { opacity: 1; }
+  100% { transform: translateX(72px); opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-turn-progress-dot,
+  .forge-turn-progress-label,
+  .forge-turn-progress-trace {
+    animation: none;
+  }
+
+  .forge-turn-progress-dot {
+    opacity: 1;
+    box-shadow: none;
+  }
+
+  .forge-turn-progress-trace {
+    display: none;
+  }
+}
