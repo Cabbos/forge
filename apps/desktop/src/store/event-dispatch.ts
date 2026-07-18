@@ -1,4 +1,8 @@
 import type { SessionState, StreamEvent } from "../lib/protocol";
+import {
+  markLatestConversationTurnTerminal,
+  turnOutcomeForAgentStatus,
+} from "../lib/conversationTurnTiming";
 import { queryClient } from "../lib/query-client";
 import { getModelContextWindow } from "../lib/providers";
 import {
@@ -107,7 +111,23 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
     if (event_type === "agent_turn_updated") {
       const agentTurnBySession = new Map(get().agentTurnBySession);
       agentTurnBySession.set(session_id, event.state);
-      set({ agentTurnBySession });
+      const outcome = turnOutcomeForAgentStatus(event.state.status);
+      const session = get().sessions.get(session_id);
+      if (!outcome || !session) {
+        set({ agentTurnBySession });
+        return;
+      }
+
+      const sessions = new Map(get().sessions);
+      const blocks = markLatestConversationTurnTerminal(
+        session.blocks,
+        outcome,
+        Date.now(),
+      );
+      sessions.set(session_id, touchSession(session, { blocks, streaming: false }));
+      set({ agentTurnBySession, sessions });
+      persistSessions(sessions, get().workflowBySession, get().deliverySummaryBySession);
+      persistBlocksNow(session_id, blocks);
       return;
     }
 
@@ -251,6 +271,7 @@ export function createOutputEventDispatcher(set: StoreSet, get: StoreGet) {
 
     if (event_type === "session_stopped") {
       blocks = closeInterruptedConfirmBlocks(blocks, "session_stopped");
+      blocks = markLatestConversationTurnTerminal(blocks, "stopped", Date.now());
       sessions.set(session_id, {
         ...session,
         status: "stopped",
