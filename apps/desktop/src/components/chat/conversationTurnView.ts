@@ -2,6 +2,7 @@ import type { BlockState } from "../../lib/protocol.ts";
 import {
   readConversationTurnTiming,
   type ConversationTurnOutcome,
+  type ConversationTurnTiming,
 } from "../../lib/conversationTurnTiming.ts";
 import type { ConversationTurn, MessageItem } from "./messageGrouping.ts";
 import {
@@ -80,11 +81,13 @@ export function deriveConversationTurnView(turn: ConversationTurn): Conversation
   const terminalError = finalAnswer ? null : errors[errors.length - 1] ?? null;
   const interruptions = blocks.filter(isUnresolvedInterruption);
   const timing = readConversationTurnTiming(userMessage);
-  const processDigest = deriveProcessDigest(blocks, timing.outcome);
+  const provisionalCompletion = isProvisionalCompletion(blocks, finalAnswer);
+  const effectiveTerminalOutcome = timing.outcome
+    ?? (provisionalCompletion ? "completed" : null);
+  const processDigest = deriveProcessDigest(blocks, effectiveTerminalOutcome);
   const terminalSummary = deriveTerminalSummary(
-    blocks,
-    userMessage,
-    finalAnswer,
+    timing,
+    provisionalCompletion,
     processDigest,
   );
 
@@ -341,12 +344,10 @@ function strongerOutcome(
 }
 
 function deriveTerminalSummary(
-  blocks: BlockState[],
-  userMessage: BlockState | null,
-  finalAnswer: BlockState | null,
+  timing: ConversationTurnTiming,
+  provisionalCompletion: boolean,
   digest: ProcessDigest,
 ): TurnTerminalSummary | null {
-  const timing = readConversationTurnTiming(userMessage);
   if (timing.outcome) {
     return {
       outcome: timing.outcome,
@@ -355,19 +356,22 @@ function deriveTerminalSummary(
     };
   }
 
-  if (
-    !finalAnswer?.isComplete
-    || blocks.some(isUnresolvedInterruption)
-    || hasProcessActivityAfter(blocks, finalAnswer)
-  ) {
-    return null;
-  }
+  if (!provisionalCompletion) return null;
 
   return {
     outcome: "completed",
     durationMs: null,
     operationCount: digest.operationCount,
   };
+}
+
+function isProvisionalCompletion(
+  blocks: BlockState[],
+  finalAnswer: BlockState | null,
+) {
+  if (!finalAnswer?.isComplete) return false;
+  return !blocks.some(isUnresolvedInterruption)
+    && !hasProcessActivityAfter(blocks, finalAnswer);
 }
 
 function hasProcessActivityAfter(blocks: BlockState[], finalAnswer: BlockState) {
