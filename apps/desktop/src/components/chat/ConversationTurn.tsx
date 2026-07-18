@@ -6,12 +6,12 @@ import { ConversationProcessDisclosure } from "@/components/chat/ConversationPro
 
 export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTurn; sessionId?: string }) {
   const view = deriveConversationTurnView(turn);
-  const primaryResult = view.finalAnswer ?? view.terminalError;
   const showTerminalFooter = Boolean(view.terminalSummary);
   const hasAssistantRail = Boolean(
     view.liveProgress
       || view.interruptions.length > 0
-      || primaryResult
+      || view.finalAnswer
+      || view.terminalError
       || showTerminalFooter,
   );
 
@@ -19,7 +19,8 @@ export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTur
     !view.userMessage
     && !view.liveProgress
     && view.interruptions.length === 0
-    && !primaryResult
+    && !view.finalAnswer
+    && !view.terminalError
     && !showTerminalFooter
   ) return null;
 
@@ -41,10 +42,18 @@ export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTur
         <PrimaryBlock key={block.block_id} block={block} role="artifact" sessionId={sessionId} />
       ))}
 
-      {primaryResult && (
+      {view.finalAnswer && (
         <PrimaryBlock
-          block={primaryResult}
-          role={view.finalAnswer ? "assistant" : "artifact"}
+          block={view.finalAnswer}
+          role="assistant"
+          sessionId={sessionId}
+        />
+      )}
+
+      {view.terminalError && (
+        <PrimaryBlock
+          block={view.terminalError}
+          role="artifact"
           sessionId={sessionId}
         />
       )}

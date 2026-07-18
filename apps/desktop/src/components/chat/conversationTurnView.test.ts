@@ -91,6 +91,38 @@ test("derives an honest completed footer and safe compact process digest", () =>
   );
 });
 
+test("keeps Store thinking as a safe analysis stage without renderable evidence", () => {
+  const privateThought = "private chain of thought about /workspace/secret.key";
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    ...storeThinkingBlocks(privateThought),
+    block("answer", "text", "已完成分析。"),
+  ]));
+
+  assert.deepEqual(view.processDigest.items.map((item) => ({
+    kind: item.kind,
+    label: item.label,
+    outcome: item.outcome,
+    evidenceCount: item.evidence.length,
+  })), [{
+    kind: "analysis",
+    label: "分析需求",
+    outcome: "done",
+    evidenceCount: 0,
+  }]);
+  assert.equal(view.processDigest.operationCount, 0);
+
+  const serialized = JSON.stringify(view.processDigest);
+  assert.equal(serialized.includes(privateThought), false);
+  assert.equal(serialized.includes("thinking"), false);
+  assert.equal(
+    view.processDigest.items
+      .flatMap((item) => item.evidence)
+      .some((evidence) => evidence.event_type === "thinking"),
+    false,
+  );
+});
+
 test("preserves stopped and failed terminal outcomes", () => {
   const stopped = derive(conversationTurn([
     timedUser(1_000, 9_000, "stopped"),
@@ -116,6 +148,42 @@ test("preserves stopped and failed terminal outcomes", () => {
     operationCount: 1,
   });
   assert.equal(failed.processDigest.items.some((item) => item.outcome === "failed"), true);
+});
+
+test("keeps a distinct terminal error beside a partial answer on an authoritative failed turn", () => {
+  const view = derive(conversationTurn([
+    timedUser(1_000, 2_000, "failed"),
+    ...storeAnswerAndError("已经完成前两步。", "连接中断，请重试。"),
+  ]));
+
+  assert.equal(view.finalAnswer?.content, "已经完成前两步。");
+  assert.equal(view.terminalError?.event_type, "error");
+  assert.equal(view.terminalError?.content, "连接中断，请重试。");
+  assert.equal(view.terminalSummary?.outcome, "failed");
+});
+
+test("does not duplicate result text or promote historical errors on non-failed turns", () => {
+  const duplicate = derive(conversationTurn([
+    timedUser(1_000, 2_000, "failed"),
+    ...storeAnswerAndError("请求超时。", "请求超时。"),
+  ]));
+  const completed = derive(conversationTurn([
+    timedUser(1_000, 2_000, "completed"),
+    ...storeAnswerAndError("结果已恢复。", "历史重试失败。"),
+  ]));
+  const legacy = derive(conversationTurn([
+    block("user", "user_message", "继续"),
+    ...storeAnswerAndError("旧会话结果。", "旧错误。"),
+  ]));
+  const failedWithoutError = derive(conversationTurn([
+    timedUser(1_000, 2_000, "failed"),
+    ...storeTextBlocks("只有部分结果。"),
+  ]));
+
+  assert.equal(duplicate.terminalError, null);
+  assert.equal(completed.terminalError, null);
+  assert.equal(legacy.terminalError, null);
+  assert.equal(failedWithoutError.terminalError, null);
 });
 
 test("uses a provisional completed footer for a legacy final answer without inventing duration", () => {
@@ -304,13 +372,55 @@ test("counts grouped meaningful operations before safe visible compaction", () =
     block("answer", "text", "完成。"),
   ]));
 
-  assert.equal(view.processDigest.operationCount, 3);
-  assert.equal(view.terminalSummary?.operationCount, 3);
+  assert.equal(view.processDigest.operationCount, 4);
+  assert.equal(view.terminalSummary?.operationCount, 4);
   assert.deepEqual(view.processDigest.items.map((item) => item.kind), [
     "analysis",
     "modification",
     "verification",
+    "exception",
   ]);
+});
+
+test("folds a resolved Store confirmation into one safe inspectable digest stage", () => {
+  const resolvedConfirm = storeResolvedConfirmBlocks();
+  assert.equal(resolvedConfirm.length, 1);
+  assert.equal(resolvedConfirm[0].event_type, "confirm_ask");
+  assert.equal(resolvedConfirm[0].metadata.confirmed, true);
+
+  const view = derive(conversationTurn([
+    timedUser(100, 500, "completed"),
+    ...resolvedConfirm,
+    block("answer", "text", "已按你的选择继续。"),
+  ]));
+
+  assert.deepEqual(view.interruptions, []);
+  assert.equal(view.terminalSummary?.operationCount, 1);
+  assert.deepEqual(view.processDigest.items.map((item) => ({
+    kind: item.kind,
+    label: item.label,
+    outcome: item.outcome,
+  })), [{
+    kind: "exception",
+    label: "确认已处理",
+    outcome: "done",
+  }]);
+
+  const publicDigest = view.processDigest.items.map(({ id, kind, label, outcome }) => ({
+    id,
+    kind,
+    label,
+    outcome,
+  }));
+  const serialized = JSON.stringify(publicDigest);
+  for (const secret of ["删除 private.key", "/workspace/private", "rm private.key"]) {
+    assert.equal(serialized.includes(secret), false);
+  }
+  assert.equal(view.processDigest.items[0].evidence[0], resolvedConfirm[0]);
+  assert.deepEqual(
+    view.processDigest.items[0].evidence[0].metadata.permission_evidence,
+    resolvedConfirm[0].metadata.permission_evidence,
+  );
 });
 
 test("limits the public digest while retaining the latest important evidence", () => {
@@ -425,6 +535,12 @@ test("promotes only unresolved confirmations into the interruption slot", () => 
 
   assert.deepEqual(view.interruptions.map((item) => item.block_id), ["pending-confirm"]);
   assert.equal(view.liveProgress?.id, "waiting");
+  assert.equal(
+    view.processDigest.items
+      .flatMap((item) => item.evidence)
+      .some((evidence) => evidence.block_id === "pending-confirm"),
+    false,
+  );
 });
 
 function derive(turn: ConversationTurn): TurnProjection {
@@ -514,6 +630,101 @@ function toolBackedStoreDiff(blockId: string, toolName: string): BlockState[] {
       result: "done",
       is_error: false,
       duration_ms: 12,
+    },
+  ];
+
+  return events.reduce(applyTranscriptEventToBlocks, []);
+}
+
+function storeResolvedConfirmBlocks(): BlockState[] {
+  const permissionEvidence = {
+    kind: "user_approved" as const,
+    workspace_path: "/workspace/private",
+    session_id: "session",
+    risk_tier: "high" as const,
+    affected_files: ["private.key"],
+    operation: "rm private.key",
+    permission_mode: "manual_confirm" as const,
+    reason: "user_response",
+  };
+  const events: StreamEvent[] = [
+    {
+      event_type: "confirm_ask",
+      session_id: "session",
+      block_id: "resolved-confirm",
+      question: "删除 private.key？",
+      kind: "file_delete",
+      permission_evidence: { ...permissionEvidence, kind: "manual_required" },
+    },
+    {
+      event_type: "confirm_response",
+      session_id: "session",
+      block_id: "resolved-confirm",
+      question: "删除 private.key？",
+      kind: "file_delete",
+      permission_evidence: permissionEvidence,
+      approved: true,
+      responded_at_ms: 120,
+      reason: "user_response",
+    },
+  ];
+
+  return events.reduce(applyTranscriptEventToBlocks, []);
+}
+
+function storeAnswerAndError(answer: string, error: string): BlockState[] {
+  return [
+    ...storeTextBlocks(answer),
+    ...applyTranscriptEventToBlocks([], {
+      event_type: "error",
+      session_id: "session",
+      block_id: "terminal-error",
+      message: error,
+      code: "provider_failed",
+    }),
+  ];
+}
+
+function storeTextBlocks(content: string): BlockState[] {
+  const events: StreamEvent[] = [
+    {
+      event_type: "text_start",
+      session_id: "session",
+      block_id: "partial-answer",
+    },
+    {
+      event_type: "text_chunk",
+      session_id: "session",
+      block_id: "partial-answer",
+      content,
+    },
+    {
+      event_type: "text_end",
+      session_id: "session",
+      block_id: "partial-answer",
+    },
+  ];
+
+  return events.reduce(applyTranscriptEventToBlocks, []);
+}
+
+function storeThinkingBlocks(content: string): BlockState[] {
+  const events: StreamEvent[] = [
+    {
+      event_type: "thinking_start",
+      session_id: "session",
+      block_id: "private-thinking",
+    },
+    {
+      event_type: "thinking_chunk",
+      session_id: "session",
+      block_id: "private-thinking",
+      content,
+    },
+    {
+      event_type: "thinking_end",
+      session_id: "session",
+      block_id: "private-thinking",
     },
   ];
 
