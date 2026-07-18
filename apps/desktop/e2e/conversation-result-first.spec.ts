@@ -122,6 +122,46 @@ test("keeps completed process evidence out of the primary reading path", async (
   await expect(turn.getByTestId("provider-usage-card")).toHaveCount(0);
   await expect(turn.getByTestId("delivery-summary-grid")).toHaveCount(0);
   await expect(turn.getByTestId("message-block")).toHaveCount(2);
+
+  const disclosure = turn.getByTestId("conversation-process-disclosure");
+  const trigger = disclosure.getByTestId("conversation-process-trigger");
+  await expect(trigger).toHaveAccessibleName("查看过程");
+  await expect(trigger).toContainText("✓ 已完成 · 3 项操作");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await expect(disclosure.getByTestId("conversation-process-timeline")).toHaveCount(0);
+  const nextAction = disclosure.getByTestId("conversation-next-action");
+  await expect(nextAction).toHaveCount(1);
+  await expect(nextAction).toHaveText("检查这版");
+  await nextAction.click();
+  await expect(page.locator("textarea")).toHaveValue("检查这版");
+
+  await trigger.press("Enter");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(trigger).toHaveAccessibleName("收起过程");
+  await expect(disclosure.getByTestId("conversation-process-item")).toHaveCount(4);
+  await expect(disclosure.getByText("已理解任务", { exact: true })).toBeVisible();
+  await expect(disclosure.getByText("已查看 AppShell.tsx", { exact: true })).toBeVisible();
+  await expect(disclosure.getByText("已验证构建", { exact: true })).toBeVisible();
+  await expect(disclosure.getByText("已更新 AppShell.tsx", { exact: true })).toBeVisible();
+  await expect(disclosure.getByTestId("provider-usage-card")).toHaveCount(0);
+  await expect(disclosure.getByTestId("delivery-summary-grid")).toHaveCount(0);
+  await expect(disclosure.getByTestId("conversation-delivery-metadata")).toContainText("构建通过 · 检查点已就绪");
+
+  const operation = disclosure.getByTestId("conversation-process-item").filter({ hasText: "已查看 AppShell.tsx" });
+  const openTarget = operation.getByRole("button", { name: "在工作面板打开 AppShell.tsx" });
+  await expect(openTarget).toBeVisible();
+  await openTarget.click();
+  await expect(page.getByRole("complementary", { name: "工作面板" })).toBeVisible();
+  await expect(page.getByTestId("work-panel-file-view")).toHaveAccessibleName(/AppShell\.tsx$/);
+  await expect(page.getByRole("tab", { name: "AppShell.tsx" })).toHaveCount(1);
+  await openTarget.click();
+  await expect(page.getByRole("tab", { name: "AppShell.tsx" })).toHaveCount(1);
+
+  await operation.getByRole("button", { name: "查看 已查看 AppShell.tsx 详情" }).press("Enter");
+  await expect(operation.getByTestId("tool-card-trigger")).toHaveCount(1);
+
+  await disclosure.getByRole("button", { name: "查看模型用量" }).click();
+  await expect(disclosure.getByTestId("provider-usage-card")).toContainText("deepseek-v4");
 });
 
 test("shows confirmations only while backend authority says they are unresolved", async ({ page }) => {

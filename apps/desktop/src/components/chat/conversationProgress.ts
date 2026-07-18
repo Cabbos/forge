@@ -64,12 +64,45 @@ export function deriveLiveProgressCandidate(blocks: BlockState[]): LiveProgressC
   return { id: running.block_id || running.event_type, label: "正在执行操作" };
 }
 
+export function deriveCompletedProcessLabel(block: BlockState) {
+  if (block.event_type === "tool_call" || block.event_type === "tool_call_result") {
+    const action = toolAction(block.metadata.tool_name);
+    const name = safeInputBasename(block.metadata.tool_input);
+    if (action?.id === "read") return name ? `已查看 ${name}` : "已查看相关内容";
+    if (action?.id === "search") return name ? `已查找 ${name}` : "已查找相关内容";
+    if (action?.id === "edit") return name ? `已调整 ${name}` : "已调整相关内容";
+    return "已执行操作";
+  }
+
+  if (block.event_type === "shell") {
+    const verification = verificationAction(block.metadata.command);
+    if (verification?.id === "verify:build") return "已验证构建";
+    if (verification?.id === "verify:test") return "已运行测试";
+    if (verification?.id === "verify:type") return "已检查类型";
+    if (verification?.id === "verify:lint") return "已检查代码";
+    if (verification) return "已验证结果";
+    return "已执行命令";
+  }
+
+  if (block.event_type === "diff_view") {
+    const name = safeObjectName(block.metadata.file_path);
+    return name ? `已更新 ${name}` : "已更新文件";
+  }
+
+  return "已执行操作";
+}
+
 function safeInputBasename(value: unknown) {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
   const input = value as Record<string, unknown>;
   const path = typeof input.path === "string" ? input.path : input.file_path;
   if (typeof path !== "string") return null;
-  const normalized = path.trim().split(/[?#]/, 1)[0].replace(/\\/g, "/").replace(/\/+$/, "");
+  return safeObjectName(path);
+}
+
+function safeObjectName(value: unknown) {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().split(/[?#]/, 1)[0].replace(/\\/g, "/").replace(/\/+$/, "");
   const name = normalized.split("/").pop()?.trim() ?? "";
   if (!name || isSensitiveName(name)) return null;
   return truncateObjectName(name);

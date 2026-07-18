@@ -12,7 +12,7 @@ type TurnProjectionModule = {
     interruptions: BlockState[];
     liveProgress: { id: string; label: string } | null;
     processDigest: {
-      items: Array<{ kind: string; evidence: BlockState[] }>;
+      items: Array<{ kind: string; label: string; evidence: BlockState[] }>;
       operationCount: number;
       usage: BlockState[];
       delivery: BlockState | null;
@@ -50,6 +50,13 @@ test("derives a result-first view from a mixed completed turn", () => {
     "verification",
     "operation",
     "exception",
+  ]);
+  assert.deepEqual(view.processDigest.items.map((item) => item.label), [
+    "已理解任务",
+    "已查看 AppShell.tsx",
+    "已验证构建",
+    "已更新 AppShell.tsx",
+    "已处理确认",
   ]);
   assert.equal(view.processDigest.operationCount, 4);
   assert.equal(view.processDigest.usage.length, 1);
