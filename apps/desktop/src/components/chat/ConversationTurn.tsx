@@ -35,7 +35,7 @@ export function ConversationTurn({ turn, sessionId }: { turn: RawConversationTur
         <PrimaryBlock block={view.userMessage} role="user" sessionId={sessionId} />
       )}
 
-      <TurnProgress candidate={view.liveProgress} />
+      {!view.terminalSummary && <TurnProgress candidate={view.liveProgress} />}
 
       {view.interruptions.map((block) => (
         <PrimaryBlock key={block.block_id} block={block} role="artifact" sessionId={sessionId} />

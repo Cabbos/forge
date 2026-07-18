@@ -56,7 +56,12 @@ export function updateStableProgress(
   now: number,
   urgent = false,
 ): StableProgressState {
-  if (!candidate) return emptyProgressState(now);
+  if (!candidate) {
+    if (state.hasPresented && state.visible) {
+      return { ...state, pending: null, dueAt: null };
+    }
+    return emptyProgressState(now);
+  }
   if (state.hasPresented && state.visible?.id === candidate.id) {
     return { ...state, visible: candidate, pending: null, dueAt: null };
   }

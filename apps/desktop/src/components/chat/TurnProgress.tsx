@@ -4,7 +4,7 @@ import "../../styles/conversation-turn.css";
 
 export function TurnProgress({ candidate }: { candidate: LiveProgressCandidate | null }) {
   const visible = useStableProgressLabel(candidate);
-  if (!candidate || !visible) return null;
+  if (!visible) return null;
 
   return (
     <div
