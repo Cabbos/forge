@@ -175,6 +175,22 @@ test("keeps presented progress visible across a tool-result gap into the answer 
   assert.equal(answerVisible.pending, null);
 });
 
+test("clears resolved waiting progress immediately from visible or pending state", () => {
+  const module = stableModule();
+  const waiting = candidate("waiting", "等待你的确认", "paused", true);
+  const visibleWaiting = module.createStableProgressState(waiting, 12);
+  const pendingWaiting: StableProgressState = {
+    visible: candidate("analyzing", "正在分析"),
+    visibleSince: 0,
+    pending: waiting,
+    dueAt: 600,
+    hasPresented: true,
+  };
+
+  assert.deepEqual(module.updateStableProgress(visibleWaiting, null, 80), emptyState(80));
+  assert.deepEqual(module.updateStableProgress(pendingWaiting, null, 90), emptyState(90));
+});
+
 test("scheduler rounds up, reschedules an early wakeup, and flushes exactly once", () => {
   const schedule = (stableHook as StableHookModule).scheduleStableProgressFlush;
   assert.equal(typeof schedule, "function");
