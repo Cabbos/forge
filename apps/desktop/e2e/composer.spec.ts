@@ -905,6 +905,7 @@ test.describe("InputBar", () => {
         removeRadius: Number.parseFloat(removeStyle.borderTopLeftRadius),
         activeOptionBackground: activeStyle.backgroundColor,
         activeOptionBorder: activeStyle.borderTopColor,
+        activeOptionShadow: activeStyle.boxShadow,
         badgeHeight: Math.round(badgeRect.height),
         badgeBorder: badgeStyle.borderTopColor,
         badgeRadius: Number.parseFloat(badgeStyle.borderTopLeftRadius),
@@ -921,7 +922,7 @@ test.describe("InputBar", () => {
     expect(metrics!.removeBorder).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.removeRadius).toBeLessThanOrEqual(6);
     expect(metrics!.activeOptionBackground).not.toBe("rgba(0, 0, 0, 0)");
-    expect(metrics!.activeOptionBorder).not.toBe("rgba(0, 0, 0, 0)");
+    expect(metrics!.activeOptionShadow).toContain("inset");
     expect(metrics!.badgeHeight).toBe(18);
     expect(metrics!.badgeBorder).not.toBe("rgba(0, 0, 0, 0)");
     expect(metrics!.badgeRadius).toBeLessThanOrEqual(6);
@@ -1116,7 +1117,7 @@ test.describe("InputBar", () => {
     expect(metrics!.toolLeft).toBeGreaterThanOrEqual(16);
     expect(metrics!.controlRight).toBeLessThanOrEqual(-16);
     expect(metrics!.sendRight).toBeLessThanOrEqual(-16);
-    expect(metrics!.modelWidth).toBeLessThanOrEqual(188);
+    expect(metrics!.modelWidth).toBeLessThanOrEqual(196);
     expect(metrics!.inputHeight).toBeLessThanOrEqual(128);
     expect(metrics!.canScrollInside).toBe(true);
   });
@@ -1284,8 +1285,8 @@ test.describe("Timeline Composer", () => {
           radius: Number.parseFloat(style.borderTopLeftRadius),
         };
       });
-      expect(hintMetrics.background).toBe("rgb(250, 247, 241)");
-      expect(hintMetrics.color).toBe("rgb(77, 71, 64)");
+      expect(hintMetrics.background).toBe("rgb(252, 253, 254)");
+      expect(hintMetrics.color).toBe("rgb(61, 71, 84)");
       expect(hintMetrics.radius).toBeLessThanOrEqual(8);
       await hints.getByRole("button", { name: "检查这个项目能不能运行" }).click();
   
@@ -1557,7 +1558,7 @@ test.describe("Timeline Composer", () => {
   
       expect(metrics.background).toBe("rgba(0, 0, 0, 0)");
       expect(metrics.borderColor).toBe("rgba(0, 0, 0, 0)");
-      expect(metrics.color).toBe("rgba(184, 180, 170, 0.48)");
+      expect(metrics.color).toBe("rgb(174, 183, 193)");
       expect(metrics.cursor).toBe("default");
   
       await page.locator("textarea").fill("继续优化当前界面");

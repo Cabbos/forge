@@ -57,6 +57,7 @@ Forge 希望用户只需要理解三个产品层级：
 ## 能做什么
 
 - 打开一个本地项目，并围绕该项目运行多轮 agent 任务。
+- 界面采用 v5 "Console Craft" 设计语言（`data-design-version="v5-console-craft"`）：冷石墨 dark 色阶（基底 `#0A0E14`）与冷色 light 主题（基底 `#F4F6F8`）、单一青色强调色（dark `#22D3EE` / light `#0891B2`）、Geist Mono 证据与标签字体；契约见 `docs/product/forge-design-language.md`。
 - 支持 DeepSeek、Anthropic、Kimi/Moonshot、GLM/Zhipu、Alibaba/Qwen、MiniMax、OpenAI、OpenRouter、Gemini、xAI、Groq、Mistral、Ollama/local 和自定义兼容 Provider 的配置与模型选择。
 - 在桌面 UI 中以“用户消息 → 一个高层实时阶段 → 最终结果”呈现每轮任务：进度延迟出现、稳定切换，并只使用“正在分析 / 查找相关内容 / 进行修改 / 验证结果 / 生成答复”等用户语言，不显示文件名、命令、工具名或内部思考。完成后只保留最新结果页脚，以“已完成 / 已停止 / 未完成 · 耗时 · 有效操作数”表达真实结果；点击只在答案下方展开 2–4 个安全阶段，原始证据和模型用量、交付信息等运行证据继续分层收起，所有展开停留在对话内，不跳转 Work Panel，也不提供下一动作按钮。
 - 支持 `@file` 引用当前项目文件，并把选中文件作为隐藏上下文带入本轮任务。

@@ -80,7 +80,13 @@
     max-width: 190px;
     justify-content: flex-start;
     padding: 0 0.25rem 0 0.5rem;
-    font-size: 11px;
+    font-family: var(--forge-font-mono);
+    font-size: 11.5px;
+  }
+
+  .forge-work-panel-tab[data-state="active"] {
+    box-shadow: inset 0 -2px 0 var(--forge-accent);
+    color: var(--forge-text-primary);
   }
 
   .forge-work-panel-tab > span {
@@ -191,7 +197,7 @@
     background: transparent;
     padding: 0.2rem 0.5rem;
     color: var(--forge-text-faint);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
   }
 
@@ -367,7 +373,7 @@
   }
 
   .forge-work-panel-file-path {
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
   }
 
   .forge-work-panel-content-toolbar button {
@@ -423,7 +429,7 @@
 
   .forge-work-panel-preview-url {
     color: var(--forge-text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
   }
 
@@ -536,7 +542,7 @@
 
   .forge-work-panel-review-files small {
     color: var(--forge-text-faint);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 9px;
   }
 
@@ -565,7 +571,7 @@
     width: 100%;
     padding: 0 0.35rem;
     color: inherit;
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     text-align: right;
   }
 
@@ -730,7 +736,7 @@
   }
 
   .forge-work-panel-terminal .forge-work-panel-content-toolbar button:hover {
-    border-color: #565a56;
+    border-color: #2A3648;
     color: var(--forge-text-primary);
   }
 
@@ -748,12 +754,12 @@
     flex: 1;
     overflow: auto;
     margin: 0;
-    border: 1px solid #303230;
+    border: 1px solid #1C2635;
     border-radius: calc(var(--radius) - 2px);
-    background: #141514;
+    background: #0B0F15;
     padding: 12px;
-    color: #c9cbc7;
-    font-family: var(--font-mono);
+    color: #B4BCC8;
+    font-family: var(--forge-font-mono);
     font-size: 12px;
     line-height: 1.55;
     white-space: pre-wrap;
@@ -764,12 +770,12 @@
     grid-template-columns: auto minmax(0, 1fr) auto;
     align-items: center;
     gap: 8px;
-    border: 1px solid #3a3d3a;
+    border: 1px solid #2A3648;
     border-radius: calc(var(--radius) - 2px);
-    background: #202120;
+    background: #111824;
     padding: 7px 8px 7px 11px;
-    color: #8fd0a2;
-    font-family: var(--font-mono);
+    color: #34D399;
+    font-family: var(--forge-font-mono);
   }
 
   .forge-work-panel-terminal-host input {
@@ -777,12 +783,12 @@
     border: 0;
     outline: 0;
     background: transparent;
-    color: #e9e8e5;
+    color: #E6E9EF;
     font: inherit;
   }
 
   .forge-work-panel-terminal-host input::placeholder {
-    color: #777b77;
+    color: #556070;
   }
 
   .forge-work-panel-terminal-host form button {
@@ -790,7 +796,7 @@
     place-items: center;
     border: 0;
     padding: 3px;
-    color: #b8bab6;
+    color: #7C8694;
   }
 
   .forge-work-panel-terminal-host form button:disabled {

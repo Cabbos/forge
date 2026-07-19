@@ -41,7 +41,7 @@
     border-radius: calc(var(--radius) - 3px);
     background: var(--forge-bg-raised);
     color: var(--forge-text-secondary);
-    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 11px;
   }
 
@@ -97,7 +97,7 @@
     align-items: center;
     justify-content: flex-end;
     gap: 0.5rem;
-    border-top: 1px solid rgba(184, 138, 86, 0.11);
+    border-top: 1px solid rgba(var(--forge-accent-rgb), 0.11);
     background: var(--forge-bg-raised);
     padding: 0.375rem 0.625rem;
   }
@@ -118,7 +118,7 @@
   }
 
   .forge-confirm-button[data-variant="approve"] {
-    border-color: rgba(184, 138, 86, 0.5);
+    border-color: rgba(var(--forge-accent-rgb), 0.5);
     background: var(--forge-accent);
     color: var(--forge-accent-foreground-strong);
   }
@@ -128,20 +128,20 @@
   }
 
   .forge-confirm-button[data-variant="cancel"] {
-    border-color: rgba(212, 119, 119, 0.32);
-    background: rgba(212, 119, 119, 0.045);
+    border-color: rgba(var(--forge-danger-rgb), 0.32);
+    background: rgba(var(--forge-danger-rgb), 0.045);
     color: var(--forge-danger);
   }
 
   .forge-confirm-button[data-variant="cancel"]:hover {
-    border-color: rgba(212, 119, 119, 0.45);
-    background: rgba(212, 119, 119, 0.08);
+    border-color: rgba(var(--forge-danger-rgb), 0.45);
+    background: rgba(var(--forge-danger-rgb), 0.08);
     color: var(--forge-danger-hover);
   }
 
   .forge-confirm-button:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-confirm-card[data-confirm-state="resolved"] {
@@ -209,14 +209,14 @@
   }
 
   .forge-confirm-resolved[data-state="approved"] {
-    border-color: rgba(155, 185, 135, 0.18);
-    background: rgba(155, 185, 135, 0.06);
+    border-color: rgba(var(--forge-success-rgb), 0.18);
+    background: rgba(var(--forge-success-rgb), 0.06);
     color: var(--forge-pass);
   }
 
   .forge-confirm-resolved[data-state="cancelled"] {
-    border-color: rgba(212, 119, 119, 0.2);
-    background: rgba(212, 119, 119, 0.055);
+    border-color: rgba(var(--forge-danger-rgb), 0.2);
+    background: rgba(var(--forge-danger-rgb), 0.055);
     color: var(--forge-danger);
   }
 
@@ -224,9 +224,9 @@
     display: inline-flex;
     height: 1.25rem;
     align-items: center;
-    border: 1px solid rgba(135, 132, 126, 0.2);
+    border: 1px solid rgba(148, 163, 184, 0.2);
     border-radius: calc(var(--radius) - 3px);
-    background: rgba(135, 132, 126, 0.06);
+    background: rgba(148, 163, 184, 0.06);
     padding: 0 0.4375rem;
     color: var(--forge-text-muted);
     font-size: 11px;
@@ -245,17 +245,17 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card {
     max-width: min(820px, 100%);
-    border-color: #E1D8CC !important;
-    background: #FFFBF4 !important;
+    border-color: #DCE3EA !important;
+    background: #FFFFFF !important;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card[data-confirm-state="pending"] {
-    border-color: #E3D1C7 !important;
+    border-color: #FECACA !important;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-card[data-confirm-state="interrupted"] {
-    border-color: #DDD6CB !important;
-    background: #FBF7EF !important;
+    border-color: #DCE3EA !important;
+    background: #F7F9FB !important;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-boundary-grid {
@@ -264,61 +264,61 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-boundary-row {
     min-height: 2.25rem;
-    border-top-color: #E8E1D7;
+    border-top-color: #DCE3EA;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-file-chip,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-command {
-    border-color: #DED6CB;
-    background: #F7F2E9;
+    border-color: #DCE3EA;
+    background: #F7F9FB;
     color: var(--forge-text-secondary);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-action-bar {
     min-height: 2.25rem;
-    border-top-color: #E8E1D7;
-    background: #FBF7EF;
+    border-top-color: #DCE3EA;
+    background: #F7F9FB;
     padding: 0.25rem 0.875rem;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button {
     height: 1.75rem;
-    border-radius: 8px;
+    border-radius: 6px;
     font-size: 12px;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="approve"] {
-    border-color: #171612;
-    background: #171612;
-    color: #F7F4EE;
+    border-color: #0891B2;
+    background: #0891B2;
+    color: #FFFFFF;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="cancel"] {
-    border-color: #DDD6CB;
-    background: #FBF7EF;
+    border-color: #DCE3EA;
+    background: #F7F9FB;
     color: var(--forge-text-secondary);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-resolved[data-state="approved"] {
-    border-color: #CFE4C8;
-    background: #EEF7EB;
-    color: #3F7041;
+    border-color: #A7F3D0;
+    background: #D1FAE5;
+    color: #059669;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-resolved[data-state="cancelled"] {
-    border-color: #E7C5B9;
-    background: #FFF0EA;
-    color: #994731;
+    border-color: #FECACA;
+    background: #FEF2F2;
+    color: #DC2626;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-interrupted {
-    border-color: #D9D2C7;
-    background: #F4EFE6;
+    border-color: #DCE3EA;
+    background: #EFF3F6;
     color: var(--forge-text-muted);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-interrupted-note {
-    border-top-color: #E8E1D7;
-    background: #F7F2E9;
+    border-top-color: #DCE3EA;
+    background: #F7F9FB;
   }
 }

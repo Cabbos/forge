@@ -1,7 +1,7 @@
 @layer components {
   .forge-log-action:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-log-line {
@@ -21,8 +21,8 @@
   }
 
   .forge-log-line[data-tone="error"] {
-    border-color: rgba(212, 119, 119, 0.34);
-    background: rgba(212, 119, 119, 0.045);
+    border-color: rgba(var(--forge-danger-rgb), 0.34);
+    background: rgba(var(--forge-danger-rgb), 0.045);
     color: var(--forge-danger-muted);
   }
 
@@ -54,19 +54,19 @@
   }
 
   .forge-evidence-row[data-state="running"] {
-    border-color: rgba(184, 138, 86, 0.26);
-    background: rgba(184, 138, 86, 0.07);
+    border-color: rgba(var(--forge-accent-rgb), 0.26);
+    background: rgba(var(--forge-accent-rgb), 0.07);
   }
 
   .forge-evidence-row[data-tone="error"] {
-    border-color: rgba(212, 119, 119, 0.28);
-    background: rgba(212, 119, 119, 0.055);
+    border-color: rgba(var(--forge-danger-rgb), 0.28);
+    background: rgba(var(--forge-danger-rgb), 0.055);
     color: var(--forge-danger-muted);
   }
 
   .forge-log-line:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-context-compact-trigger {
@@ -116,7 +116,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--forge-text-muted);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 11px;
     line-height: 1rem;
     text-overflow: ellipsis;
@@ -131,7 +131,7 @@
   .forge-log-line-meta {
     flex-shrink: 0;
     color: var(--forge-text-muted);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 1rem;
   }
@@ -173,13 +173,13 @@
   .forge-provider-usage-item {
     min-width: 0;
     color: var(--forge-text-faint);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     overflow-wrap: anywhere;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-provider-usage-card {
-    border-color: #E4DED5;
-    background: #FBF7EF;
+    border-color: #DCE3EA;
+    background: #F7F9FB;
     color: var(--forge-text-muted);
     box-shadow: none;
   }
@@ -202,9 +202,9 @@
   }
 
   .forge-log-detail[data-tone="error"] {
-    border-color: rgba(212, 119, 119, 0.22);
+    border-color: rgba(var(--forge-danger-rgb), 0.22);
     background: var(--forge-bg-surface);
-    box-shadow: 0 0 0 1px rgba(212, 119, 119, 0.06);
+    box-shadow: 0 0 0 1px rgba(var(--forge-danger-rgb), 0.06);
   }
 
   .forge-tool-activity-group {
@@ -214,7 +214,7 @@
   }
 
   .forge-tool-activity-group[data-tone="error"] {
-    border-left-color: rgba(212, 119, 119, 0.45);
+    border-left-color: rgba(var(--forge-danger-rgb), 0.45);
   }
 
   .forge-tool-activity-summary {
@@ -243,8 +243,8 @@
   }
 
   .forge-tool-activity-summary:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-tool-activity-summary-item {
@@ -286,8 +286,8 @@
 
   .forge-tool-activity-group[data-tone="error"] .forge-tool-activity-summary {
     color: var(--forge-danger);
-    border-color: rgba(212, 119, 119, 0.34);
-    background: rgba(212, 119, 119, 0.07);
+    border-color: rgba(var(--forge-danger-rgb), 0.34);
+    background: rgba(var(--forge-danger-rgb), 0.07);
   }
 
   .forge-tool-activity-list {
@@ -337,21 +337,21 @@
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary:hover {
     border-color: transparent;
-    background: rgba(92, 81, 68, 0.045);
+    background: rgba(30, 41, 59, 0.05);
     color: var(--forge-text-primary);
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary[data-state="running"] {
     border-color: transparent;
     background: transparent;
-    color: #8A6127;
+    color: #B45309;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-group[data-tone="error"] .forge-tool-activity-summary,
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary[data-state="error"] {
     border-color: transparent;
-    background: rgba(153, 71, 49, 0.08);
-    color: #994731;
+    background: rgba(220, 38, 38, 0.06);
+    color: #DC2626;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary-label {
@@ -367,7 +367,7 @@
     border-radius: 0;
     background: transparent;
     padding: 0;
-    color: #6D8791;
+    color: #7FA8C9;
     font-size: 11.5px;
     font-weight: 500;
     opacity: 1;
@@ -382,7 +382,7 @@
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-list {
     gap: 0.125rem;
     margin-top: 0.5rem;
-    border-left: 1px solid #DED6CB;
+    border-left: 1px solid #DCE3EA;
     padding-left: 0.875rem;
   }
 
@@ -398,15 +398,15 @@
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-log-status[data-tone="success"] {
-    color: #3F7041;
+    color: #059669;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-log-status[data-tone="running"] {
-    color: #8A6127;
+    color: #B45309;
   }
 
   .forge-session-operating-surface[data-conversation-theme="light"] .forge-log-status[data-tone="error"] {
-    color: #994731;
+    color: #DC2626;
   }
 
   .forge-status-row[data-state="complete"] svg {
@@ -429,8 +429,8 @@
   }
 
   .forge-status-trigger:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-status-dots {
@@ -445,7 +445,7 @@
     height: 0.1875rem;
     border-radius: 50%;
     background: currentColor;
-    animation: pulse-dot 1.15s infinite;
+    animation: pulse-dot 1.5s ease-in-out infinite;
   }
 
   .forge-status-detail {
@@ -490,7 +490,7 @@
     overflow: auto;
     padding: 0.4375rem 0.625rem;
     color: var(--forge-text-secondary);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 11.25px;
     line-height: 18px;
     white-space: pre-wrap;
@@ -512,7 +512,7 @@
   }
 
   .forge-log-summary[data-tone="error"] {
-    background: rgba(212, 119, 119, 0.045);
+    background: rgba(var(--forge-danger-rgb), 0.045);
   }
 
   .forge-log-summary strong {
@@ -526,7 +526,7 @@
 
   .forge-write-preview {
     border-bottom: 1px solid var(--forge-border-subtle);
-    background: rgba(255, 252, 246, 0.34);
+    background: var(--forge-material-quiet);
   }
 
   .forge-write-preview-header {
@@ -551,7 +551,7 @@
   .forge-write-preview-meta {
     min-width: 0;
     overflow: hidden;
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     text-overflow: ellipsis;
     white-space: nowrap;
   }
@@ -587,10 +587,10 @@
     margin: 0;
     padding: 0.75rem;
     background:
-      linear-gradient(45deg, rgba(92, 81, 63, 0.055) 25%, transparent 25%),
-      linear-gradient(-45deg, rgba(92, 81, 63, 0.055) 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, rgba(92, 81, 63, 0.055) 75%),
-      linear-gradient(-45deg, transparent 75%, rgba(92, 81, 63, 0.055) 75%);
+      linear-gradient(45deg, rgba(148, 163, 184, 0.055) 25%, transparent 25%),
+      linear-gradient(-45deg, rgba(148, 163, 184, 0.055) 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, rgba(148, 163, 184, 0.055) 75%),
+      linear-gradient(-45deg, transparent 75%, rgba(148, 163, 184, 0.055) 75%);
     background-position: 0 0, 0 0.5rem, 0.5rem -0.5rem, -0.5rem 0;
     background-size: 1rem 1rem;
   }
@@ -613,7 +613,7 @@
     margin: 0;
     padding: 0.625rem 0.75rem;
     color: var(--forge-code-text);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 11.25px;
     line-height: 18px;
     white-space: pre-wrap;
@@ -708,7 +708,7 @@
 
   .forge-a2a-workspace-kicker {
     color: var(--forge-text-faint);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 0.875rem;
     text-transform: uppercase;
@@ -942,7 +942,7 @@
     border-radius: calc(var(--radius) - 4px);
     background: var(--forge-material-raised);
     color: var(--forge-text-muted);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 9.5px;
     line-height: 1rem;
     padding: 0 0.375rem;
@@ -1010,7 +1010,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--forge-text-secondary);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 9.5px;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -1085,7 +1085,7 @@
   .forge-a2a-task-role {
     flex-shrink: 0;
     color: var(--forge-text-faint);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
   }
 
@@ -1118,14 +1118,14 @@
   .forge-a2a-task-lineage--children {
     gap: 0.125rem;
     color: var(--forge-accent-muted);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
   }
 
   .forge-a2a-task-duration {
     flex-shrink: 0;
     color: var(--forge-text-ghost);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
   }
 
@@ -1404,7 +1404,7 @@
   }
 
   .forge-a2a-worktree-path-code {
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     color: var(--forge-text-faint);
     background: var(--forge-material-raised);
@@ -1452,7 +1452,7 @@
   }
 
   .forge-a2a-worktree-file-chip {
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 9.5px;
     color: var(--forge-accent-muted, var(--forge-text-muted));
     background: rgba(var(--forge-accent-rgb, 99, 102, 241), 0.06);
@@ -1548,8 +1548,8 @@
 
   .forge-sub-agent-round-trigger:focus-visible,
   .forge-sub-agent-tool-trigger:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow: 0 0 0 2px var(--forge-focus-ring);
   }
 
   .forge-sub-agent-round-index {
@@ -1561,7 +1561,7 @@
   .forge-sub-agent-tool-name {
     flex-shrink: 0;
     color: var(--forge-icon-context);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
   }
 
   .forge-sub-agent-muted {
@@ -1601,7 +1601,7 @@
   .forge-sub-agent-output {
     overflow: auto;
     color: var(--forge-text-secondary);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10.75px;
     line-height: 17px;
     white-space: pre-wrap;
@@ -1632,14 +1632,14 @@
   }
 
   .forge-shell-output-section[data-tone="error"] {
-    border: 1px solid rgba(212, 119, 119, 0.18);
+    border: 1px solid rgba(var(--forge-danger-rgb), 0.18);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(212, 119, 119, 0.055);
+    background: rgba(var(--forge-danger-rgb), 0.055);
     padding: 0.375rem 0.5rem;
   }
 
   .forge-shell-output-section + .forge-shell-output-section[data-tone="error"] {
-    border-top-color: rgba(212, 119, 119, 0.18);
+    border-top-color: rgba(var(--forge-danger-rgb), 0.18);
   }
 
   .forge-shell-output-section[data-tone="error"] .forge-shell-output-label {
@@ -1649,7 +1649,7 @@
   .forge-shell-output-label {
     margin-bottom: 0.25rem;
     color: var(--forge-text-faint);
-    font-family: "Geist Mono", "SF Mono", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 14px;
     text-transform: uppercase;

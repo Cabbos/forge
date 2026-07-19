@@ -54,29 +54,51 @@ test.describe("Frontend maintainability guardrails", () => {
     }
   });
 
-  test("warm precision brand assets avoid cold graphite and blue code literals", () => {
+  test("console craft brand assets avoid warm quiet-native literals", () => {
     const checkedFiles = [
       "src/assets/forge-mark.svg",
       "src/styles/diff.css",
       "src/styles/markdown.css",
     ];
-    const coldBrandLiterals = [
-      "#0D0D0D",
-      "#1C1C1C",
-      "#2A2A2A",
-      "rgba(9, 11, 14",
-      "rgba(10, 12, 15",
-      "#d6deeb",
-      "#D6DEEB",
-      "#CBD5E1",
-      "#7CAED8",
-      "rgba(148, 163, 184",
-      "rgba(188, 198, 214",
+    const warmBrandLiterals = [
+      "rgba(184, 138, 86",
+      "#B88A56",
+      "#C79A69",
+      "#A9723E",
+      "#8A6127",
+      "#994731",
+      "rgba(155, 185, 135",
+      "rgba(238, 234, 225",
+      "rgba(255, 251, 244",
     ];
 
     for (const path of checkedFiles) {
       const source = readFileSync(resolve(process.cwd(), path), "utf8");
-      for (const literal of coldBrandLiterals) {
+      for (const literal of warmBrandLiterals) {
+        expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
+      }
+    }
+  });
+
+  test("console craft semantic panels use theme tokens instead of v4 inline colors", () => {
+    const checkedFiles = [
+      "src/components/workflow/CurrentTaskCard.tsx",
+      "src/components/messages/MessagePanel.tsx",
+      "src/components/settings/SchedulerHistoryBadge.tsx",
+    ];
+    const legacyInlineLiterals = [
+      "rgba(255, 252, 246",
+      "rgba(184, 138, 86",
+      "rgba(184,138,86",
+      "rgba(196, 138, 58",
+      "rgba(212, 119, 119",
+      "rgba(220, 80, 60",
+      "#b33a2e",
+    ];
+
+    for (const path of checkedFiles) {
+      const source = readFileSync(resolve(process.cwd(), path), "utf8");
+      for (const literal of legacyInlineLiterals) {
         expect(source, `${path} should not contain ${literal}`).not.toContain(literal);
       }
     }
@@ -193,7 +215,7 @@ test.describe("Frontend maintainability guardrails", () => {
     }
   });
 
-  test("modal overlays stay warm and legible without dark glass", () => {
+  test("modal overlays stay cool and legible without dark glass", () => {
     const checkedFiles = [
       "src/components/ui/dialog.tsx",
       "src/components/ui/sheet.tsx",
@@ -212,9 +234,9 @@ test.describe("Frontend maintainability guardrails", () => {
     const sheet = readFileSync(resolve(process.cwd(), "src/components/ui/sheet.tsx"), "utf8");
     const capabilities = readFileSync(resolve(process.cwd(), "src/styles/capabilities.css"), "utf8");
 
-    expect(dialog).toContain("bg-[rgba(251,244,234,0.78)]");
-    expect(sheet).toContain("bg-[rgba(251,244,234,0.78)]");
-    expect(capabilities).toContain("background: rgba(251, 244, 234, 0.78);");
+    expect(dialog).toContain("bg-[var(--forge-overlay-scrim)]");
+    expect(sheet).toContain("bg-[var(--forge-overlay-scrim)]");
+    expect(capabilities).toContain("background: rgba(244, 246, 248, 0.78);");
   });
 
   test("composer surfaces avoid decorative overlay lines", () => {

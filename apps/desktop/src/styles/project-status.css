@@ -44,7 +44,7 @@
     margin-top: 0.0625rem;
     max-width: 14.25rem;
     color: var(--forge-text-faint);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 0.875rem;
   }
@@ -111,13 +111,13 @@
 
   .forge-project-status-action {
     height: 1.75rem;
-    border-color: rgba(184, 138, 86, 0.18);
-    background: rgba(184, 138, 86, 0.055);
+    border-color: rgba(var(--forge-accent-rgb), 0.18);
+    background: rgba(var(--forge-accent-rgb), 0.055);
   }
 
   .forge-project-status-action:hover {
-    border-color: rgba(184, 138, 86, 0.28);
-    background: rgba(184, 138, 86, 0.085);
+    border-color: rgba(var(--forge-accent-rgb), 0.28);
+    background: rgba(var(--forge-accent-rgb), 0.085);
   }
 
   .forge-project-status-permission-pill {
@@ -135,21 +135,21 @@
   }
 
   .forge-project-status-permission-pill[data-state="trusted"] {
-    border-color: rgba(74, 149, 112, 0.26);
-    background: rgba(74, 149, 112, 0.08);
-    color: rgb(64, 126, 95);
+    border-color: rgba(52, 211, 153, 0.26);
+    background: rgba(52, 211, 153, 0.08);
+    color: #34D399;
   }
 
   .forge-project-status-permission-pill[data-state="full_access"] {
-    border-color: rgba(236, 120, 48, 0.34);
-    background: rgba(236, 120, 48, 0.1);
-    color: rgb(209, 96, 32);
+    border-color: rgba(251, 191, 36, 0.34);
+    background: rgba(251, 191, 36, 0.1);
+    color: #FBBF24;
   }
 
   .forge-project-status-error {
-    border: 1px solid rgba(220, 89, 89, 0.22);
+    border: 1px solid rgba(var(--forge-danger-rgb), 0.22);
     border-radius: calc(var(--radius) - 2px);
-    background: rgba(220, 89, 89, 0.055);
+    background: rgba(var(--forge-danger-rgb), 0.055);
     padding: 0.5rem 0.625rem;
     color: var(--destructive);
     font-size: 11px;
@@ -201,7 +201,7 @@
     min-width: 0;
     overflow: hidden;
     color: var(--forge-text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 1rem;
     text-align: right;
@@ -219,7 +219,7 @@
     background: var(--forge-bg-surface);
     padding: 0.375rem 0.5rem;
     color: var(--forge-text-muted);
-    font-family: var(--font-mono);
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 1rem;
   }

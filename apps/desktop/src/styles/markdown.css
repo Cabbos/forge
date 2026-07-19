@@ -1,10 +1,10 @@
 @layer components {
 /* Markdown and reader surfaces */
-code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 13px; }
+code { font-family: var(--forge-font-mono); font-size: 13px; }
 .markdown-content :not(.code-surface) > pre {
   background: var(--forge-bg-depth); border: 1px solid var(--forge-border-subtle);
   border-radius: 6px; padding: 12px 16px;
-  overflow-x: auto; font-family: "Geist Mono", monospace;
+  overflow-x: auto; font-family: var(--forge-font-mono);
   font-size: 13px; line-height: 1.55; color: var(--forge-text-secondary);
   box-sizing: border-box; max-width: 100%;
 }
@@ -37,7 +37,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   flex-shrink: 0;
   border-radius: 50%;
   background: var(--forge-pass);
-  box-shadow: 0 0 0 3px rgba(155, 185, 135, 0.08);
+  box-shadow: 0 0 0 3px rgba(var(--forge-success-rgb), 0.08);
 }
 .forge-caption-action {
   display: inline-flex;
@@ -58,8 +58,8 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   color: var(--forge-text-primary);
 }
 .forge-caption-action:focus-visible {
-  outline: 1px solid var(--forge-focus-ring);
-  outline-offset: 2px;
+  outline: none;
+  box-shadow: 0 0 0 2px var(--forge-focus-ring);
 }
 .code-scroll {
   scrollbar-width: thin;
@@ -91,7 +91,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   background: var(--forge-code-bg) !important;
   color: var(--forge-code-text) !important;
   padding: 13px 14px !important;
-  font-family: "Geist Mono", "SF Mono", "Fira Code", monospace !important;
+  font-family: var(--forge-font-mono) !important;
   font-size: 12.5px !important;
   line-height: 20px !important;
   overflow: visible !important;
@@ -149,7 +149,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 }
 .diagram-caption-meta {
   color: var(--forge-text-faint);
-  font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+  font-family: var(--forge-font-mono);
   font-size: 10px;
   font-weight: 400;
 }
@@ -184,7 +184,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   background: transparent !important;
   padding: 0 !important;
   color: var(--forge-code-text) !important;
-  font-family: "Geist Mono", "SF Mono", "Fira Code", monospace !important;
+  font-family: var(--forge-font-mono) !important;
   font-size: 12.5px !important;
   line-height: 20px !important;
   text-align: left;
@@ -264,6 +264,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 .markdown-content blockquote {
   margin: var(--forge-markdown-block-gap) 0;
   border: 1px solid var(--forge-border-subtle);
+  border-left: 3px solid var(--forge-border-strong);
   border-radius: calc(var(--radius) - 2px);
   background: var(--forge-bg-surface);
   padding: 8px 12px;
@@ -309,12 +310,12 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 }
 .forge-inline-code {
   display: inline;
-  border: 1px solid rgba(184, 138, 86, 0.14);
+  border: 1px solid rgba(var(--forge-accent-rgb), 0.14);
   border-radius: 4px;
-  background: rgba(184, 138, 86, 0.075);
+  background: rgba(var(--forge-accent-rgb), 0.075);
   padding: 0.05rem 0.28rem;
-  color: var(--forge-warning-strong);
-  font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+  color: var(--forge-text-primary);
+  font-family: var(--forge-font-mono);
   font-size: 0.92em;
   line-height: 1.55;
   white-space: break-spaces;
@@ -337,13 +338,12 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   min-width: min(100%, 18rem);
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid rgba(221, 210, 195, 0.82);
+  border: 1px solid var(--forge-border-subtle);
   border-radius: 8px;
   border-spacing: 0;
   border-collapse: separate;
-  background: rgba(255, 251, 244, 0.72);
+  background: var(--forge-material-raised);
   margin: var(--forge-markdown-block-gap) 0;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.72);
   font-size: 12.75px;
   line-height: 20px;
   overscroll-behavior-x: contain;
@@ -352,7 +352,7 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
 }
 .markdown-content th,
 .markdown-content td {
-  border-bottom: 1px solid rgba(221, 210, 195, 0.74);
+  border-bottom: 1px solid var(--forge-border-subtle);
   padding: 8px 12px;
   text-align: left;
   white-space: nowrap;
@@ -363,15 +363,15 @@ code { font-family: "Geist Mono", "SF Mono", "Fira Code", monospace; font-size: 
   white-space: nowrap;
 }
 .markdown-content th {
-  background: rgba(241, 233, 221, 0.62);
-  color: #756C60;
+  background: var(--forge-bg-raised);
+  color: var(--forge-text-muted);
   font-weight: 600;
 }
 .markdown-content td {
-  color: #61594F;
+  color: var(--forge-text-secondary);
 }
 .markdown-content tbody tr:hover td {
-  background: rgba(184, 138, 86, 0.035);
+  background: rgba(var(--forge-accent-rgb), 0.04);
 }
 .markdown-content tr:last-child td {
   border-bottom: 0;

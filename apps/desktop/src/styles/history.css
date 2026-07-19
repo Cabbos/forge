@@ -142,9 +142,9 @@
   }
 
   .forge-history-error {
-    border: 1px solid rgba(212, 119, 119, 0.18);
+    border: 1px solid rgba(var(--forge-danger-rgb), 0.18);
     border-radius: 8px;
-    background: rgba(212, 119, 119, 0.055);
+    background: rgba(var(--forge-danger-rgb), 0.055);
     padding: 0.5rem 0.625rem;
     color: var(--destructive);
     font-size: 12px;
@@ -241,7 +241,7 @@
 
   .forge-history-result-path {
     color: var(--forge-text-faint);
-    font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace);
+    font-family: var(--forge-font-mono);
   }
 
   .forge-history-result-actions {
@@ -269,8 +269,8 @@
   }
 
   .forge-history-icon-btn--danger:hover:not(:disabled) {
-    border-color: rgba(212, 119, 119, 0.28);
-    background: rgba(212, 119, 119, 0.08);
+    border-color: rgba(var(--forge-danger-rgb), 0.28);
+    background: rgba(var(--forge-danger-rgb), 0.08);
     color: var(--destructive);
   }
 

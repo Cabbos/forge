@@ -199,6 +199,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 | [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
 | [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
 | [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
+| [`apps/desktop/docs/product/forge-design-language.md`](apps/desktop/docs/product/forge-design-language.md) | 桌面设计语言契约（v5 "Console Craft"：冷石墨 + 青色强调 + Geist Mono） |
 | [`CHANGELOG.md`](CHANGELOG.md) | 全部用户可见运行时变更 |
 
 ## Product Tracking

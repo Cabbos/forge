@@ -4,10 +4,9 @@
     position: relative;
     display: flex;
     flex-direction: column;
-    border-right: 1px solid rgba(221, 210, 195, 0.72);
+    border-right: 1px solid var(--forge-border-subtle);
     background: var(--forge-bg-depth);
     padding: var(--forge-sidebar-chrome-safe-top, 3.5rem) 1rem 0.875rem;
-    box-shadow: 1px 0 0 rgba(255, 251, 244, 0.72) inset;
   }
 
   .forge-sidebar-window-drag-region {
@@ -31,8 +30,8 @@
   .forge-sidebar-brand img {
     width: 2rem;
     height: 2rem;
-    border-radius: 10px;
-    box-shadow: 0 8px 16px rgba(79, 62, 42, 0.08);
+    border-radius: 6px;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.24);
   }
 
   .forge-sidebar-brand-copy {
@@ -63,7 +62,7 @@
     align-items: center;
     justify-content: center;
     border: 1px solid transparent;
-    border-radius: 9px;
+    border-radius: 6px;
     background: transparent;
     color: var(--forge-text-muted);
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
@@ -84,7 +83,7 @@
     gap: 0.5rem;
     overflow: hidden;
     border: 1px solid transparent;
-    border-radius: 12px;
+    border-radius: 6px;
     background: var(--forge-bg-surface);
     padding: 0 0.75rem;
     text-align: left;
@@ -119,9 +118,10 @@
     align-items: center;
     gap: 0.625rem;
     border: 1px solid transparent;
-    border-radius: 11px;
+    border-radius: 6px;
     padding: 0 0.75rem;
     color: var(--forge-text-muted);
+    font-family: var(--forge-font-mono);
     font-size: 13px;
     font-weight: 500;
     text-align: left;
@@ -155,10 +155,13 @@
 
   .forge-sidebar-section-title {
     color: var(--forge-text-faint);
-    font-size: 12px;
+    font-family: var(--forge-font-mono);
+    font-size: 10px;
     font-weight: 500;
+    letter-spacing: 0.08em;
     line-height: 1rem;
     padding-inline: 0.5rem;
+    text-transform: uppercase;
   }
 
   .forge-sidebar-history-list {
@@ -184,9 +187,12 @@
     min-height: 1.75rem;
     padding: 0.5rem 0.5rem 0.25rem;
     color: var(--forge-text-faint);
-    font-size: 11px;
+    font-family: var(--forge-font-mono);
+    font-size: 10px;
     font-weight: 500;
+    letter-spacing: 0.08em;
     line-height: 1rem;
+    text-transform: uppercase;
   }
 
   .forge-sidebar-empty-state {
@@ -233,7 +239,7 @@
     align-items: center;
     gap: 0.45rem;
     border: 1px solid transparent;
-    border-radius: 11px;
+    border-radius: 6px;
     padding: 0 0.5rem 0 0.75rem;
     font-size: 13px;
     transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
@@ -259,7 +265,7 @@
     align-items: center;
     justify-content: center;
     border-radius: calc(var(--radius) - 3px);
-    color: rgba(184, 180, 170, 0.45);
+    color: rgba(148, 163, 184, 0.45);
     opacity: 0;
     transition: background-color 120ms ease, color 120ms ease, opacity 120ms ease;
   }
@@ -270,7 +276,7 @@
   }
 
   .forge-sidebar-history-delete:hover {
-    background: rgba(212, 119, 119, 0.1);
+    background: rgba(var(--forge-danger-rgb), 0.1);
     color: var(--forge-danger);
   }
 

@@ -4,9 +4,9 @@ import { cn } from "@/lib/utils";
 type MessagePanelTone = "default" | "warning" | "danger";
 
 const toneStyles: Record<MessagePanelTone, { border: string; background: string }> = {
-  default: { border: "var(--forge-border-subtle)", background: "rgba(255, 252, 246, 0.48)" },
-  warning: { border: "rgba(184, 138, 86, 0.22)", background: "rgba(184, 138, 86, 0.035)" },
-  danger: { border: "rgba(212, 119, 119, 0.3)", background: "rgba(212, 119, 119, 0.055)" },
+  default: { border: "var(--forge-border-subtle)", background: "var(--forge-bg-raised)" },
+  warning: { border: "rgba(var(--forge-amber-rgb), 0.22)", background: "rgba(var(--forge-amber-rgb), 0.035)" },
+  danger: { border: "rgba(var(--forge-danger-rgb), 0.3)", background: "rgba(var(--forge-danger-rgb), 0.055)" },
 };
 
 export function MessagePanel({
