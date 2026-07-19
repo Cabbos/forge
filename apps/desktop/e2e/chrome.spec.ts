@@ -281,10 +281,10 @@ test.describe("Timeline Chrome", () => {
         };
       });
 
-      expect(paletteMetrics.bodyBackground).toBe("rgb(242, 239, 232)");
-      expect(paletteMetrics.overlayBackground).toBe("rgba(251, 244, 234, 0.78)");
-      expect(paletteMetrics.dialogBackground).toBe("rgb(254, 252, 248)");
-      expect(paletteMetrics.surfaceBackground).toBe("rgb(254, 252, 248)");
+      expect(paletteMetrics.bodyBackground).toBe("rgb(252, 253, 254)");
+      expect(paletteMetrics.overlayBackground).toBe("rgba(244, 246, 248, 0.72)");
+      expect(paletteMetrics.dialogBackground).toBe("rgb(255, 255, 255)");
+      expect(paletteMetrics.surfaceBackground).toBe("rgb(255, 255, 255)");
       expect(paletteMetrics.hasViteOverlay).toBe(false);
     });
 

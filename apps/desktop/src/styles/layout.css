@@ -4,14 +4,20 @@
   html, body, #root {
     height: 100%;
     overflow: hidden;
-    font-family: "Geist Variable", system-ui, -apple-system, sans-serif;
+    font-family: var(--forge-font-sans);
     -webkit-font-smoothing: antialiased;
   }
 
-  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--forge-border-muted); border-radius: 2px; }
-  ::selection { background: rgba(184, 138, 86, 0.2); color: var(--forge-text-primary); }
+  ::-webkit-scrollbar-thumb {
+    background: var(--forge-border-strong);
+    border: 2px solid transparent;
+    border-radius: 3px;
+    background-clip: content-box;
+  }
+  ::-webkit-scrollbar-thumb:hover { background: var(--forge-text-ghost); background-clip: content-box; }
+  ::selection { background: rgba(34, 211, 238, 0.22); color: var(--forge-text-primary); }
 
   * { @apply border-border; }
 

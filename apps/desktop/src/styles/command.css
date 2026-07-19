@@ -1,23 +1,23 @@
 @layer components {
   .forge-command-dialog {
-    --forge-bg-base: #F2EFE8;
-    --forge-bg-surface: #FEFCF8;
-    --forge-bg-raised: #FAF7F1;
-    --forge-bg-raised-hover: #ECE5DA;
-    --forge-border-subtle: #DDD2C3;
-    --forge-border-muted: rgba(92, 81, 68, 0.16);
-    --forge-border-strong: #CFC1AE;
-    --forge-text-primary: #1D1A16;
-    --forge-text-secondary: #4D4740;
-    --forge-text-muted: #716A61;
-    --forge-text-faint: #948B80;
-    --forge-hover: rgba(92, 81, 68, 0.055);
-    --forge-active: rgba(184, 138, 86, 0.12);
-    --forge-focus-ring: rgba(184, 138, 86, 0.38);
-    --forge-shadow-focus: 0 16px 36px rgba(79, 62, 42, 0.12);
-    --forge-glass-popover: #FEFCF8;
-    --forge-material-surface: #FEFCF8;
-    --forge-material-popover: #FEFCF8;
+    --forge-bg-base: #F4F6F8;
+    --forge-bg-surface: #FCFDFE;
+    --forge-bg-raised: #EFF3F6;
+    --forge-bg-raised-hover: #E5EBF0;
+    --forge-border-subtle: #DCE3EA;
+    --forge-border-muted: rgba(30, 41, 59, 0.14);
+    --forge-border-strong: #C3CED9;
+    --forge-text-primary: #131A23;
+    --forge-text-secondary: #3D4754;
+    --forge-text-muted: #66707D;
+    --forge-text-faint: #8A94A1;
+    --forge-hover: rgba(30, 41, 59, 0.05);
+    --forge-active: rgba(8, 145, 178, 0.10);
+    --forge-focus-ring: rgba(8, 145, 178, 0.35);
+    --forge-shadow-focus: 0 16px 36px rgba(15, 23, 42, 0.10);
+    --forge-glass-popover: #FFFFFF;
+    --forge-material-surface: #FFFFFF;
+    --forge-material-popover: #FFFFFF;
     --background: var(--forge-bg-base);
     --foreground: var(--forge-text-primary);
     --popover: var(--forge-glass-popover);
@@ -40,8 +40,11 @@
   }
 
   .forge-command-dialog:focus-visible {
-    outline: 1px solid var(--forge-focus-ring);
-    outline-offset: 2px;
+    outline: none;
+    box-shadow:
+      0 0 0 1px var(--forge-border-subtle),
+      0 0 0 2px var(--forge-focus-ring),
+      var(--forge-shadow-focus);
   }
 
   .forge-command-motion-root {
@@ -85,7 +88,7 @@
 
   .forge-command-surface [data-slot="input-group"]:focus-within {
     border-color: var(--forge-border-strong);
-    box-shadow: 0 0 0 1px rgba(184, 138, 86, 0.12), 0 0 0 4px rgba(184, 138, 86, 0.035);
+    box-shadow: 0 0 0 1px rgba(var(--forge-accent-rgb), 0.18), 0 0 0 4px rgba(var(--forge-accent-rgb), 0.05);
   }
 
   .forge-command-list {
@@ -112,8 +115,8 @@
   }
 
   .forge-command-notice {
-    border-color: rgba(184, 138, 86, 0.2);
-    background: rgba(184, 138, 86, 0.055);
+    border-color: rgba(var(--forge-accent-rgb), 0.2);
+    background: rgba(var(--forge-accent-rgb), 0.055);
     color: var(--forge-text-secondary);
   }
 
@@ -124,7 +127,7 @@
   .forge-command-surface [data-slot="command-separator"] {
     height: 1px;
     margin: 0.375rem 0.125rem;
-    background: rgba(221, 210, 195, 0.72);
+    background: var(--forge-border-subtle);
   }
 
   .forge-command-surface [cmdk-group-heading] {
@@ -144,8 +147,9 @@
   }
 
   .forge-command-surface [data-slot="command-item"][data-selected="true"] {
-    border-color: var(--forge-border-subtle);
-    background: var(--forge-hover);
+    border-color: transparent;
+    background: var(--forge-active);
+    box-shadow: inset 2px 0 0 var(--forge-accent);
     color: var(--forge-text-primary);
   }
 
@@ -158,7 +162,7 @@
     border: 1px solid var(--forge-border-subtle);
     border-radius: calc(var(--radius) - 3px);
     padding: 0 0.375rem;
-    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 1;
     color: var(--forge-text-faint);

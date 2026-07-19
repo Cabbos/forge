@@ -1,12 +1,14 @@
 # Forge Design Language
 
-Updated: 2026-05-27
+Updated: 2026-07-18
 
 ## Positioning
 
 Forge V1 should feel like a local agent workbench with desktop-product craft: calm like Claude Desktop, precise like Linear, action-ready like Raycast, and dense enough for developer work like Warp and Zed.
 
-The design language is **Warm Precision**. It is not a new product concept and should not create new navigation, panels, terms, or user-visible abilities. It is a visual and interaction contract for existing Forge surfaces.
+The design language is **Console Craft** (v5, successor to v4 "Warm Precision"). It is not a new product concept and should not create new navigation, panels, terms, or user-visible abilities. It is a visual and interaction contract for existing Forge surfaces: cool graphite surfaces, a single cyan signal, and monospaced evidence chrome.
+
+The app shell carries `data-design-version="v5-console-craft"`.
 
 ## Design Alignment Contract
 
@@ -40,13 +42,13 @@ Forge should read as a trustworthy local agent workbench, not as an AI chat skin
 
 The brand image is built from five signals:
 
-- Warm dark desk: olive-charcoal surfaces, warm paper text, no blue-slate graphite as the default.
-- Copper action light: `#B88A56` marks focus, ready actions, current selection, live state, and risk-adjacent attention.
-- Evidence first: logs, diffs, shell output, confirmations, and delivery summaries are part of the brand, not secondary debug clutter.
+- Cool graphite desk: blue-slate charcoal surfaces (`#0A0E14` base), crisp paper text, no warm brown as the default.
+- Cyan signal light: `#22D3EE` (dark) / `#0891B2` (light) marks focus, ready actions, current selection, live state, and risk-adjacent attention.
+- Evidence first: logs, diffs, shell output, confirmations, and delivery summaries are part of the brand, not secondary debug clutter. Monospace (`Geist Mono Variable` via `--forge-font-mono`) is the voice of evidence, labels, and compact controls.
 - Quiet desktop density: compact rows, small controls, hairline borders, and restrained shadows help Forge feel like a daily tool.
 - Local control: project boundaries, permissions, MCP, skills, and automation should feel auditable and reversible.
 
-Avoid purple AI glow, blue SaaS dashboards, orange fire decoration, gold luxury styling, terminal cosplay, marketing hero composition, and card walls. If a visual choice does not make agent work clearer, safer, or calmer, it does not belong in V1.
+Avoid purple AI glow, playful SaaS dashboards, orange fire decoration, gold luxury styling, terminal cosplay, marketing hero composition, and card walls. If a visual choice does not make agent work clearer, safer, or calmer, it does not belong in V1.
 
 ## Reference Inputs
 
@@ -55,128 +57,74 @@ Avoid purple AI glow, blue SaaS dashboards, orange fire decoration, gold luxury 
 | Claude Desktop | warm trust, readable conversation, quiet confirmation hierarchy | cream marketing canvas, editorial hero language |
 | Linear | hairline precision, restrained dark craft, clear affordance | cold lavender identity, marketing screenshot composition |
 | Raycast | keyboard confidence, compact command surfaces, crisp hover states | launcher-only mental model |
-| Warp | warm near-charcoal developer density, understated terminal craft | making Forge feel like a raw terminal |
+| Warp | cool near-charcoal developer density, understated terminal craft | making Forge feel like a raw terminal |
 | Zed | thread density, editor-native layout discipline | overly sparse IDE chrome |
 | Impeccable | product-register restraint, token discipline, cognitive-load checks | visual spectacle for its own sake |
 
 ## Core Scene
 
-Forge is used by a developer or operator working in a local project for long stretches, often in a dim desktop environment, while delegating real file and shell work to an agent. The UI should lower cognitive noise, preserve evidence, and make risky moments feel deliberate.
-
-The light theme scene is the same user in a brighter daytime desk environment. Light mode should feel like a warm local workbench, not a generic white SaaS dashboard. It exists for comfort, readability, and OS/theme fit while preserving the same evidence-first behavior.
+A developer opens Forge after lunch. The room is quiet: a graphite desk, a thin cyan signal where attention belongs, evidence stacked in tidy rows. They read the assistant's last answer, glance at a running check, approve one guarded write, and get back to code. Nothing glows without a reason.
 
 ## Visual Principles
 
-### Warm Dark, Not Cold Graphite
+### Cool Graphite, Not Warm Brown
 
-The base surface should be a tinted near-black, leaning warm olive-charcoal rather than blue slate. Text should read like warm paper on a dark desk, not stark white on black.
+The dark theme is a blue-slate ladder, not olive-charcoal: base `#0A0E14`, depth `#070B10`, surface `#10161F`, raised `#141B26`, elevated hover `#182130`. Text is cool paper (`#E6E9EF`), muted slate (`#7C8694`), never brown-tinted.
 
-- Base: `#1B1A17`
-- Depth: `#12110F`
-- Surface: `#26231E`
-- Raised: `#2A2721`
-- Primary text: `#EEEAE1`
-- Secondary text: `#CFC7B8`
-- Muted text: `#928B7E`
+### Cool Light, Not Cream
 
-### Warm Light, Not White SaaS
-
-The light theme should invert the material logic without becoming stark white. It uses warm paper and stone neutrals, with the same copper accent and restrained state colors.
-
-- Base: `#F7F2E9`
-- Depth: `#ECE2D4`
-- Surface: `#FBF7EF`
-- Raised: `#F3EADC`
-- Control: `#E8DCCD`
-- Border: `#D8C9B8`
-- Primary text: `#2D2923`
-- Secondary text: `#51483D`
-- Muted text: `#7E7368`
-
-Light mode should preserve density and evidence hierarchy. Do not add pure white cards, blue SaaS accents, or larger spacing to make the interface feel "lighter." The same workbench should simply be usable under brighter ambient light.
+The light theme is a clean console day mode, not warm paper: base `#F4F6F8`, depth `#EDF1F4`, surface `#FCFDFE`, raised materials `#FFFFFF`. Borders are cool hairlines (`#DCE3EA`, `#C3CED9` for the composer). Accent steps down to `#0891B2` for contrast.
 
 ### One Accent With Restraint
 
-Forge uses a quiet copper-gold accent for live state, focus, ready action, and warning-adjacent attention. It should stay below the level of brand decoration.
-
-- Accent: `#B88A56`
-- Accent hover: `#C79A69`
-- Focus ring: `rgba(184, 138, 86, 0.34)`
-
-Do not add purple, blue, or gradient accents as a default styling escape hatch.
+Cyan is the only brand accent. It marks the send button when ready, the selected menu/command row (active fill plus a 2px inset left rail), active capability tabs and toggles, focus rings, and live process LEDs. It never floods backgrounds and never appears on routine text.
 
 ### Surfaces Form A Ladder
 
-Use the same material ladder across titlebar, sidebar, conversation, composer, popovers, process detail, and Project Archive.
-
-| Surface | Role |
-| --- | --- |
-| App base | the quiet desk |
-| Depth | sidebar and deep background |
-| Surface | normal panels and Markdown blocks |
-| Raised | evidence, popovers, archive sections |
-| Composer | the grounded input table |
-| Overlay | temporary inspection layers |
-
-Cards remain reserved for decisions, failures, diffs, long evidence, and delivery summaries. Routine conversation and process feedback should not become a card wall.
+Every surface sits on a named rung of the token ladder (`--forge-bg-*`, `--forge-material-*`). No ad-hoc hex in components, no warm v4 leftovers (`#B88A56`, `rgba(184, 138, 86, …)`, `#FEFCF8` and friends are forbidden by guardrail tests). Diff and Markdown surfaces may use neutral slate tints (`rgba(148, 163, 184, …)`).
 
 ### Desktop Density With Breathing Room
 
-Forge should stay compact, but not cramped:
-
-- 8px max radius for product surfaces.
-- 28-32px controls for repeated desktop actions.
-- Stable gutters and lane widths instead of full-width content.
-- No nested cards.
-- No decorative orbs, bokeh, or purple gradients.
+Controls are compact (send 1.875rem, tools 1.875rem high, 6px radii on buttons), section labels are uppercase mono micro-labels, and the conversation lane stays bounded at 760px. Breathing room comes from rhythm tokens, not from inflated padding.
 
 ### Evidence Is Calm Until It Matters
 
-Thinking, shell execution, and routine tools stay quiet. Confirmations, failed checks, diffs, dangerous writes, and long output earn stronger structure.
+Routine tool rows are transparent and borderless; running and error states surface through LED dots, mono timestamps, and restrained accent/danger tints. Pulse animations breathe over 1.5s ease-in-out, never faster.
 
 ### Markdown Must Stay Bounded
 
-Tables, code, ASCII diagrams, inline file paths, and long commands must remain inside the message lane. The renderer should preserve readability without adding new output concepts.
+Tables render as token-driven report cards (`--forge-material-raised`, 8px radius, no vertical grid), blockquotes get a 3px left rail, code stays mono and unwrapped inside table cells, and long content scrolls inside the lane instead of stretching it.
 
 ## Component Direction
 
 ### Composer
 
-The composer is the primary visual anchor. It should feel stable, warm, and slightly raised. Long text, file chips, model menu, resume state, and errors should not resize the workbench unpredictably.
+A single raised card (light: `#FFFFFF`, `#C3CED9` hairline). Send is a compact 6px-radius square: transparent when idle, cyan fill with `--forge-accent-foreground-strong` text when ready, red-tinted (`#FEF2F2`/`#B91C1C`) for stop. Tool chips are 11.5px mono with 6px radii.
 
 ### Message Lane
 
-Assistant output reads as document-like prose on the canvas. User messages are compact local notes, not bright chat bubbles. Copy actions are available but quiet.
+Assistant turns ride a quiet rail with a square 6px mono avatar. User messages are right-aligned notes (light: `#EFF3F6`) with a 3px `--forge-border-strong` left rail; long notes center and widen. Status disclosures stay borderless until hovered.
 
 ### Process Feedback
 
-Process rows follow a Zed-like density. Expanded details share one raised evidence material. Failure states add tone only where inspection is needed.
+Tool activity collapses into lightweight disclosure rows; running state reads amber (`#B45309` light), error reads red (`#DC2626` on `rgba(220, 38, 38, 0.06)`). Shell/evidence surfaces keep mono type and the cool ladder.
 
 ### Menus And Buttons
 
-Menus follow Raycast-like crispness: bounded width, clear selected row, low-noise hover, keyboard-safe focus. Buttons should use icons where the action is already familiar.
+Menus and command palettes are material popovers; the selected row is an accent-tinted fill with a 2px inset left rail, not a bordered pill. Buttons are 6px-radius mono; approve actions are solid accent, cancel is a quiet raised fill.
 
 ### Project Archive
 
-Project Archive inherits the same material, border, density, and scroll behavior. It should feel like local project memory, but remain secondary to the active task.
+The work panel keeps terminal-grade surfaces on the dark ladder, mono 11.5px tabs with an accent inset underline for the active tab, and hairline `#DCE3EA` separators in light mode.
 
 ## Guardrails
 
-- Do not change `StreamEvent`, IPC, protocol schema, or model response schema for visual polish.
-- Do not add new visible modules, panels, entries, product terms, or abilities.
-- Do not introduce a new component library for V1 polish.
-- Do not use visual novelty to hide information hierarchy issues.
-- If a better experience requires new data fields or IA changes, record it as a confirmation item instead of implementing it.
+- Style gate (`npm run check:conversation-style`) pins the light-theme token block, composer, message, markdown, process, confirm, and delivery recipes to v5 values.
+- Guardrail e2e forbids v4 warm literals in brand assets and diff/markdown styles, dark glass overlays, and blurred backdrops.
+- Focus visible states use `box-shadow: 0 0 0 2px var(--forge-focus-ring)` (no outlines), light `rgba(8, 145, 178, 0.35)` / dark `rgba(34, 211, 238, 0.38)`.
+- `--color-*` utility aliases are re-declared inside the light theme block so portal/body surfaces resolve light values instead of inheriting frozen `:root` dark ones.
 
 ## Verification
 
-Each slice should keep these checks current:
-
-- token values stay warm, readable, and restrained
-- composer and core surfaces use the same material ladder
-- process detail, popovers, archive, and message panels share border and elevation rules
-- long Markdown content remains bounded
-- reduced motion remains understandable
-- screenshots of dense conversations do not read as a wall of cards
-
-For the P0 light conversation pass, `npm run check:conversation-style` is the static contract gate. It verifies the light conversation scope, material tokens, composer states, message primitives, process summary states, confirmation actions, and delivery surfaces before `npm run build` proceeds.
+- `npm run build` (includes the conversation style gate and `tsc`).
+- `npx playwright test e2e/messages.spec.ts e2e/chrome.spec.ts e2e/process.spec.ts e2e/composer.spec.ts e2e/guardrails.spec.ts e2e/acceptance.spec.ts` — theme-coupled assertions carry the v5 palette.

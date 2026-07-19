@@ -61,7 +61,7 @@ export function AppShell() {
   return (
     <div
       data-testid="operating-surface"
-      data-design-version="v4-quiet-native"
+      data-design-version="v5-console-craft"
       data-theme={theme}
       className="forge-app-shell h-screen grid bg-background"
     >

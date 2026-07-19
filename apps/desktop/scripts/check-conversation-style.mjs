@@ -68,7 +68,7 @@ const files = {
   composerToolbar: read("src/components/session/ComposerToolbar.tsx"),
 };
 
-assertIncludes(files.appShell, 'data-design-version="v4-quiet-native"', "app shell design version");
+assertIncludes(files.appShell, 'data-design-version="v5-console-craft"', "app shell design version");
 assertIncludes(files.appShell, "data-theme={theme}", "app shell theme scope");
 assertIncludes(files.sessionView, "data-conversation-theme={theme}", "SessionView theme scope");
 assertIncludes(files.conversationLane, "<ConversationTurn", "result-first conversation turn composition");
@@ -107,12 +107,12 @@ assertIncludes(files.globals, '.forge-app-shell[data-theme="light"],', "app shel
 assertIncludes(files.globals, 'body:has(.forge-app-shell[data-theme="light"])', "body portal light theme scope");
 
 const themeBlock = selectorBlock(files.globals, '.forge-session-operating-surface[data-conversation-theme="light"]');
-assertIncludes(themeBlock, "--forge-bg-base: #F2EFE8;", "warm light base token");
-assertIncludes(themeBlock, "--forge-material-raised: #FEFCF8;", "warm raised token");
-assertIncludes(themeBlock, "--forge-composer-surface: #FEFCF8;", "warm composer token");
-assertIncludes(themeBlock, "--forge-composer-border: #D8C9B8;", "composer border token");
-assertNotIncludes(themeBlock, "#FFFFFF", "light theme token block");
-assertNotIncludes(themeBlock, "#FFFDF9", "light theme token block");
+assertIncludes(themeBlock, "--forge-bg-base: #F4F6F8;", "cool light base token");
+assertIncludes(themeBlock, "--forge-material-raised: #FFFFFF;", "console raised token");
+assertIncludes(themeBlock, "--forge-composer-surface: #FFFFFF;", "console composer token");
+assertIncludes(themeBlock, "--forge-composer-border: #C3CED9;", "composer border token");
+assertNotIncludes(themeBlock, "#F2EFE8", "light theme token block");
+assertNotIncludes(themeBlock, "#FEFCF8", "light theme token block");
 
 const titlebarBlock = selectorBlock(files.titlebar, ".forge-titlebar");
 assertIncludes(titlebarBlock, "background: var(--forge-bg-surface);", "titlebar uses light token material");
@@ -163,11 +163,11 @@ assertIncludes(composerFocusBlock, "background: var(--forge-composer-surface-foc
 assertIncludes(composerFocusBlock, "box-shadow: var(--forge-composer-shadow-focus);", "composer focused elevation");
 
 const composerRunningBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer[data-streaming="true"],\n  .forge-session-operating-surface[data-conversation-theme="light"] .forge-composer[data-state="running"]');
-assertIncludes(composerRunningBlock, "border-color: rgba(184, 138, 86, 0.26);", "composer running border");
-assertIncludes(composerRunningBlock, "background: #FFFBF4;", "composer running material");
+assertIncludes(composerRunningBlock, "border-color: rgba(var(--forge-accent-rgb), 0.26);", "composer running border");
+assertIncludes(composerRunningBlock, "background: #FFFFFF;", "composer running material");
 
 const composerPausedBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer[data-state="paused"]');
-assertIncludes(composerPausedBlock, "background: #FBF7EF;", "composer paused material");
+assertIncludes(composerPausedBlock, "background: #F7F9FB;", "composer paused material");
 
 const composerTextareaBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-textarea');
 assertIncludes(composerTextareaBlock, "font-size: 15px;", "composer textarea type scale");
@@ -176,9 +176,13 @@ assertNotIncludes(composerTextareaBlock, "font-size: 22px;", "composer textarea 
 
 const composerToolBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool');
 assertIncludes(composerToolBlock, "height: 1.875rem;", "composer tool compact height");
-assertIncludes(composerToolBlock, "border-radius: 10px;", "composer tool controlled radius");
+assertIncludes(composerToolBlock, "border-radius: 6px;", "composer tool console radius");
 assertIncludes(composerToolBlock, "padding: 0 0.6875rem;", "composer file tool compact padding");
 assertNotIncludes(composerToolBlock, "border-radius: 22px;", "composer tool should not inflate");
+
+const composerBaseFileToolBlock = selectorBlock(files.composer, ".forge-composer-tool--file");
+assertIncludes(composerBaseFileToolBlock, "width: auto;", "composer file tool keeps inline label width in every theme");
+assertIncludes(composerBaseFileToolBlock, "white-space: nowrap;", "composer file tool label never wraps");
 
 const composerCommandToolBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-tool--command');
 assertIncludes(composerCommandToolBlock, "width: 1.875rem;", "composer command compact width");
@@ -194,19 +198,20 @@ assertIncludes(composerHintBlock, "font-size: 11.5px;", "composer hint subdued t
 const composerSendBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-send');
 assertIncludes(composerSendBlock, "width: 1.875rem;", "composer send size");
 assertIncludes(composerSendBlock, "height: 1.875rem;", "composer send size");
-assertIncludes(composerSendBlock, "background: #A9723E;", "composer send material");
+assertIncludes(composerSendBlock, "background: #0891B2;", "composer send material");
 
 const composerSendDisabledBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-send:disabled');
 assertIncludes(composerSendDisabledBlock, "background: transparent;", "composer disabled send material");
 assertIncludes(composerSendDisabledBlock, "box-shadow: none;", "composer disabled send elevation");
 
 const composerSendErrorBlock = selectorBlock(files.composer, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-composer-send.text-destructive');
-assertIncludes(composerSendErrorBlock, "background: #FFF0EA;", "composer stop/error send material");
-assertIncludes(composerSendErrorBlock, "color: #994731;", "composer stop/error send color");
+assertIncludes(composerSendErrorBlock, "background: #FEF2F2;", "composer stop/error send material");
+assertIncludes(composerSendErrorBlock, "color: #B91C1C;", "composer stop/error send color");
 
 const userNoteBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .user-command-note');
 assertIncludes(userNoteBlock, "border-radius: 8px;", "user note radius");
-assertIncludes(userNoteBlock, "background: #F1E9DD;", "user note material");
+assertIncludes(userNoteBlock, "background: #EFF3F6;", "user note material");
+assertIncludes(userNoteBlock, "border-left: 3px solid var(--forge-border-strong);", "user note console left rail");
 assertIncludes(userNoteBlock, "max-width: min(440px, 68%);", "user note width");
 
 const shortUserRowBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-user-message-row');
@@ -217,11 +222,11 @@ assertIncludes(longUserRowBlock, "justify-content: center;", "long user message 
 
 const longUserNoteBlock = selectorBlock(files.messages, '.forge-session-operating-surface[data-conversation-theme="light"] .user-command-note[data-long="true"]');
 assertIncludes(longUserNoteBlock, "width: min(620px, 100%);", "long user note width");
-assertIncludes(longUserNoteBlock, "background: #F4EDE3;", "long user note material");
+assertIncludes(longUserNoteBlock, "background: #EFF3F6;", "long user note material");
 
 const markdownTableBlock = selectorBlock(files.markdown, ".markdown-content table");
 assertIncludes(markdownTableBlock, "border-radius: 8px;", "markdown table report radius");
-assertIncludes(markdownTableBlock, "background: rgba(255, 251, 244, 0.72);", "markdown table report material");
+assertIncludes(markdownTableBlock, "background: var(--forge-material-raised);", "markdown table report material");
 assertNotIncludes(markdownTableBlock, "border-radius: calc(var(--radius) - 2px);", "markdown table should avoid generic panel radius");
 
 const markdownCellBlock = selectorBlock(files.markdown, ".markdown-content th,\n.markdown-content td");
@@ -276,14 +281,14 @@ assertIncludes(statusRowBlock, "padding: 0 0.25rem;", "thinking disclosure compa
 
 const messagePanelBlock = selectorBlock(files.messagePanel, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-message-panel');
 assertIncludes(messagePanelBlock, "border-radius: 8px;", "message panel radius");
-assertIncludes(messagePanelBlock, "background: #FEFCF8 !important;", "message panel material");
+assertIncludes(messagePanelBlock, "background: #FFFFFF !important;", "message panel material");
 
 const confirmButtonBlock = selectorBlock(files.confirm, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button');
-assertIncludes(confirmButtonBlock, "border-radius: 8px;", "confirm button radius");
+assertIncludes(confirmButtonBlock, "border-radius: 6px;", "confirm button radius");
 
 const deliveryItemBlock = selectorBlock(files.delivery, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-delivery-item');
 assertIncludes(deliveryItemBlock, "border-radius: 8px;", "delivery item radius");
-assertIncludes(deliveryItemBlock, "background: #FAF7F1;", "delivery item material");
+assertIncludes(deliveryItemBlock, "background: #F7F9FB;", "delivery item material");
 
 const processSummaryBlock = selectorBlock(files.process, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary');
 assertIncludes(processSummaryBlock, "border: 0;", "process summary is a lightweight disclosure row");
@@ -304,19 +309,19 @@ assertIncludes(routineToolDurationBlock, "display: none;", "routine tool duratio
 const processRunningBlock = selectorBlock(files.process, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary[data-state="running"]');
 assertIncludes(processRunningBlock, "border-color: transparent;", "process running border");
 assertIncludes(processRunningBlock, "background: transparent;", "process running material");
-assertIncludes(processRunningBlock, "color: #8A6127;", "process running text");
+assertIncludes(processRunningBlock, "color: #B45309;", "process running text");
 
 const processErrorBlock = selectorBlock(files.process, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-group[data-tone="error"] .forge-tool-activity-summary,\n  .forge-session-operating-surface[data-conversation-theme="light"] .forge-tool-activity-summary[data-state="error"]');
 assertIncludes(processErrorBlock, "border-color: transparent;", "process error border");
-assertIncludes(processErrorBlock, "background: rgba(153, 71, 49, 0.08);", "process error material");
-assertIncludes(processErrorBlock, "color: #994731;", "process error text");
+assertIncludes(processErrorBlock, "background: rgba(220, 38, 38, 0.06);", "process error material");
+assertIncludes(processErrorBlock, "color: #DC2626;", "process error text");
 
 const confirmApproveBlock = selectorBlock(files.confirm, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="approve"]');
-assertIncludes(confirmApproveBlock, "background: #171612;", "confirm approve material");
-assertIncludes(confirmApproveBlock, "color: #F7F4EE;", "confirm approve text");
+assertIncludes(confirmApproveBlock, "background: #0891B2;", "confirm approve material");
+assertIncludes(confirmApproveBlock, "color: #FFFFFF;", "confirm approve text");
 
 const confirmCancelBlock = selectorBlock(files.confirm, '.forge-session-operating-surface[data-conversation-theme="light"] .forge-confirm-button[data-variant="cancel"]');
-assertIncludes(confirmCancelBlock, "background: #FBF7EF;", "confirm cancel material");
+assertIncludes(confirmCancelBlock, "background: #F7F9FB;", "confirm cancel material");
 assertIncludes(confirmCancelBlock, "color: var(--forge-text-secondary);", "confirm cancel text");
 
 console.log("Conversation light-theme contract passed.");

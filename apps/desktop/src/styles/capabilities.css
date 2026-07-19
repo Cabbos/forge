@@ -5,7 +5,7 @@
     left: var(--forge-sidebar-width);
     right: 0;
     z-index: 40;
-    background: rgba(251, 244, 234, 0.78);
+    background: rgba(244, 246, 248, 0.78);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
   }
@@ -24,7 +24,7 @@
     background: var(--forge-material-overlay);
     backdrop-filter: none;
     -webkit-backdrop-filter: none;
-    box-shadow: 14px 0 34px rgba(66, 52, 34, 0.12);
+    box-shadow: 14px 0 34px rgba(15, 23, 42, 0.14);
   }
 
   .forge-capability-drawer-header {
@@ -56,7 +56,7 @@
     display: block;
     overflow: hidden;
     color: var(--forge-text-faint);
-    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     line-height: 0.875rem;
     text-overflow: ellipsis;
@@ -164,15 +164,15 @@
   }
 
   .forge-capability-tab[data-state="active"] {
-    border-color: rgba(184, 138, 86, 0.28);
-    border-bottom-color: #C48A3A;
-    background: rgba(184, 138, 86, 0.08);
+    border-color: rgba(var(--forge-accent-rgb), 0.28);
+    border-bottom-color: var(--forge-accent);
+    background: rgba(var(--forge-accent-rgb), 0.08);
     color: var(--forge-text-primary);
   }
 
   .forge-capability-tab-count {
     color: var(--forge-text-faint);
-    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--forge-font-mono);
     font-size: 10px;
     font-weight: 500;
   }
@@ -249,7 +249,7 @@
   .forge-capability-search:focus-within {
     border-color: var(--forge-border-strong);
     background: var(--forge-bg-surface);
-    box-shadow: 0 0 0 1px rgba(184, 138, 86, 0.1), 0 0 0 4px rgba(184, 138, 86, 0.035);
+    box-shadow: 0 0 0 1px rgba(var(--forge-accent-rgb), 0.1), 0 0 0 4px rgba(var(--forge-accent-rgb), 0.035);
   }
 
   .forge-capability-search-icon {
@@ -362,7 +362,7 @@
 
   .forge-capability-name-mono,
   .forge-capability-description-mono {
-    font-family: "Geist Mono", "SF Mono", "Fira Code", monospace;
+    font-family: var(--forge-font-mono);
   }
 
   .forge-capability-description {
@@ -398,20 +398,20 @@
   }
 
   .forge-capability-status-badge[data-status="healthy"] {
-    border-color: rgba(91, 141, 108, 0.36);
-    background: rgba(91, 141, 108, 0.12);
+    border-color: rgba(var(--forge-success-rgb), 0.36);
+    background: rgba(var(--forge-success-rgb), 0.12);
     color: var(--forge-success-muted);
   }
 
   .forge-capability-status-badge[data-status="warning"] {
-    border-color: rgba(184, 138, 86, 0.4);
-    background: rgba(184, 138, 86, 0.12);
+    border-color: rgba(var(--forge-accent-rgb), 0.4);
+    background: rgba(var(--forge-accent-rgb), 0.12);
     color: var(--forge-accent);
   }
 
   .forge-capability-status-badge[data-status="unavailable"] {
-    border-color: rgba(190, 94, 83, 0.38);
-    background: rgba(190, 94, 83, 0.1);
+    border-color: rgba(var(--forge-danger-rgb), 0.38);
+    background: rgba(var(--forge-danger-rgb), 0.1);
     color: var(--forge-danger);
   }
 
@@ -437,9 +437,9 @@
   }
 
   .forge-capability-toggle[data-state="enabled"] {
-    border-color: rgba(184, 138, 86, 0.28);
-    background: rgba(184, 138, 86, 0.08);
-    color: #C48A3A;
+    border-color: rgba(var(--forge-accent-rgb), 0.28);
+    background: rgba(var(--forge-accent-rgb), 0.08);
+    color: var(--forge-accent);
   }
 
   .forge-capability-toggle[data-state="disabled"] {
@@ -459,9 +459,9 @@
   }
 
   .forge-capability-switch[data-state="enabled"] {
-    border-color: rgba(184, 138, 86, 0.4);
-    background: rgba(184, 138, 86, 0.22);
-    box-shadow: 0 0 0 1px rgba(184, 138, 86, 0.04);
+    border-color: rgba(var(--forge-accent-rgb), 0.4);
+    background: rgba(var(--forge-accent-rgb), 0.22);
+    box-shadow: 0 0 0 1px rgba(var(--forge-accent-rgb), 0.04);
   }
 
   .forge-capability-switch-thumb {
