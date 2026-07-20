@@ -127,6 +127,18 @@ npm run eval:report:latest         # 查看最近一次报告
 
 ## 开发
 
+从仓库根目录启动完整桌面应用：
+
+```bash
+npm run dev:desktop
+```
+
+只启动桌面前端 Vite 服务：
+
+```bash
+npm run dev:desktop:web
+```
+
 ```bash
 npm run build:desktop
 npm run build:website
