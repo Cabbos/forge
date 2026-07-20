@@ -1,130 +1,108 @@
-# Codex–Kimi Bridge Design
+# Codex–Kimi Routing Design
 
 Date: 2026-07-20
 Status: Approved for implementation
 
 ## Goal
 
-Make the existing Kimi provider stored in CCSwitch usable from local Codex through one-click provider switching. Preserve the current OpenAI provider as the default/fallback, start the compatibility bridge automatically at macOS login, and avoid copying the upstream Kimi API key into any new plaintext file.
+Make the existing Kimi provider stored in CCSwitch usable from local Codex through one-click provider switching. Preserve the current OpenAI provider as the fallback, start routing automatically after macOS login, and keep the upstream Kimi API key under CCSwitch management.
 
-## Current Constraints
+## Current State
 
-- CCSwitch stores the current Kimi entry as a Claude/Anthropic provider.
-- Kimi Code exposes Anthropic Messages and OpenAI-compatible Chat Completions endpoints.
+- CCSwitch 3.17.0 is installed at `/Applications/CC Switch.app`.
+- CCSwitch stores the active Kimi entry as a Claude/Anthropic provider.
+- Kimi Code exposes an OpenAI-compatible Chat Completions endpoint at `https://api.kimi.com/coding/v1`.
 - Local Codex custom providers use the OpenAI Responses API wire format.
-- Kimi Code's `/v1/responses` endpoint is unavailable, so direct Codex configuration cannot work.
-- The existing `~/.codex/config.toml` and OpenAI authentication must remain recoverable through CCSwitch.
+- CCSwitch 3.17.0 includes Codex Responses-to-Chat-Completions conversion, streaming conversion, tool-call mapping, provider switching, and loopback routing at `127.0.0.1:15721`.
 
 ## Considered Approaches
 
-### A. Pinned zero-dependency Node bridge — selected
+### A. CCSwitch built-in Codex routing — selected
 
-Install an audited, pinned revision of a small Responses-to-Chat-Completions bridge and add a narrow Kimi provider adaptation. This gives Codex-compatible streaming, tool calls, and multi-turn continuation without installing a large dependency graph. Pinning prevents unreviewed automatic upgrades.
+Create a Codex provider inside the installed CCSwitch and mark its upstream format as OpenAI Chat Completions. CCSwitch keeps Codex pointed at its local Responses endpoint and translates requests to Kimi. This reuses software already installed and responsible for provider state, avoids a second proxy, and keeps switching in one UI.
 
-### B. LiteLLM
+### B. Pinned external Node bridge
 
-LiteLLM provides a general-purpose local gateway, but it introduces a large dependency surface and has had compatibility issues when converting Codex custom tools from Responses API to Chat Completions. It is not selected for this local, single-provider use case.
+A separate zero-dependency bridge can perform the same translation, but it adds another background process, another local credential, separate logs, and a local fork to maintain. It is unnecessary because CCSwitch 3.17.0 already implements the required conversion.
 
 ### C. New custom bridge
 
-A bridge written from scratch would maximize control but duplicate difficult protocol work such as SSE event ordering, tool-call round trips, reasoning fields, and `previous_response_id` continuation. It is not selected unless the audited bridge proves unsuitable.
+A new adapter would maximize control but duplicate difficult protocol work such as SSE event ordering, custom tool calls, and multi-turn continuation. It is not justified while the installed CCSwitch implementation satisfies the requirement.
 
 ## Architecture
-
-The bridge is installed outside the Forge repository at:
-
-```text
-~/.local/share/codex-kimi-bridge/
-```
-
-A macOS LaunchAgent starts it at login and restarts it after an unexpected exit. The service listens only on:
-
-```text
-http://127.0.0.1:4057
-```
 
 The request path is:
 
 ```text
 Codex Responses API
-  -> local authenticated bridge
-  -> Kimi Chat Completions API
-  -> local bridge converts streaming events/tool calls
+  -> CCSwitch local routing at 127.0.0.1:15721/codex
+  -> Responses-to-Chat-Completions conversion
+  -> https://api.kimi.com/coding/v1/chat/completions
+  -> CCSwitch converts streaming text and tool calls
   -> Codex Responses API events
 ```
 
-The implementation adds a CCSwitch Codex provider named `Kimi Bridge`. CCSwitch remains responsible for switching between the existing OpenAI provider and the local Kimi bridge.
+CCSwitch remains the single source of truth for both the Kimi upstream credential and provider switching. No external bridge source tree, runtime, or updater is installed.
 
-## Credentials
+## Provider Configuration
 
-The existing upstream Kimi key remains owned by CCSwitch. The LaunchAgent starts through a wrapper that reads the key from `~/.cc-switch/cc-switch.db` and exports it only to the bridge process. The wrapper must fail closed if the provider is missing, duplicated ambiguously, or has an empty key.
+Create a CCSwitch Codex provider named `Kimi Bridge` with:
 
-The bridge uses a separate randomly generated local access token for inbound Codex requests. This token is not an upstream credential. CCSwitch stores it as the API key for the `Kimi Bridge` Codex provider so Codex can authenticate to the loopback service.
+- API key: copied internally from the existing CCSwitch Kimi provider
+- Upstream Base URL: `https://api.kimi.com/coding/v1`
+- Upstream API format: `openai_chat`
+- Default model: `kimi-for-coding`
+- Context window: `262144`
+- Codex wire API: `responses`
+- Model provider bucket: `custom`, matching CCSwitch's stable third-party history behavior
+- Local routing required: enabled
 
-The design does not copy the Kimi key into the bridge directory, LaunchAgent plist, Codex config, shell startup files, logs, or command-line arguments.
+The provider must not use the unrelated GLM fields stored alongside the existing Claude provider. Only the Kimi coding endpoint, Kimi credential, model ID, and relevant display metadata are copied.
 
-## Configuration
+## Credentials and Privacy
 
-The CCSwitch Codex provider uses:
+The Kimi API key stays inside the existing CCSwitch database and the provider state CCSwitch already manages. It is not written into documentation, scripts, shell profiles, logs, command-line arguments, or a new bridge directory.
 
-- Name: `Kimi Bridge`
-- Base URL: `http://127.0.0.1:4057/v1`
-- Model: `kimi-for-coding`
-- Wire API: Responses
-- API key: generated local bridge token
+Backups may contain the existing credential because they are full copies of the current CCSwitch/Codex state. Backup files must be stored under the existing user-private CCSwitch backup directory with restrictive permissions and must never be committed.
 
-The existing OpenAI provider and its stored configuration are left intact. Switching back through CCSwitch restores the previous OpenAI configuration.
-
-## Bridge Behavior
-
-The bridge must:
-
-- translate Responses API input into Kimi's OpenAI-compatible Chat Completions format;
-- translate streaming text and completion state back into valid Responses API SSE events;
-- preserve function/tool names, JSON arguments, tool-call IDs, and tool outputs across turns;
-- retain bounded `previous_response_id` state for multi-turn continuation;
-- map unsupported reasoning-effort values conservatively;
-- pass through Kimi model IDs without presenting them as OpenAI models;
-- preserve an honest client identity and avoid impersonating another supported client;
-- reject non-loopback binding and unauthenticated requests;
-- avoid logging prompts, responses, authorization headers, or secrets.
-
-No image, audio, web-search, or provider-specific features are added unless they are already supported safely by the selected bridge.
+CCSwitch local routing listens only on `127.0.0.1`. Logging remains disabled or limited to metadata; request and response bodies and authorization headers must not be logged.
 
 ## Automatic Startup
 
-Create a user LaunchAgent under:
+CCSwitch must be registered as a per-user macOS login item so its local routing service becomes available after login without administrator privileges. The configuration must not create a second proxy LaunchAgent. If the app already owns a login-item registration, reuse it; otherwise create one entry whose only job is to open `/Applications/CC Switch.app` at user login.
 
-```text
-~/Library/LaunchAgents/
-```
+## Switching Behavior
 
-It runs the credential-loading wrapper, binds the bridge to loopback, writes minimal operational logs to a user-local state directory, and restarts on failure. The service must not require administrator privileges.
+CCSwitch exposes both `OpenAI Official` and `Kimi Bridge` in its Codex provider list.
+
+- Selecting `Kimi Bridge` starts or confirms CCSwitch local routing, preserves the official Codex login according to the installed CCSwitch behavior, and points live Codex configuration at the CCSwitch loopback endpoint.
+- Selecting `OpenAI Official` restores the official provider configuration and leaves the saved Kimi provider available for later use.
+- Codex must be restarted after switching because model-provider and model-catalog values are loaded at startup.
 
 ## Failure Handling
 
-- Missing CCSwitch database or Kimi provider: exit with a concise non-secret error.
-- Missing/empty Kimi key: exit without starting the listener.
-- Port already in use: exit and record the port conflict.
-- Upstream authentication failure: return the upstream status without logging the credential.
-- Unsupported request/tool shape: return an explicit compatibility error instead of silently dropping tools.
-- Bridge crash: LaunchAgent restarts it with normal macOS backoff behavior.
+- Missing or ambiguous source Kimi provider: stop before creating the Codex provider.
+- Empty Kimi key: stop without changing provider state.
+- CCSwitch not running: Codex receives a clear loopback connection failure; launching CCSwitch restores service.
+- Port `15721` occupied by another process: stop and report the owning process before enabling takeover.
+- Upstream authentication, entitlement, or quota failure: preserve the upstream status and message without logging credentials.
+- Failed switch or validation: restore the backed-up CCSwitch database, `~/.codex/config.toml`, and `~/.codex/auth.json`.
 
 ## Verification
 
 Implementation is complete only when all of the following pass:
 
-1. Static review confirms the pinned bridge contains no unexpected credential exfiltration, telemetry, auto-update, or non-Kimi outbound destinations.
-2. Bridge unit/smoke tests pass at the pinned revision.
-3. `/health` succeeds on loopback and the service is unreachable through non-loopback interfaces.
-4. Requests without the local token are rejected.
-5. A simple Codex prompt streams a valid Kimi response.
-6. A tool-call round trip succeeds, including tool-call ID and JSON argument preservation.
-7. A second turn succeeds through `previous_response_id` continuation.
-8. CCSwitch can switch to `Kimi Bridge` and back to the existing OpenAI provider without losing either configuration.
-9. The bridge starts again after logout/login or a controlled process termination.
-10. A secret scan confirms that the Kimi key was not added to new files or logs.
+1. Backups exist and have user-only permissions.
+2. The new CCSwitch Codex provider contains the Kimi endpoint, `openai_chat` API format, `kimi-for-coding` model, and 262144-token context declaration.
+3. No new file outside the approved backups contains the Kimi API key.
+4. CCSwitch local routing listens only on `127.0.0.1:15721`.
+5. Unauthenticated or invalid local routing requests are rejected according to CCSwitch's managed token behavior.
+6. Switching to `Kimi Bridge` updates the live Codex provider without deleting the saved OpenAI provider.
+7. A simple Codex prompt streams a valid Kimi response.
+8. A tool-call round trip succeeds, including tool name, call ID, JSON arguments, and tool output.
+9. Switching back to `OpenAI Official` restores official Codex operation.
+10. CCSwitch starts after a controlled login-item launch and makes local routing healthy.
 
 ## Rollback
 
-Rollback consists of switching CCSwitch back to the existing OpenAI provider, unloading and deleting the Kimi LaunchAgent, removing the `Kimi Bridge` CCSwitch Codex provider, and deleting `~/.local/share/codex-kimi-bridge/` plus its non-secret logs. The original CCSwitch Kimi provider and current Codex OpenAI configuration remain untouched.
+Rollback consists of switching to `OpenAI Official`, disabling Codex local routing if it is no longer used, removing the `Kimi Bridge` Codex provider, removing only the login item created by this implementation, and restoring the pre-change database/config/auth backups if necessary. The original Claude-side Kimi provider remains untouched.
