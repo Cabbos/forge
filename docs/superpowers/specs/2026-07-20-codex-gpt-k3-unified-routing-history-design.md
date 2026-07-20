@@ -19,7 +19,7 @@ Make the Codex desktop model picker show the current OpenAI GPT catalog and Kimi
 2. OpenAI models continue using the existing ChatGPT/Codex login. No OpenAI API key is introduced.
 3. K3 continues using the existing CCSwitch-managed Kimi credential. The credential must not be copied into project files, scripts, logs, or Codex live configuration.
 4. The Codex live provider identity remains stable as `custom` so the GUI does not hide history when the selected model changes.
-5. Existing rollout files are never rewritten. History migration changes only indexed provider identity after a complete backup.
+5. History migration may rewrite only the `session_meta.model_provider` field in rollout JSONL files, and only after a complete byte-for-byte backup. Conversation events, task content, model, and timestamps are never rewritten.
 6. The router must preserve the real Codex User-Agent. It must not impersonate Claude Code.
 7. Existing unrelated Forge worktree changes remain untouched. CCSwitch runtime work is developed and tested separately from Forge product source.
 
@@ -104,9 +104,9 @@ CCSwitch's unified Codex history mode is enabled only after a recoverable backup
 - `/Users/cabbos/.codex/auth.json`; and
 - `/Users/cabbos/.cc-switch/cc-switch.db`.
 
-The migration normalizes indexed OpenAI threads from `model_provider = "openai"` to the shared `custom` identity. Existing K3 threads already use `custom`. It preserves each thread's model, title, timestamps, archive state, rollout path, and content.
+The migration normalizes OpenAI threads from `model_provider = "openai"` to the shared `custom` identity in both the state index and the rollout `session_meta` record. Existing K3 threads already use `custom`. It preserves each thread's model, title, timestamps, archive state, rollout path, conversation events, and content.
 
-Rollout JSONL files are not rewritten. CCSwitch records a manifest of changed thread IDs and the original provider value so rollback can restore the index exactly.
+Before any rewrite, CCSwitch copies every affected rollout JSONL file and state database into its timestamped migration backup. It rewrites only the provider identity in the `session_meta` line, uses atomic replacement with a concurrent-change guard, and records a manifest so rollback can restore the original files and index exactly.
 
 After migration, the GUI sees one history namespace. Selecting GPT or K3 no longer changes the provider identity, so records remain visible.
 
