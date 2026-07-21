@@ -142,11 +142,18 @@ fn home_dir() -> PathBuf {
 
 /// Dirty flags implementing the runtime-state coalescing policy: mutations
 /// only mark fields; the flush emits a single full-payload append.
+///
+/// `generation` closes the coalescing race between payload read and flag
+/// clear: every mark increments it, the flush snapshots it before reading the
+/// payload, and the flags are only cleared when the generation is unchanged.
+/// A mark landing mid-flush therefore survives for the next flush instead of
+/// being cleared by a stale append.
 #[derive(Debug, Default)]
 struct RuntimeStateScratch {
     goal_ledger: bool,
     a2a_state: bool,
     latest_turn: bool,
+    generation: u64,
 }
 
 impl RuntimeStateScratch {
@@ -167,6 +174,11 @@ pub(crate) struct SessionJournalHandle {
     store: SessionJournalStore,
     mode: SessionJournalMode,
     runtime_scratch: Mutex<RuntimeStateScratch>,
+    /// Serializes flushes so two concurrent flushes cannot interleave their
+    /// append/clear steps. Marks never take this lock, and no other session
+    /// lock is held while acquiring it, so the documented lock order
+    /// (`session_journal` last) is preserved.
+    runtime_flush: Mutex<()>,
 }
 
 impl SessionJournalHandle {
@@ -175,6 +187,7 @@ impl SessionJournalHandle {
             store,
             mode,
             runtime_scratch: Mutex::new(RuntimeStateScratch::default()),
+            runtime_flush: Mutex::new(()),
         }
     }
 
@@ -297,36 +310,63 @@ impl SessionJournalHandle {
     }
 
     fn mark_goal_ledger_dirty(&self) {
-        self.runtime_scratch.lock().goal_ledger = true;
+        let mut scratch = self.runtime_scratch.lock();
+        scratch.goal_ledger = true;
+        scratch.generation += 1;
     }
 
     fn mark_a2a_state_dirty(&self) {
-        self.runtime_scratch.lock().a2a_state = true;
+        let mut scratch = self.runtime_scratch.lock();
+        scratch.a2a_state = true;
+        scratch.generation += 1;
     }
 
     fn mark_latest_turn_dirty(&self) {
-        self.runtime_scratch.lock().latest_turn = true;
+        let mut scratch = self.runtime_scratch.lock();
+        scratch.latest_turn = true;
+        scratch.generation += 1;
     }
 
-    fn runtime_state_dirty(&self) -> bool {
-        self.runtime_scratch.lock().any()
+    /// Snapshot of the dirty generation, or `None` when nothing is marked.
+    /// The caller reads the runtime payload AFTER this snapshot; any mark
+    /// landing in between increments the generation and is detected at flush.
+    fn runtime_state_generation(&self) -> Option<u64> {
+        let scratch = self.runtime_scratch.lock();
+        scratch.any().then_some(scratch.generation)
     }
 
-    /// Emit one coalesced `RuntimeStateUpdated` with the full payload when any
-    /// covered field was marked dirty since the last successful flush.
+    /// Emit one coalesced `RuntimeStateUpdated` with the full payload.
+    ///
+    /// `expected_generation` must come from `runtime_state_generation` taken
+    /// before the payload was read. If a newer mark landed since, this flush
+    /// skips its append entirely and leaves the flags set: appending the stale
+    /// payload could otherwise reorder behind (or clear the mark of) a newer
+    /// state. Flushes are serialized by `runtime_flush`, so the skip cannot
+    /// strand a dirty flag — the concurrent newer flush or the next tick
+    /// emits the newer state.
     fn flush_runtime_state(
         &self,
         session_id: &str,
         state: &SessionRuntimeState,
         source: SessionMutationSource,
+        expected_generation: u64,
     ) -> Result<(), String> {
-        let mut scratch = self.runtime_scratch.lock();
-        if !scratch.any() {
-            return Ok(());
+        let _flush_guard = self.runtime_flush.lock();
+        {
+            let scratch = self.runtime_scratch.lock();
+            if !scratch.any() {
+                return Ok(());
+            }
+            if scratch.generation > expected_generation {
+                return Ok(());
+            }
         }
         let result = self.append_runtime_state(session_id, state, source);
         if result.is_ok() {
-            scratch.clear();
+            let mut scratch = self.runtime_scratch.lock();
+            if scratch.generation == expected_generation {
+                scratch.clear();
+            }
         }
         result
     }
@@ -545,11 +585,11 @@ impl AgentSession {
         let Some(journal) = self.session_journal_handle() else {
             return Ok(());
         };
-        if !journal.runtime_state_dirty() {
+        let Some(generation) = journal.runtime_state_generation() else {
             return Ok(());
-        }
+        };
         let state = self.current_runtime_state();
-        journal.flush_runtime_state(&self.id, &state, source)
+        journal.flush_runtime_state(&self.id, &state, source, generation)
     }
 
     /// Full committed runtime state owned by this session. Fields owned by the
@@ -984,13 +1024,119 @@ mod tests {
     }
 
     #[test]
+    fn concurrent_mark_during_flush_is_not_lost() {
+        let root = test_root("flush-race");
+        let store =
+            SessionJournalStore::new(root.clone(), "session-1".to_string()).expect("journal store");
+        let handle = SessionJournalHandle::new(store, SessionJournalMode::Shadow);
+        let stale_state = SessionRuntimeState {
+            latest_turn: None,
+            latest_workflow: None,
+            latest_delivery: None,
+            goal_ledger: Some(GoalLedger::new_active(
+                "g1",
+                "stale",
+                vec!["t".to_string()],
+                1,
+            )),
+            a2a_state: None,
+            pending_confirms: Vec::new(),
+            active_tool_calls: Vec::new(),
+        };
+        let newer_state = SessionRuntimeState {
+            goal_ledger: Some(GoalLedger::new_active(
+                "g2",
+                "newer",
+                vec!["t".to_string()],
+                2,
+            )),
+            ..stale_state.clone()
+        };
+
+        // The flush snapshots the generation, then a concurrent mark lands
+        // while the payload is being read (the race window).
+        handle.mark_goal_ledger_dirty();
+        let generation = handle.runtime_state_generation().expect("dirty");
+        handle.mark_goal_ledger_dirty();
+
+        // The in-flight flush must skip its stale append and keep the mark.
+        handle
+            .flush_runtime_state(
+                "session-1",
+                &stale_state,
+                SessionMutationSource::RoundCompletion,
+                generation,
+            )
+            .expect("stale flush");
+        assert!(
+            load_events(&root, "session-1").is_empty(),
+            "stale payload must not be journaled"
+        );
+        assert!(
+            handle.runtime_state_generation().is_some(),
+            "the concurrent mark must survive the stale flush"
+        );
+
+        // The next flush journals the newer state exactly once.
+        let newer_generation = handle.runtime_state_generation().expect("still dirty");
+        handle
+            .flush_runtime_state(
+                "session-1",
+                &newer_state,
+                SessionMutationSource::RoundCompletion,
+                newer_generation,
+            )
+            .expect("newer flush");
+        let events = load_events(&root, "session-1");
+        assert_eq!(events.len(), 1);
+        match &events[0].mutation {
+            SessionMutation::RuntimeStateUpdated { state } => {
+                let ledger = state.goal_ledger.as_ref().expect("goal ledger");
+                assert_eq!(
+                    ledger.active_goal().expect("active goal").objective,
+                    "newer"
+                );
+            }
+            other => panic!("expected RuntimeStateUpdated, got {other:?}"),
+        }
+        assert!(handle.runtime_state_generation().is_none());
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Serializes tests that mutate process-global environment variables and
+    /// restores the previous value on drop, so parallel tests cannot flake.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    struct EnvVarGuard {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl EnvVarGuard {
+        fn set(key: &'static str, value: &std::path::Path) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for EnvVarGuard {
+        fn drop(&mut self) {
+            match &self.previous {
+                Some(value) => std::env::set_var(self.key, value),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    #[test]
     fn initialize_session_journal_records_initialized_once() {
+        let _env_lock = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let (session, root) = test_session("init-once");
-        // Point the default root at our temp dir.
-        std::env::set_var("FORGE_SESSION_JOURNAL_ROOT", &root);
+        // Point the default root at our temp dir; restored on guard drop.
+        let _env = EnvVarGuard::set("FORGE_SESSION_JOURNAL_ROOT", &root);
         session.initialize_session_journal();
         session.initialize_session_journal();
-        std::env::remove_var("FORGE_SESSION_JOURNAL_ROOT");
 
         let events = load_events(&root, &session.id);
         let init_count = events
