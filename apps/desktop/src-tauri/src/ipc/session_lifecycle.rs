@@ -503,7 +503,7 @@ fn journal_projection_payload(projection: &SessionProjection) -> AgentSessionSna
 ///   `journal_sequence`: bookkeeping metadata, not session content. Nested
 ///   timestamps inside journaled runtime state (turn/goal/A2A) round-trip
 ///   unchanged and ARE compared exactly, matching `snapshots_parity_equivalent`.
-fn snapshots_restore_parity_equivalent(
+pub(crate) fn snapshots_restore_parity_equivalent(
     left: &AgentSessionSnapshot,
     right: &AgentSessionSnapshot,
 ) -> bool {

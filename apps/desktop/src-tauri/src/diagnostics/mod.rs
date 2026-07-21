@@ -841,6 +841,11 @@ pub fn check_project_runtime() -> DiagnosticCheck {
 /// truncation threshold), so an unbounded scan of thousands of sessions could
 /// block the diagnostics runner for seconds. Sessions beyond the cap are
 /// counted in `sessions_total` but not classified.
+///
+/// Known gap: the scan iterates sessions in deterministic id order (a
+/// `BTreeSet` over snapshot stems / journal directory names), not recency
+/// order. This is acceptable for a background diagnostic but means the cap may
+/// leave recently-active sessions unclassified if the id space is large.
 const MAX_JOURNAL_PARITY_SCAN_SESSIONS: usize = 200;
 
 /// Aggregate restore-parity counts over every durable session (snapshot
