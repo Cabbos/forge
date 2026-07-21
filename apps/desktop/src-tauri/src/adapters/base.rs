@@ -7,7 +7,7 @@ const ORPHAN_TOOL_RESULT_PREVIEW_LIMIT: usize = 4000;
 /// A chat message in the format expected by AI APIs.
 /// Content can be a plain string (for simple text) or a JSON value
 /// (for structured content like tool_use and tool_result blocks).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ChatMessage {
     pub role: String,               // "user" | "assistant"
     pub content: serde_json::Value, // String or Vec<ContentBlock>

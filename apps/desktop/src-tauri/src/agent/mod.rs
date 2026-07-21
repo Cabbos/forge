@@ -15,6 +15,7 @@ pub(crate) mod retry_policy;
 pub mod session;
 pub(crate) mod session_events;
 pub(crate) mod session_guards;
+pub(crate) mod session_journal;
 pub mod snapshot;
 pub mod sub;
 pub(crate) mod time;
