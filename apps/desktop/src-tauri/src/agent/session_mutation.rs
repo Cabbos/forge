@@ -934,6 +934,56 @@ mod tests {
     }
 
     #[test]
+    fn resume_normalization_journals_interrupted_a2a_state() {
+        let (session, root) = test_session("resume-a2a");
+        attach(&session, &root, SessionJournalMode::Shadow);
+
+        // Seed a running A2A task, as a snapshot restore would leave it.
+        let task_id = {
+            let mut bus = lock_unpoisoned(&session.a2a_bus);
+            let task_id = crate::agent::a2a::supervisor::assign_delegate_task(
+                &mut bus, "research", "work", 1,
+            );
+            bus.start_task(&task_id, 2);
+            task_id
+        };
+
+        crate::agent::session::lifecycle::normalize_session_state_for_resume(&session);
+        session
+            .flush_session_runtime_state(SessionMutationSource::RoundCompletion)
+            .expect("flush");
+
+        let events = load_events(&root, &session.id);
+        let runtime_states: Vec<&SessionRuntimeState> = events
+            .iter()
+            .filter_map(|event| match &event.mutation {
+                SessionMutation::RuntimeStateUpdated { state } => Some(state),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            runtime_states.len(),
+            1,
+            "resume normalization must coalesce into one RuntimeStateUpdated: {events:?}"
+        );
+        let bus = runtime_states[0]
+            .a2a_state
+            .as_ref()
+            .expect("interrupted a2a state must be journaled");
+        let task = bus
+            .tasks
+            .iter()
+            .find(|task| task.task_id == task_id)
+            .expect("task carried in journaled state");
+        assert_eq!(
+            task.status,
+            crate::agent::a2a::types::AgentTaskStatus::Interrupted,
+            "post-resume status change must reach the journal"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
     fn initialize_session_journal_records_initialized_once() {
         let (session, root) = test_session("init-once");
         // Point the default root at our temp dir.

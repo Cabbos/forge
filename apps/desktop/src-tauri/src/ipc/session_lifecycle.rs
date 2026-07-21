@@ -429,6 +429,9 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
         system_prompt,
         snapshot.context_window_tokens,
     );
+    // Attach the shadow journal before restore so the upgraded session keeps
+    // journaling and the restore baseline is recorded (journal-first order).
+    upgraded.initialize_session_journal();
     upgraded.restore_state(
         snapshot.messages,
         snapshot.summary,
