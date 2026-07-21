@@ -249,4 +249,165 @@ mod tests {
 
         assert_eq!(resolved, None);
     }
+
+    // ── Journal shadow-mode tool-result mutation ──────────────────────────
+
+    #[tokio::test]
+    async fn ordered_tool_result_batch_is_one_journal_mutation() {
+        use crate::adapters::base::{AdapterError, AiAdapter, ChatMessage, StreamResult};
+        use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
+        use crate::agent::session::{AgentSession, AgentTurnRunRequest};
+        use crate::agent::session_guards::try_begin_turn;
+        use crate::agent::session_journal::{SessionJournalStore, SessionMutation};
+        use crate::agent::session_mutation::{SessionJournalHandle, SessionJournalMode};
+        use crate::harness::Harness;
+        use async_trait::async_trait;
+        use std::collections::VecDeque;
+        use std::sync::{Arc, Mutex};
+
+        struct BatchAdapter {
+            queue: Mutex<VecDeque<Result<StreamResult, AdapterError>>>,
+        }
+
+        #[async_trait]
+        impl AiAdapter for BatchAdapter {
+            async fn call(
+                &self,
+                _messages: &[ChatMessage],
+                _cancel: Arc<tokio::sync::Notify>,
+            ) -> Result<StreamResult, AdapterError> {
+                self.queue.lock().unwrap().pop_front().unwrap_or_else(|| {
+                    Ok(StreamResult {
+                        assistant_content: vec![serde_json::json!("done")],
+                        tool_calls: vec![],
+                        stop_reason: Some("stop".to_string()),
+                    })
+                })
+            }
+
+            fn model_id(&self) -> &str {
+                "batch-model"
+            }
+
+            fn model_name(&self) -> &str {
+                "Batch Model"
+            }
+        }
+
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-tools-journal-workspace-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        std::fs::write(workspace.join("a.txt"), "alpha").expect("write a");
+        std::fs::write(workspace.join("b.txt"), "beta").expect("write b");
+        let journal_root =
+            std::env::temp_dir().join(format!("forge-tools-journal-root-{}", uuid::Uuid::now_v7()));
+        std::fs::create_dir_all(&journal_root).expect("journal root");
+
+        let adapter = Arc::new(BatchAdapter {
+            queue: Mutex::new(
+                vec![
+                    Ok(StreamResult {
+                        assistant_content: vec![
+                            serde_json::json!({"type": "tool_use", "id": "tu_a", "name": "read_file", "input": {"path": "a.txt"}}),
+                            serde_json::json!({"type": "tool_use", "id": "tu_b", "name": "read_file", "input": {"path": "b.txt"}}),
+                        ],
+                        tool_calls: vec![
+                            ToolCall {
+                                id: "tu_a".to_string(),
+                                name: "read_file".to_string(),
+                                input: serde_json::json!({"path": "a.txt"}),
+                            },
+                            ToolCall {
+                                id: "tu_b".to_string(),
+                                name: "read_file".to_string(),
+                                input: serde_json::json!({"path": "b.txt"}),
+                            },
+                        ],
+                        stop_reason: Some("tool_use".to_string()),
+                    }),
+                    Ok(StreamResult {
+                        assistant_content: vec![serde_json::json!("both read")],
+                        tool_calls: vec![],
+                        stop_reason: Some("stop".to_string()),
+                    }),
+                ]
+                .into_iter()
+                .collect(),
+            ),
+        });
+
+        let harness = Arc::new(Harness::new(workspace.clone()));
+        let session = AgentSession::new(
+            "session-1".to_string(),
+            "claude".to_string(),
+            adapter,
+            harness,
+            "system".to_string(),
+            None,
+        );
+        let store = SessionJournalStore::new(journal_root.clone(), session.id.clone())
+            .expect("journal store");
+        session
+            .attach_session_journal(SessionJournalHandle::new(store, SessionJournalMode::Shadow));
+
+        let emitter: Arc<dyn EventEmitter> = Arc::new(CollectingEventEmitter::new());
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "read both files",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        let mutations: Vec<SessionMutation> =
+            SessionJournalStore::new(journal_root.clone(), session.id.clone())
+                .expect("loader store")
+                .load()
+                .expect("journal load")
+                .events
+                .into_iter()
+                .map(|event| event.mutation)
+                .collect();
+        let tool_result_appends: Vec<&ChatMessage> = mutations
+            .iter()
+            .filter_map(|mutation| match mutation {
+                SessionMutation::MessageAppended { message } => Some(message),
+                _ => None,
+            })
+            .filter(|message| {
+                message.content.as_array().is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                    })
+                })
+            })
+            .collect();
+
+        assert_eq!(
+            tool_result_appends.len(),
+            1,
+            "the ordered tool-result batch must be exactly one journal mutation: {mutations:?}"
+        );
+        let blocks = tool_result_appends[0]
+            .content
+            .as_array()
+            .expect("tool result blocks");
+        let ids: Vec<&str> = blocks
+            .iter()
+            .filter_map(|block| block.get("tool_use_id").and_then(|v| v.as_str()))
+            .collect();
+        assert_eq!(ids, vec!["tu_a", "tu_b"], "order must be preserved");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&journal_root);
+    }
 }

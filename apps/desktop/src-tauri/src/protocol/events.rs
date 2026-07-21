@@ -9,7 +9,7 @@ use crate::memory::{SelectedContextMemory, WikiMemory};
 use crate::workflow::WorkflowState;
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DeliverySummary {
     pub project_path: Option<String>,
     pub preview_label: String,

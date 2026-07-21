@@ -105,7 +105,10 @@ impl AgentSession {
         self.adapter
             .set_external_tools(self.harness.external_mcp_tool_definitions().await);
 
-        lock_unpoisoned(&self.messages).push(ChatMessage::user(text));
+        let _ = self.append_conversation_message(
+            ChatMessage::user(text),
+            crate::agent::session_mutation::SessionMutationSource::UserInput,
+        );
         self.repair_message_history("before_model_call");
         let hidden_contexts = hidden_contexts
             .into_iter()
@@ -352,9 +355,10 @@ impl AgentSession {
         }
 
         if !result.assistant_content.is_empty() {
-            lock_unpoisoned(&self.messages).push(ChatMessage::assistant(serde_json::Value::Array(
-                result.assistant_content.clone(),
-            )));
+            let _ = self.append_conversation_message(
+                ChatMessage::assistant(serde_json::Value::Array(result.assistant_content.clone())),
+                crate::agent::session_mutation::SessionMutationSource::AssistantResponse,
+            );
         }
 
         if result.tool_calls.is_empty() {
@@ -379,9 +383,12 @@ impl AgentSession {
                         "Auto-continuation for session {}: model returned no tool calls but pending tasks remain",
                         self.id
                     );
-                    lock_unpoisoned(&self.messages).push(ChatMessage::user(
-                        "Please continue working on the remaining tasks. You have pending items that need to be completed. Proceed with the next concrete step.",
-                    ));
+                    let _ = self.append_conversation_message(
+                        ChatMessage::user(
+                            "Please continue working on the remaining tasks. You have pending items that need to be completed. Proceed with the next concrete step.",
+                        ),
+                        crate::agent::session_mutation::SessionMutationSource::AutoContinuation,
+                    );
                     return Ok(RoundDecision::Continue);
                 }
             }
@@ -465,12 +472,16 @@ impl AgentSession {
                 if let Ok(result) = adapter_result {
                     if !result.assistant_content.is_empty() {
                         self.emit_final_summary_text_emitter(&result.assistant_content, emitter);
-                        let mut messages = lock_unpoisoned(&self.messages);
+                        let mut staged = Vec::new();
                         push_assistant_result_with_synthetic_tool_results(
-                            &mut messages,
+                            &mut staged,
                             result.assistant_content,
                             &result.tool_calls,
                             "final_summary_tool_call_not_executed",
+                        );
+                        let _ = self.append_conversation_messages(
+                            staged,
+                            crate::agent::session_mutation::SessionMutationSource::FinalSummary,
                         );
                     }
                 }
@@ -535,7 +546,7 @@ impl AgentSession {
                 break;
             }
 
-            match self
+            let round_decision = self
                 .execute_single_round(
                     &hidden_contexts,
                     cancel.clone(),
@@ -544,8 +555,15 @@ impl AgentSession {
                     request.tool_emitter.clone(),
                     &mut overflow_retry_used,
                 )
-                .await?
-            {
+                .await?;
+            // Round completion is the runtime-state append-policy tick: the
+            // latest-turn pointer advance (plus any goal/A2A marks from the
+            // round) coalesces into one journaled RuntimeStateUpdated.
+            self.mark_latest_turn_dirty();
+            let _ = self.flush_session_runtime_state(
+                crate::agent::session_mutation::SessionMutationSource::RoundCompletion,
+            );
+            match round_decision {
                 RoundDecision::Break => break,
                 RoundDecision::Continue => continue,
             }
@@ -558,6 +576,10 @@ impl AgentSession {
             cancel,
         )
         .await;
+        self.mark_latest_turn_dirty();
+        let _ = self.flush_session_runtime_state(
+            crate::agent::session_mutation::SessionMutationSource::RoundCompletion,
+        );
         Ok(())
     }
 

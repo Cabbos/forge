@@ -16,7 +16,8 @@ use crate::ipc::send_input_context::{
 use crate::ipc::session_builder::{build_agent_session, BuildAgentSessionRequest};
 use crate::ipc::session_lifecycle::{
     emit_missing_api_key_notice, emit_restored_session_startup, emit_session_started,
-    register_and_dispatch_session_start, restore_session_from_snapshot, resume_existing_session,
+    register_and_dispatch_session_start, restore_notice_events, restore_session_from_snapshot,
+    resume_existing_session,
 };
 use crate::profile::ForgeProfile;
 use crate::protocol::commands::SessionCreated;
@@ -106,7 +107,17 @@ pub async fn resume_session(
         return resume_existing_session(&app_handle, &state, &session_id, session).await;
     }
 
-    let restored = restore_session_from_snapshot(&state, &session_id).await?;
+    let restored = match restore_session_from_snapshot(&state, &session_id).await {
+        Ok(restored) => restored,
+        Err(failure) => {
+            // Fresh outcome: surface the selector's notices (e.g. journal
+            // quarantined and preserved aside) before returning the error.
+            for event in restore_notice_events(&session_id, &failure.notices) {
+                crate::transcript::emit_stream_event(&app_handle, event);
+            }
+            return Err(failure.reason);
+        }
+    };
     emit_restored_session_startup(&state, &app_handle, &session_id, &restored).await;
     Ok(SessionCreated {
         session_id,

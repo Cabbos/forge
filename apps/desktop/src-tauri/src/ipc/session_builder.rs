@@ -86,5 +86,9 @@ pub(crate) async fn build_agent_session_with_registry_path(
         system_prompt,
         context_window_tokens,
     );
+    // Shadow-mode session journal: best-effort; failures are logged and never
+    // block session creation. Restored snapshots get their baseline when
+    // `restore_state` runs on the journaled session.
+    session.initialize_session_journal();
     Ok((session, missing_api_key))
 }

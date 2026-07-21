@@ -6,9 +6,14 @@ use crate::agent::provider_capabilities::{missing_api_key_message, normalize_pro
 use crate::agent::session::{AgentSession, SessionStatus};
 use crate::agent::session_events;
 use crate::agent::session_guards::lock_unpoisoned;
+use crate::agent::session_journal::{
+    JournalDamage, JournalError, JournalLoadResult, SessionJournalStore, SessionMutationEnvelope,
+};
+use crate::agent::session_projection::SessionProjection;
 use crate::agent::snapshot::{
-    delete_session_snapshot, list_session_snapshots, load_session_snapshot, save_session_snapshot,
-    ActiveToolCallDescriptor, AgentSessionSnapshot, PendingConfirmDescriptor,
+    delete_session_snapshot, list_session_snapshots, save_session_snapshot,
+    try_load_session_snapshot, ActiveToolCallDescriptor, AgentSessionSnapshot,
+    PendingConfirmDescriptor, SnapshotLoadFailure,
 };
 use crate::gateway::protocol::GatewaySessionInfo;
 use crate::harness::Harness;
@@ -208,6 +213,390 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
+// ── Journal-backed restore selection ────────────────────────────────────────
+//
+// The selector below is a PURE function: all file reads happen in
+// `restore_session_from_snapshot` / the diagnostics scan, and all UI emission
+// happens in `emit_restored_session_startup`. This keeps the full
+// snapshot-x-journal decision matrix unit-testable.
+//
+// "Snapshot behind" detection rule
+// --------------------------------
+// Snapshots written before the mutation journal existed carry
+// `journal_sequence == 0` (legacy), and Task 4 does not write sequence
+// metadata into snapshots either — but those sessions get a baseline journal
+// (SessionInitialized + ConversationReplaced + RuntimeStateUpdated) recorded
+// at restore time, so a legacy snapshot is CONTENT-equal to its journal, not
+// behind it. The rule is therefore:
+//
+//   behind  <=>  snapshot.journal_sequence > 0
+//                && journal.last_sequence > snapshot.journal_sequence
+//
+// A legacy snapshot (sequence 0) is never "behind": the snapshot wins and a
+// parity diagnostic compares content instead (Healthy vs Diverged). A
+// snapshot is only superseded by its journal when the snapshot itself
+// recorded which sequence it captured and the journal has since moved on.
+
+/// Journal load input for the restore selector: the replayable event prefix
+/// plus any tolerated damage (a torn final line).
+#[derive(Debug)]
+pub(crate) struct SessionJournalLoad {
+    pub events: Vec<SessionMutationEnvelope>,
+    pub damage: Option<JournalDamage>,
+}
+
+impl From<JournalLoadResult> for SessionJournalLoad {
+    fn from(result: JournalLoadResult) -> Self {
+        Self {
+            events: result.events,
+            damage: result.damage,
+        }
+    }
+}
+
+/// What the restore selector decided to restore from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionRestoreSource {
+    /// The on-disk snapshot is authoritative.
+    Snapshot,
+    /// The journal projection is authoritative; restored through the same
+    /// in-memory restore path via `SessionProjection::to_snapshot()`.
+    JournalProjection,
+    /// Nothing durable to restore — start a fresh session.
+    Fresh,
+}
+
+/// Per-session parity classification consumed by the diagnostics summary.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionParityStatus {
+    /// Snapshot and journal agree (by sequence, or by content for legacy
+    /// snapshots).
+    Healthy,
+    /// Same recorded sequence but content differs. Today this only happens
+    /// through the known `repair_message_history` parity gap (it mutates
+    /// already-corrupt history outside the journaled helpers), so it is a
+    /// soft signal, never a failure.
+    Diverged,
+    /// The journal has committed events beyond the snapshot's recorded
+    /// sequence; the journal projection is newer.
+    SnapshotBehind,
+    /// Only a snapshot exists (no journal events).
+    SnapshotOnly,
+    /// Only a usable journal exists (snapshot missing or corrupt).
+    JournalOnly,
+    /// The journal had a torn final line; the valid prefix was used.
+    TornFinalLine,
+    /// The journal had a corrupt interior line (or unreplayable events) and
+    /// was quarantined.
+    CorruptInterior,
+}
+
+/// User-visible outcome of a restore decision, surfaced through the existing
+/// `StreamEvent::RecoveryNotice` transport — no new IPC surface.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SessionRestoreNotice {
+    /// The snapshot was corrupt/unreadable; the journal projection was used.
+    SnapshotRecoveredFromJournal,
+    /// The journal ended in a torn write; the valid prefix was used.
+    JournalTornFinalLine,
+    /// The journal had a corrupt interior line and was quarantined (renamed
+    /// aside; journaling restarts on a fresh generation).
+    JournalQuarantined,
+    /// Neither snapshot nor journal could be restored; starting fresh.
+    RestoreFailedFreshStart,
+}
+
+/// Output of `choose_session_restore_source`.
+#[derive(Debug)]
+pub(crate) struct SessionRestoreDecision {
+    pub source: SessionRestoreSource,
+    pub parity: SessionParityStatus,
+    /// Snapshot-shaped payload to restore through the existing restore path;
+    /// `None` means start fresh.
+    pub snapshot: Option<AgentSessionSnapshot>,
+    pub notices: Vec<SessionRestoreNotice>,
+}
+
+/// Pure restore-source selector. See the module-level rule documentation for
+/// the "snapshot behind" semantics. All combinations of the snapshot x
+/// journal matrix are decided here; I/O and UI stay outside.
+pub(crate) fn choose_session_restore_source(
+    snapshot: Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure>,
+    journal: Result<Option<SessionJournalLoad>, JournalError>,
+) -> SessionRestoreDecision {
+    // Classify the journal side first.
+    enum JournalState {
+        Absent,
+        /// Load error that leaves the journal's contents unknowable but does
+        /// not prove corruption (I/O failures, lock poisoning, schema or
+        /// sequence errors surfaced before any event replays). Never restored
+        /// from, but not quarantined.
+        Unusable,
+        /// Proven on-disk corruption (corrupt interior line, or events that
+        /// cannot form a projection). Quarantined so journaling restarts.
+        Corrupt,
+        /// Replayed successfully; possibly with a torn final line. Boxed to
+        /// keep the local enum small.
+        Usable {
+            projection: Box<SessionProjection>,
+            torn: bool,
+        },
+    }
+    let journal_state = match journal {
+        Ok(None) => JournalState::Absent,
+        Ok(Some(load)) => match SessionProjection::from_events(&load.events) {
+            Ok(projection) => JournalState::Usable {
+                projection: Box::new(projection),
+                torn: matches!(load.damage, Some(JournalDamage::TornFinalLine { .. })),
+            },
+            Err(_) => JournalState::Corrupt,
+        },
+        Err(JournalError::CorruptInteriorLine { .. }) => JournalState::Corrupt,
+        Err(_) => JournalState::Unusable,
+    };
+
+    let decision = |source, parity, snapshot, notices| SessionRestoreDecision {
+        source,
+        parity,
+        snapshot,
+        notices,
+    };
+
+    match (snapshot, journal_state) {
+        (Ok(Some(snapshot)), JournalState::Usable { projection, torn }) => {
+            let behind = snapshot.journal_sequence > 0
+                && projection.last_sequence > snapshot.journal_sequence;
+            if behind {
+                let payload = journal_projection_payload(&projection);
+                let (parity, notices) = if torn {
+                    (
+                        SessionParityStatus::TornFinalLine,
+                        vec![SessionRestoreNotice::JournalTornFinalLine],
+                    )
+                } else {
+                    (SessionParityStatus::SnapshotBehind, Vec::new())
+                };
+                decision(
+                    SessionRestoreSource::JournalProjection,
+                    parity,
+                    Some(payload),
+                    notices,
+                )
+            } else if torn {
+                decision(
+                    SessionRestoreSource::Snapshot,
+                    SessionParityStatus::TornFinalLine,
+                    Some(snapshot),
+                    vec![SessionRestoreNotice::JournalTornFinalLine],
+                )
+            } else {
+                let parity =
+                    if snapshots_restore_parity_equivalent(&snapshot, &projection.to_snapshot()) {
+                        SessionParityStatus::Healthy
+                    } else {
+                        SessionParityStatus::Diverged
+                    };
+                decision(
+                    SessionRestoreSource::Snapshot,
+                    parity,
+                    Some(snapshot),
+                    Vec::new(),
+                )
+            }
+        }
+        (Ok(Some(snapshot)), JournalState::Corrupt) => decision(
+            SessionRestoreSource::Snapshot,
+            SessionParityStatus::CorruptInterior,
+            Some(snapshot),
+            vec![SessionRestoreNotice::JournalQuarantined],
+        ),
+        (Ok(Some(snapshot)), JournalState::Unusable | JournalState::Absent) => decision(
+            SessionRestoreSource::Snapshot,
+            SessionParityStatus::SnapshotOnly,
+            Some(snapshot),
+            Vec::new(),
+        ),
+        (Ok(None), JournalState::Usable { projection, torn }) => {
+            let (parity, notices) = if torn {
+                (
+                    SessionParityStatus::TornFinalLine,
+                    vec![SessionRestoreNotice::JournalTornFinalLine],
+                )
+            } else {
+                (SessionParityStatus::JournalOnly, Vec::new())
+            };
+            decision(
+                SessionRestoreSource::JournalProjection,
+                parity,
+                Some(journal_projection_payload(&projection)),
+                notices,
+            )
+        }
+        (Err(_), JournalState::Usable { projection, torn }) => {
+            let mut notices = vec![SessionRestoreNotice::SnapshotRecoveredFromJournal];
+            let parity = if torn {
+                notices.push(SessionRestoreNotice::JournalTornFinalLine);
+                SessionParityStatus::TornFinalLine
+            } else {
+                SessionParityStatus::JournalOnly
+            };
+            decision(
+                SessionRestoreSource::JournalProjection,
+                parity,
+                Some(journal_projection_payload(&projection)),
+                notices,
+            )
+        }
+        (_snapshot_outcome, JournalState::Corrupt) => decision(
+            SessionRestoreSource::Fresh,
+            SessionParityStatus::CorruptInterior,
+            None,
+            // Whether the snapshot was missing or corrupt, the user had
+            // journal data that can no longer be replayed: quarantine it and
+            // start fresh with a recovery notice.
+            vec![
+                SessionRestoreNotice::JournalQuarantined,
+                SessionRestoreNotice::RestoreFailedFreshStart,
+            ],
+        ),
+        (snapshot_outcome, JournalState::Unusable | JournalState::Absent) => {
+            let had_durable_data = snapshot_outcome.is_err();
+            decision(
+                SessionRestoreSource::Fresh,
+                SessionParityStatus::SnapshotOnly,
+                None,
+                if had_durable_data {
+                    vec![SessionRestoreNotice::RestoreFailedFreshStart]
+                } else {
+                    Vec::new()
+                },
+            )
+        }
+    }
+}
+
+/// Snapshot-shaped restore payload for a journal projection. The journal
+/// sequence is stamped so the next snapshot save and restore cycle can apply
+/// the "snapshot behind" rule; the generation label is filled in by the save
+/// path, which knows the active journal file.
+fn journal_projection_payload(projection: &SessionProjection) -> AgentSessionSnapshot {
+    let mut snapshot = projection.to_snapshot();
+    snapshot.journal_sequence = projection.last_sequence;
+    snapshot
+}
+
+/// Session-restore parity comparator.
+///
+/// INVARIANT: this is a POSITIVE ALLOWLIST — it compares only the fields the
+/// mutation journal captures. Adding a field to `AgentSessionSnapshot` can
+/// never silently break parity (new fields are simply not compared until a
+/// journaled counterpart exists); conversely, when a field IS added to the
+/// journaled runtime state (`SessionRuntimeState`), it must be added here
+/// too, or parity will not cover it.
+///
+/// Intentionally not compared:
+/// - `latest_workflow`, `latest_delivery`, `pending_confirms`,
+///   `active_tool_calls`: owned by AppState/IPC layers and never journaled
+///   (see agent/session_mutation.rs "Deferred");
+/// - `context_window_tokens`: not captured by the journal;
+/// - `created_at_ms`/`updated_at_ms`, `schema_version`, `journal_generation`,
+///   `journal_sequence`: bookkeeping metadata, not session content. Nested
+///   timestamps inside journaled runtime state (turn/goal/A2A) round-trip
+///   unchanged and ARE compared exactly, matching `snapshots_parity_equivalent`.
+pub(crate) fn snapshots_restore_parity_equivalent(
+    left: &AgentSessionSnapshot,
+    right: &AgentSessionSnapshot,
+) -> bool {
+    fn comparable(snapshot: &AgentSessionSnapshot) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": snapshot.session_id,
+            "provider": snapshot.provider,
+            "model": snapshot.model,
+            "working_dir": snapshot.working_dir,
+            "messages": snapshot.messages,
+            "summary": snapshot.summary,
+            "latest_turn": snapshot.latest_turn,
+            "goal_ledger": snapshot.goal_ledger,
+            "a2a_state": snapshot.a2a_state,
+        })
+    }
+    comparable(left) == comparable(right)
+}
+
+/// Render a restore notice through the existing recovery-notice surface.
+fn restore_notice_render(
+    notice: SessionRestoreNotice,
+) -> (&'static str, &'static str, &'static str, bool) {
+    match notice {
+        SessionRestoreNotice::SnapshotRecoveredFromJournal => (
+            "Session recovered from durable history",
+            "The saved session snapshot was unreadable, so Forge restored your conversation from the durable session journal.",
+            "snapshot_recovered_from_journal",
+            true,
+        ),
+        SessionRestoreNotice::JournalTornFinalLine => (
+            "Session history repaired",
+            "The end of the durable session journal was incomplete after an interrupted write; Forge restored the complete prefix.",
+            "journal_torn_final_line",
+            true,
+        ),
+        SessionRestoreNotice::JournalQuarantined => (
+            "Session journal quarantined",
+            "The durable session journal contained corrupted data and was set aside; the session was restored from its snapshot and journaling restarted fresh.",
+            "journal_quarantined",
+            true,
+        ),
+        SessionRestoreNotice::RestoreFailedFreshStart => (
+            "Session restore failed",
+            "Forge could not restore your last session and started fresh. Your data is safe.",
+            "snapshot_restore_failed",
+            false,
+        ),
+    }
+}
+
+/// Build recovery-notice stream events for restore notices. Shared by the
+/// success path (`emit_restored_session_startup`) and the failure/fresh path
+/// (`startup_restore_active_session`, `resume_session`) so Fresh outcomes —
+/// which have no session to attach notices to — still reach the UI through
+/// the existing transport.
+pub(crate) fn restore_notice_events(
+    session_id: &str,
+    notices: &[SessionRestoreNotice],
+) -> Vec<StreamEvent> {
+    notices
+        .iter()
+        .map(|notice| {
+            let (title, message, reason, recoverable) = restore_notice_render(*notice);
+            session_events::recovery_notice_event(
+                session_id,
+                &format!("notice-{reason}-{session_id}"),
+                title,
+                message,
+                reason,
+                recoverable,
+            )
+        })
+        .collect()
+}
+
+/// Failure of a session restore attempt. Carries the selector's parity
+/// classification and notices so the Fresh outcome (which has no restored
+/// session to attach them to) can still be surfaced to the UI by callers
+/// that own an `AppHandle`.
+#[derive(Debug)]
+pub(crate) struct SessionRestoreFailure {
+    pub reason: String,
+    pub parity: SessionParityStatus,
+    pub notices: Vec<SessionRestoreNotice>,
+}
+
+impl std::fmt::Display for SessionRestoreFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
 pub(crate) struct RestoredSession {
     pub(crate) session: Arc<AgentSession>,
     pub(crate) session_id: String,
@@ -218,26 +607,100 @@ pub(crate) struct RestoredSession {
     pub(crate) latest_delivery: Option<DeliverySummary>,
     pub(crate) pending_confirms: Vec<PendingConfirmDescriptor>,
     pub(crate) active_tool_calls: Vec<ActiveToolCallDescriptor>,
+    /// Restore-selection outcome, surfaced to the UI by
+    /// `emit_restored_session_startup` through the existing recovery-notice
+    /// stream event.
+    pub(crate) restore_notices: Vec<SessionRestoreNotice>,
+    /// Which durable source the session was restored from.
+    pub(crate) restore_source: SessionRestoreSource,
 }
 
 pub(crate) async fn restore_session_from_snapshot(
     state: &Arc<AppState>,
     session_id: &str,
-) -> Result<RestoredSession, String> {
-    let snapshot = load_session_snapshot(session_id)?;
+) -> Result<RestoredSession, SessionRestoreFailure> {
+    // Load both durable sources, then let the pure selector decide. The
+    // journal is a fallback-only source: snapshots are never deleted here
+    // and a healthy snapshot always wins.
+    let snapshot_outcome = try_load_session_snapshot(session_id);
+    let journal_store = SessionJournalStore::new(
+        crate::agent::session_mutation::session_journal_root(),
+        session_id.to_string(),
+    )
+    .ok();
+    let journal_outcome = match &journal_store {
+        Some(store) => match store.load() {
+            Ok(result) if result.events.is_empty() => Ok(None),
+            Ok(result) => Ok(Some(SessionJournalLoad::from(result))),
+            Err(error) => Err(error),
+        },
+        None => Err(JournalError::UnsafeSessionId(session_id.to_string())),
+    };
+    let decision = choose_session_restore_source(snapshot_outcome, journal_outcome);
+    crate::app_log!(
+        "INFO",
+        "[session_restore] session {}: source={:?}, parity={:?}, notices={:?}",
+        session_id,
+        decision.source,
+        decision.parity,
+        decision.notices
+    );
+    // Quarantine a corrupt journal BEFORE building the session so the
+    // builder's journal initialization starts a fresh generation. The
+    // corrupt file is renamed aside, never rewritten or deleted.
+    if decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalQuarantined)
+    {
+        if let Some(store) = &journal_store {
+            match store.quarantine_active() {
+                Ok(Some(path)) => crate::app_log!(
+                    "WARN",
+                    "[session_journal] quarantined corrupt journal for session {}: {}",
+                    session_id,
+                    path.display()
+                ),
+                Ok(None) => {}
+                Err(error) => crate::app_log!(
+                    "WARN",
+                    "[session_journal] failed to quarantine journal for session {}: {:?}",
+                    session_id,
+                    error
+                ),
+            }
+        }
+    }
+    let Some(snapshot) = decision.snapshot else {
+        // Fresh outcome: the failure carries the notices so callers with an
+        // AppHandle can still tell the user what happened (e.g. that their
+        // journal was quarantined and preserved aside).
+        return Err(SessionRestoreFailure {
+            reason: format!("no durable state remains for session '{session_id}'"),
+            parity: decision.parity,
+            notices: decision.notices,
+        });
+    };
+    let restore_source = decision.source;
+    let decision_parity = decision.parity;
+    let decision_notices = decision.notices.clone();
+    let failure = move |reason: String| SessionRestoreFailure {
+        reason,
+        parity: decision_parity,
+        notices: decision_notices.clone(),
+    };
     let provider = normalize_provider(Some(&snapshot.provider));
     let profile = state.profiles.get_active_profile();
     let credentials = state
         .credential_resolver()
         .resolve(&provider, profile.as_ref())
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failure(error.to_string()))?;
     let latest_workflow = snapshot.latest_workflow.clone();
     let latest_delivery = snapshot.latest_delivery.clone();
     let pending_confirms = snapshot.pending_confirms.clone();
     let active_tool_calls = snapshot.active_tool_calls.clone();
 
     let model_str = snapshot.model.clone();
-    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
+    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir).map_err(&failure)?;
     let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
         session_id: snapshot.session_id.clone(),
         provider: provider.clone(),
@@ -248,14 +711,32 @@ pub(crate) async fn restore_session_from_snapshot(
         pending_confirms: state.pending_confirms.clone(),
         existing_context_window_tokens: snapshot.context_window_tokens,
     })
-    .await?;
-    session.restore_state(
-        snapshot.messages,
-        snapshot.summary,
-        snapshot.latest_turn,
-        snapshot.goal_ledger,
-        snapshot.a2a_state,
-    );
+    .await
+    .map_err(&failure)?;
+    if restore_source == SessionRestoreSource::JournalProjection {
+        // The journal is already authoritative — re-appending a baseline
+        // would duplicate its own final state back into it (two extra events
+        // on every restore). Snapshot restores keep the baseline so the
+        // journal catches up with the imported snapshot.
+        session.restore_state_without_baseline(
+            snapshot.messages,
+            snapshot.summary,
+            snapshot.latest_turn,
+            snapshot.goal_ledger,
+            snapshot.a2a_state,
+        );
+    } else {
+        session.restore_state_with_provenance(
+            snapshot.messages,
+            snapshot.summary,
+            snapshot.latest_turn,
+            snapshot.goal_ledger,
+            snapshot.a2a_state,
+            Some(crate::agent::session_mutation::SessionRestoreProvenance {
+                snapshot_schema_version: snapshot.schema_version,
+            }),
+        );
+    }
     // Mark as Resuming before registering so list_sessions can report "resuming"
     // during restore; emit_restored_session_startup will promote to Running.
     *lock_unpoisoned(&session.status) = SessionStatus::Resuming;
@@ -274,6 +755,8 @@ pub(crate) async fn restore_session_from_snapshot(
         latest_delivery,
         pending_confirms,
         active_tool_calls,
+        restore_notices: decision.notices,
+        restore_source,
     })
 }
 
@@ -372,6 +855,11 @@ pub(crate) async fn emit_restored_session_startup(
     if restored.missing_api_key {
         emit_missing_api_key_notice(app_handle, session_id, &restored.provider);
     }
+    // Task 5: surface restore-selection notices (journal recovery, torn
+    // prefix, quarantine) through the existing recovery-notice transport.
+    for event in restore_notice_events(session_id, &restored.restore_notices) {
+        crate::transcript::emit_stream_event(app_handle, event);
+    }
     // Replay complete — promote the session to Running and stream the transition.
     *lock_unpoisoned(&restored.session.status) = SessionStatus::Running;
     crate::transcript::emit_stream_event(
@@ -426,6 +914,9 @@ pub(crate) async fn upgrade_missing_key_session_if_possible(
         system_prompt,
         snapshot.context_window_tokens,
     );
+    // Attach the shadow journal before restore so the upgraded session keeps
+    // journaling and the restore baseline is recorded (journal-first order).
+    upgraded.initialize_session_journal();
     upgraded.restore_state(
         snapshot.messages,
         snapshot.summary,
@@ -489,6 +980,13 @@ pub(crate) async fn session_snapshot_with_workflow_state(
     }
     snapshot = snapshot.with_pending_confirms(pending_confirms);
     snapshot = snapshot.with_active_tool_calls(active_tool_calls);
+    // Stamp the journal position so the restore selector can tell when this
+    // snapshot has fallen behind the journal. `journal_generation` is left
+    // unset: sequences are generation-independent and the selector never
+    // compares the label, so recording a constant would be noise.
+    if let Some(journal) = session.session_journal_handle() {
+        snapshot.journal_sequence = journal.store().last_sequence();
+    }
     snapshot
 }
 
@@ -735,11 +1233,18 @@ pub(crate) async fn startup_restore_active_session(
                 );
             }
         }
-        Err(e) => {
+        Err(failure) => {
             crate::app_log!(
                 "WARN",
-                "[startup_restore] failed to restore session {session_id}: {e}"
+                "[startup_restore] failed to restore session {session_id}: {}",
+                failure.reason
             );
+            // Surface the selector's notices (e.g. journal quarantined and
+            // preserved aside) — the Fresh outcome has no restored session
+            // to carry them, so they are emitted here.
+            for event in restore_notice_events(&session_id, &failure.notices) {
+                crate::transcript::emit_stream_event(app_handle, event);
+            }
 
             // Phase 1.7: if the failed session was the active one, try a fallback.
             let active_id_matches = metadata
@@ -781,24 +1286,33 @@ pub(crate) async fn startup_restore_active_session(
                     Err(fallback_err) => {
                         crate::app_log!(
                             "WARN",
-                            "[startup_restore] fallback restore of {fallback_id} also failed: {fallback_err}"
+                            "[startup_restore] fallback restore of {fallback_id} also failed: {}",
+                            fallback_err.reason
                         );
+                        for event in restore_notice_events(&fallback_id, &fallback_err.notices) {
+                            crate::transcript::emit_stream_event(app_handle, event);
+                        }
                     }
                 }
             }
 
-            // No fallback (or fallback also failed) — surface notice and start fresh.
-            crate::transcript::emit_stream_event(
-                app_handle,
-                session_events::recovery_notice_event(
-                    &session_id,
-                    &format!("notice-restore-fail-{session_id}"),
-                    "Session restore failed",
-                    "Forge could not restore your last session and started fresh. Your data is safe.",
-                    "snapshot_restore_failed",
-                    false,
-                ),
-            );
+            // No fallback (or fallback also failed) — surface notice and start
+            // fresh. Skip the generic notice when the selector already
+            // emitted a specific one (RestoreFailedFreshStart renders the
+            // same reason).
+            if failure.notices.is_empty() {
+                crate::transcript::emit_stream_event(
+                    app_handle,
+                    session_events::recovery_notice_event(
+                        &session_id,
+                        &format!("notice-restore-fail-{session_id}"),
+                        "Session restore failed",
+                        "Forge could not restore your last session and started fresh. Your data is safe.",
+                        "snapshot_restore_failed",
+                        false,
+                    ),
+                );
+            }
         }
     }
 }

@@ -909,18 +909,32 @@ export async function setup(page: Page, options?: { workingDir?: string | null }
             window.__lastResumedSessionId = sessionId;
             // @ts-expect-error mock
             const deliverySummary = window.__mockResumeDeliverySummary;
-            if (deliverySummary) {
+            // @ts-expect-error mock
+            const streamEvents = window.__mockResumeStreamEvents;
+            if (deliverySummary || Array.isArray(streamEvents)) {
               window.setTimeout(() => {
                 // @ts-expect-error listeners
                 for (const listener of window.__tauriListeners?.["session-output"] ?? []) {
-                  listener({
-                    payload: {
-                      event_type: "delivery_summary",
-                      session_id: sessionId,
-                      block_id: "resume-delivery-summary",
-                      summary: deliverySummary,
-                    },
-                  });
+                  if (deliverySummary) {
+                    listener({
+                      payload: {
+                        event_type: "delivery_summary",
+                        session_id: sessionId,
+                        block_id: "resume-delivery-summary",
+                        summary: deliverySummary,
+                      },
+                    });
+                  }
+                  if (Array.isArray(streamEvents)) {
+                    for (const event of streamEvents) {
+                      listener({
+                        payload: {
+                          ...event,
+                          session_id: sessionId,
+                        },
+                      });
+                    }
+                  }
                 }
                 // @ts-expect-error mock
                 window.__resumeDeliveryEmitted = true;
@@ -2084,4 +2098,100 @@ async function writeMockKeyval(page: Page, key: string, value: unknown) {
     },
     { key, value },
   );
+}
+
+/** Contract-shaped mock state for journal-backed session recovery acceptance.
+ *
+ * These helpers match the real Rust event/report shapes so the acceptance spec
+ * can express a corrupt-snapshot-recovered-from-healthy-journal scenario without
+ * adding test-only IPC surfaces.
+ */
+export function journalRecoveredSessionSummary(sessionId: string) {
+  const now = Date.now();
+  return {
+    session_id: sessionId,
+    provider: "deepseek",
+    model: "deepseek-v4-flash[1m]",
+    working_dir: "/Users/cabbos/project/forge",
+    summary: "Journal recovery acceptance session",
+    created_at_ms: now - 300_000,
+    updated_at_ms: now - 60_000,
+    message_count: 2,
+  };
+}
+
+export function journalRecoveryTranscriptEvents(sessionId: string): StreamEvent[] {
+  const userBlockId = `journal-recovery-user-${sessionId}`;
+  const answerBlockId = `journal-recovery-answer-${sessionId}`;
+  return [
+    {
+      event_type: "user_message",
+      session_id: sessionId,
+      block_id: userBlockId,
+      content: "What did we build yesterday?",
+    },
+    {
+      event_type: "recovery_notice",
+      session_id: sessionId,
+      notice_id: `notice-snapshot-recovered-from-journal-${sessionId}`,
+      title: "Session recovered from durable history",
+      message:
+        "The saved session snapshot was unreadable, so Forge restored your conversation from the durable session journal.",
+      reason: "snapshot_recovered_from_journal",
+      recoverable: true,
+    },
+    {
+      event_type: "text_start",
+      session_id: sessionId,
+      block_id: answerBlockId,
+    },
+    {
+      event_type: "text_chunk",
+      session_id: sessionId,
+      block_id: answerBlockId,
+      content: "We built the journal-backed session recovery flow.",
+    },
+    { event_type: "text_end", session_id: sessionId, block_id: answerBlockId },
+  ];
+}
+
+export function journalParityDiagnosticsReport() {
+  const now = Date.now();
+  return {
+    ok: true,
+    generatedAtMs: now,
+    checks: [
+      {
+        id: "config",
+        label: "配置文件",
+        status: "pass",
+        message: "Forge config is readable.",
+        detail: { path: "~/.forge/config.json" },
+      },
+      {
+        id: "gateway_service",
+        label: "Gateway service",
+        status: "pass",
+        message: "Gateway service is installed and running.",
+        detail: { backend: "launchd", service_id: "com.forge.gateway" },
+      },
+      {
+        id: "session_journal_parity",
+        label: "Session journal parity",
+        status: "pass",
+        message:
+          "1 durable session scanned — 1 healthy parity, 0 snapshot-behind, 0 journal-only, 0 torn-final.",
+        detail: {
+          sessions_scanned: 1,
+          healthy_parity: 1,
+          diverged: 0,
+          snapshot_behind: 0,
+          journal_only: 0,
+          torn_final_line: 0,
+          corrupt_interior: 0,
+          quarantined: 0,
+        },
+      },
+    ],
+  };
 }

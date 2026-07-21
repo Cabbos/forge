@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -53,6 +54,18 @@ pub struct AgentSessionSnapshot {
     pub pending_confirms: Vec<PendingConfirmDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_tool_calls: Vec<ActiveToolCallDescriptor>,
+    /// Reserved for generation-addressable journals. Never written today:
+    /// journal sequences are generation-independent (truncation preserves
+    /// sequence numbers across generation promotion) and the restore
+    /// selector ignores this field, so stamping a constant label would be
+    /// noise. Deserializes as `None` for all current snapshots.
+    #[serde(default)]
+    pub journal_generation: Option<String>,
+    /// Journal sequence captured when this snapshot was written. `0` means
+    /// "no metadata" (legacy snapshots and snapshots written before the
+    /// mutation journal existed) and never counts as "behind" on its own.
+    #[serde(default)]
+    pub journal_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -191,6 +204,8 @@ impl AgentSessionSnapshot {
             schema_version: CURRENT_SNAPSHOT_SCHEMA_VERSION,
             pending_confirms: Vec::new(),
             active_tool_calls: Vec::new(),
+            journal_generation: None,
+            journal_sequence: 0,
         }
     }
 
@@ -247,6 +262,32 @@ pub fn save_session_snapshot(snapshot: &AgentSessionSnapshot) -> Result<(), Stri
     save_session_snapshot_at(&app_data_dir(), snapshot)
 }
 
+fn atomic_write_json(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    let mut file = fs::File::create(&tmp)
+        .map_err(|e| format!("create snapshot tmp '{}': {e}", tmp.display()))?;
+    if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        // Best-effort cleanup: don't leave a partial tmp file behind.
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("flush snapshot tmp '{}': {e}", tmp.display()));
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        // Best-effort cleanup: the tmp file is no longer useful.
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "replace session snapshot '{}': {e}",
+            path.display()
+        ));
+    }
+    // Best-effort sync of the parent directory so the new directory entry is
+    // durable. Directory sync is not supported on every platform, so errors are
+    // intentionally ignored.
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+    Ok(())
+}
+
 fn save_session_snapshot_at(
     root: &std::path::Path,
     snapshot: &AgentSessionSnapshot,
@@ -266,13 +307,48 @@ fn save_session_snapshot_at(
     }
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize session snapshot: {e}"))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write session snapshot: {e}"))?;
+    atomic_write_json(&path, json.as_bytes())
+        .map_err(|e| format!("Failed to write session snapshot: {e}"))?;
     sync_a2a_ledger_at(root, &snapshot)?;
     Ok(())
 }
 
 pub fn load_session_snapshot(session_id: &str) -> Result<AgentSessionSnapshot, String> {
     load_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+/// Typed snapshot load failure for the restore selector. A missing snapshot
+/// file is NOT a failure — it is reported as `Ok(None)` so the selector can
+/// distinguish "no snapshot was ever written" from "a snapshot exists but is
+/// unusable".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SnapshotLoadFailure {
+    /// The file exists but could not be read, parsed, or validated (unsafe or
+    /// mismatched session id, corrupted JSON, I/O error).
+    Corrupt { reason: String },
+}
+
+/// Load a snapshot, distinguishing missing (`Ok(None)`) from unusable
+/// (`Err(SnapshotLoadFailure)`). Used by the journal-backed restore selector
+/// and the parity diagnostics scan.
+pub(crate) fn try_load_session_snapshot(
+    session_id: &str,
+) -> Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure> {
+    try_load_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+pub(crate) fn try_load_session_snapshot_at(
+    root: &std::path::Path,
+    session_id: &str,
+) -> Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure> {
+    let path = snapshot_path_at(root, session_id)
+        .map_err(|reason| SnapshotLoadFailure::Corrupt { reason })?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    load_session_snapshot_at(root, session_id)
+        .map(Some)
+        .map_err(|reason| SnapshotLoadFailure::Corrupt { reason })
 }
 
 fn load_session_snapshot_at(
@@ -841,6 +917,89 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["session-1"]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_json_replaces_existing_snapshot_and_removes_tmp() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-atomic-replace-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let path = root.join("sessions").join("session-1.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, br#"{"summary":"first"}"#).unwrap();
+
+        atomic_write_json(&path, br#"{"summary":"second"}"#).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            r#"{"summary":"second"}"#
+        );
+        assert!(!path.with_extension("tmp").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_json_cleans_up_tmp_on_rename_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-atomic-cleanup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        let path = sessions_dir.join("session-1.json");
+        // Create a directory at the destination path so the rename fails.
+        fs::create_dir(&path).unwrap();
+
+        let result = atomic_write_json(&path, br#"{"summary":"second"}"#);
+
+        assert!(
+            result.is_err(),
+            "rename should fail when destination is a directory"
+        );
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "tmp file should be cleaned up after failed rename"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_listing_ignores_tmp_and_backup_files() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-tmp-bak-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut valid = snapshot();
+        valid.session_id = "session-1".to_string();
+        valid.updated_at_ms = 20;
+        fs::write(
+            sessions_dir.join("session-1.json"),
+            serde_json::to_string(&valid).expect("valid json"),
+        )
+        .expect("write valid");
+
+        fs::write(sessions_dir.join("session-1.tmp"), "partial").expect("write tmp");
+        fs::write(sessions_dir.join("session-1.bak"), "backup").expect("write bak");
+
+        let listed = list_session_snapshots_from_dir(&root).expect("list snapshots");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id, "session-1");
 
         let _ = fs::remove_dir_all(root);
     }
@@ -1608,6 +1767,60 @@ mod tests {
 
         assert!(restored.pending_confirms.is_empty());
         assert!(restored.active_tool_calls.is_empty());
+    }
+
+    #[test]
+    fn legacy_snapshot_deserializes_with_zero_journal_sequence() {
+        let json = r#"{
+            "session_id": "session-1",
+            "provider": "openai",
+            "model": "gpt-5",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("legacy snapshot should deserialize");
+
+        assert_eq!(restored.journal_sequence, 0);
+        assert!(restored.journal_generation.is_none());
+    }
+
+    #[test]
+    fn try_load_session_snapshot_distinguishes_missing_from_corrupt() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-typed-load-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        // Missing file → Ok(None).
+        let missing = try_load_session_snapshot_at(&root, "missing-session")
+            .expect("missing is not an error");
+        assert!(missing.is_none());
+
+        // Unparseable file → Err(Corrupt).
+        fs::write(sessions_dir.join("corrupt-session.json"), "{").expect("write corrupt");
+        let error = try_load_session_snapshot_at(&root, "corrupt-session")
+            .expect_err("corrupt snapshot should fail");
+        assert!(matches!(error, SnapshotLoadFailure::Corrupt { .. }));
+
+        // Valid file → Ok(Some).
+        save_session_snapshot_at(&root, &snapshot()).expect("save snapshot");
+        let loaded = try_load_session_snapshot_at(&root, "session-1")
+            .expect("valid snapshot should load")
+            .expect("snapshot present");
+        assert_eq!(loaded.session_id, "session-1");
+        assert_eq!(loaded.journal_sequence, 0);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     // ── Phase 1.8: Agent snapshot shape roundtrip ──────────────────────

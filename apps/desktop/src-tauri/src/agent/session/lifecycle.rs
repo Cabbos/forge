@@ -74,12 +74,22 @@ pub(crate) fn kill(session: &AgentSession, app_handle: &tauri::AppHandle) {
 pub(crate) fn resume(session: &AgentSession, app_handle: &tauri::AppHandle) {
     session.running.store(true, Ordering::SeqCst);
     *lock_unpoisoned(&session.status) = SessionStatus::Running;
+    normalize_session_state_for_resume(session);
+    session.emit_latest_turn_projection(app_handle);
+}
+
+/// Normalize committed runtime state after a resume: latest turn, goal ledger,
+/// and the A2A bus (running tasks become Interrupted). Each covered mutation
+/// is marked dirty so the next runtime-state flush journals it; without the
+/// marks, post-resume state changes would never reach the journal.
+pub(crate) fn normalize_session_state_for_resume(session: &AgentSession) {
     if let Some(turn) = lock_unpoisoned(&session.latest_turn).as_mut() {
         turn.normalize_for_session_resume();
     }
+    session.mark_latest_turn_dirty();
     session.normalize_goal_ledger_for_resume();
     lock_unpoisoned(&session.a2a_bus).normalize_for_resume(now_ms());
-    session.emit_latest_turn_projection(app_handle);
+    session.mark_a2a_state_dirty();
 }
 
 pub(crate) fn kill_with_emitter(
