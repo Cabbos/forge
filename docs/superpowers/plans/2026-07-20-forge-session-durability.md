@@ -220,7 +220,18 @@ Requirements:
 - ignore only a malformed non-newline-terminated final record;
 - reject malformed interior records and sequence gaps.
 
-- [ ] **Step 5: Run formatter, lint, and module tests**
+- [ ] **Step 5: Define journal retention and truncation policy**
+
+The journal is append-only and grows with every `MessageAppended` (tool results included), so an unbounded journal will dominate session disk usage on long conversations. Specify and test:
+
+- **Truncation anchor.** A journal may only be truncated at a committed `ConversationReplaced` event whose checkpoint id matches a persisted compaction checkpoint. Truncation creates a new journal generation (per the corruption contract — never rewrite in place) seeded with one `SessionInitialized` event followed by that `ConversationReplaced` baseline. All events after the baseline are carried over verbatim with their original sequence numbers.
+- **Trigger.** Truncation is evaluated after each successful snapshot save: truncate only when the journal file exceeds 32 MiB **and** a committed checkpoint exists at or before the snapshot's recorded sequence. In shadow mode, truncation runs the same code path but the parity diagnostic must replay the truncated generation and compare against the snapshot before the old generation file is deleted (retain the pre-truncation generation as `mutations.gen<N-1>.jsonl` until parity passes).
+- **Size telemetry.** Record journal bytes, event count, and truncation count in the session journal health facts from Task 5, so growth regressions are visible before the 32 MiB trigger.
+- **Failure rule.** If truncation fails after the new generation is written, the new generation is removed and the original journal remains authoritative; a session never has zero valid generations.
+
+Add tests covering: truncation preserves post-baseline sequences, replay of a truncated generation equals replay of the full journal from the baseline forward, and a failed truncation leaves the original journal untouched.
+
+- [ ] **Step 6: Run formatter, lint, and module tests**
 
 ```bash
 cd apps/desktop/src-tauri
@@ -231,7 +242,7 @@ cargo test agent::session_journal
 
 Expected: all pass.
 
-- [ ] **Step 6: Commit the isolated journal module**
+- [ ] **Step 7: Commit the isolated journal module**
 
 ```bash
 git add apps/desktop/src-tauri/src/agent/mod.rs apps/desktop/src-tauri/src/agent/session_journal.rs
@@ -373,7 +384,18 @@ impl AgentSession {
 
 Do not expose raw journal mutation to provider or UI layers.
 
-- [ ] **Step 4: Replace direct conversation writes one site at a time**
+- [ ] **Step 4: Define the `RuntimeStateUpdated` append policy**
+
+Without an explicit policy, runtime-state appends either fire too often (journal noise, flaky parity tests) or too rarely (journal replay diverges from the snapshot). Specify and test:
+
+- **Journaled transitions, exhaustive list.** Append `RuntimeStateUpdated` only when one of these committed states changes: goal state set/cleared, A2A task added/status-changed, pending confirmation added/resolved, interrupted tool descriptor recorded/cleared, workflow or delivery state transition, latest-turn pointer advance at round completion. If a code path mutates one of these fields without going through the helper, that is a bug the shadow parity check must catch.
+- **Coalescing.** At most one `RuntimeStateUpdated` per state field per event-loop tick: multiple mutations to the same field within one tick are coalesced into a single append carrying the final value. Distinct fields mutated in the same tick may share one append with the full runtime-state payload.
+- **No journaling of ephemeral state.** Provider stream state, live senders, cancellation handles, in-flight sampling progress, and UI-only flags are never journaled — matching the design doc's exclusion list.
+- **Parity consequence.** The shadow-mode parity test in Task 5 compares the replayed projection against the snapshot after every round completion; the policy above must make that comparison deterministic, so any field whose update timing is nondeterministic must be excluded from both the journaled state and the parity comparator.
+
+Add a test that drives a scripted round (goal set, A2A task spawned, confirm raised, confirm resolved) and asserts the exact expected sequence of `RuntimeStateUpdated` events.
+
+- [ ] **Step 5: Replace direct conversation writes one site at a time**
 
 Change and test in this order:
 
@@ -386,11 +408,11 @@ Change and test in this order:
 
 Run the relevant targeted test after each site; do not batch all edits before testing.
 
-- [ ] **Step 5: Add journal initialization in the session builder**
+- [ ] **Step 6: Add journal initialization in the session builder**
 
 Default to shadow mode. Existing restored snapshots without a journal initialize a new journal generation from one `SessionInitialized` event plus one `ConversationReplaced` baseline event. Record the imported snapshot schema and sequence in diagnostics metadata.
 
-- [ ] **Step 6: Run the desktop backend gate**
+- [ ] **Step 7: Run the desktop backend gate**
 
 ```bash
 cd apps/desktop
@@ -399,7 +421,7 @@ npm run check:backend
 
 Expected: format, clippy, and Rust tests pass.
 
-- [ ] **Step 7: Commit the shadow integration**
+- [ ] **Step 8: Commit the shadow integration**
 
 ```bash
 git add apps/desktop/src-tauri/src/agent apps/desktop/src-tauri/src/ipc/session_builder.rs
