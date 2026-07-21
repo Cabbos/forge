@@ -43,11 +43,15 @@
 //! `latest_workflow` and `latest_delivery` (owned by `AppState`), A2A review
 //! decisions applied in `ipc/a2a_handlers.rs`, and the
 //! `pending_confirms`/`active_tool_calls` descriptors (owned by the IPC
-//! confirm/executor layers). These fields are ALWAYS empty in journaled
-//! runtime state; the Task 5 parity comparator must exclude them from
-//! comparison until their write sites are wired through a helper. Likewise
-//! `repair_message_history` may drop dangling tool_use messages outside the
-//! journaled helpers; it only fires on already-corrupt history and is a known
+//! confirm/executor layers). These fields are normally empty in journaled
+//! runtime state, with one exception: A2A review decisions in
+//! `ipc/a2a_handlers.rs` mutate the shared bus without setting the runtime-state
+//! dirty flag, so a review decision can reach the journal at the next
+//! full-payload flush (transient `Diverged` parity, self-healing, safe in all
+//! restore paths). The Task 5 parity comparator must exclude the truly deferred
+//! fields from comparison until their write sites are wired through a helper.
+//! Likewise `repair_message_history` may drop dangling tool_use messages outside
+//! the journaled helpers; it only fires on already-corrupt history and is a known
 //! parity gap to close when the journal becomes authoritative.
 
 use std::path::PathBuf;

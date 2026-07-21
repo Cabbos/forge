@@ -25,8 +25,8 @@
 //!
 //! Generation files (`mutations.gen0.jsonl`, `mutations.gen1.jsonl`, ...) are
 //! retained as a history of truncation points. Deletion of old generations is
-//! intentionally NOT implemented here; the parity gate that decides when a
-//! generation is safe to remove belongs to Task 5 integration.
+//! intentionally NOT implemented in this release; generations accumulate until
+//! a future promotion task adds the parity-gated deletion.
 //!
 //! # Truncation
 //!
@@ -35,6 +35,10 @@
 //! checkpoint, then atomically archives the current active journal and activates
 //! the new generation. Failures after the new generation is written remove the
 //! new file and leave the original active journal untouched.
+//!
+//! The `DEFAULT_TRUNCATION_THRESHOLD_BYTES` (32 MiB) trigger is NOT wired to the
+//! snapshot-save path in this release; the truncation machinery is exercised by
+//! tests only until a future change invokes `should_truncate` from the save path.
 
 use std::collections::HashMap;
 use std::fs::OpenOptions;
@@ -414,7 +418,14 @@ impl SessionJournalStore {
         if let Some(position) = raw.rfind('\n') {
             let prefix = &raw[..=position];
             let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, prefix).map_err(|error| io_err("write torn repair tmp", error))?;
+            {
+                let mut file = std::fs::File::create(&tmp)
+                    .map_err(|error| io_err("create torn repair tmp", error))?;
+                file.write_all(prefix.as_bytes())
+                    .map_err(|error| io_err("write torn repair tmp", error))?;
+                file.sync_all()
+                    .map_err(|error| io_err("sync torn repair tmp", error))?;
+            }
             std::fs::rename(&tmp, &path)
                 .map_err(|error| io_err("replace journal after torn repair", error))?;
         } else {
