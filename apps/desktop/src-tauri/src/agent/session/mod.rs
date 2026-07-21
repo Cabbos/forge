@@ -227,6 +227,37 @@ impl AgentSession {
                 provenance,
             );
         }
+        self.apply_restored_state(messages, summary, latest_turn, goal_ledger, a2a_state);
+    }
+
+    /// Restore session state WITHOUT journaling a baseline. Used when the
+    /// restore source is the session journal itself: the journal is already
+    /// authoritative, so appending a baseline would duplicate its own final
+    /// state back into it (and grow it by two events on every restore).
+    pub(crate) fn restore_state_without_baseline(
+        &self,
+        messages: Vec<ChatMessage>,
+        summary: Option<String>,
+        latest_turn: Option<AgentTurnState>,
+        goal_ledger: Option<GoalLedger>,
+        a2a_state: Option<crate::agent::a2a::bus::AgentA2ABus>,
+    ) {
+        let messages = repair_tool_use_adjacency(messages);
+        let latest_turn = latest_turn.map(|mut turn| {
+            turn.normalize_for_session_resume();
+            turn
+        });
+        self.apply_restored_state(messages, summary, latest_turn, goal_ledger, a2a_state);
+    }
+
+    fn apply_restored_state(
+        &self,
+        messages: Vec<ChatMessage>,
+        summary: Option<String>,
+        latest_turn: Option<AgentTurnState>,
+        goal_ledger: Option<GoalLedger>,
+        a2a_state: Option<crate::agent::a2a::bus::AgentA2ABus>,
+    ) {
         *lock_unpoisoned(&self.messages) = messages;
         *lock_unpoisoned(&self.summary) = summary;
         *lock_unpoisoned(&self.latest_turn) = latest_turn;

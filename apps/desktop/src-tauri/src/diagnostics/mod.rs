@@ -835,13 +835,25 @@ pub fn check_project_runtime() -> DiagnosticCheck {
 
 // ── Session journal parity summary (Task 5) ────────────────────────────────
 
+/// Maximum number of sessions classified per parity scan. Bounds the
+/// worst-case cost of `check_session_journal_parity`: each classified session
+/// may require a full journal replay (journals grow up to the 32 MiB
+/// truncation threshold), so an unbounded scan of thousands of sessions could
+/// block the diagnostics runner for seconds. Sessions beyond the cap are
+/// counted in `sessions_total` but not classified.
+const MAX_JOURNAL_PARITY_SCAN_SESSIONS: usize = 200;
+
 /// Aggregate restore-parity counts over every durable session (snapshot
 /// and/or mutation journal). Counts ONLY — conversation body text never
 /// appears here.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionJournalParitySummary {
+    /// Durable sessions classified this scan (capped at
+    /// `MAX_JOURNAL_PARITY_SCAN_SESSIONS`).
     pub sessions_scanned: u64,
+    /// All durable sessions found, including any beyond the scan cap.
+    pub sessions_total: u64,
     /// Snapshot and journal agree (or a legacy snapshot matches journal
     /// content).
     pub healthy_parity: u64,
@@ -863,9 +875,10 @@ pub struct SessionJournalParitySummary {
     pub quarantined: u64,
 }
 
-/// Scan every durable session under `~/.forge` and classify its restore
-/// parity. Read-only: the selector is pure and quarantine renames only happen
-/// in the restore path, never in diagnostics.
+/// Scan durable sessions under `~/.forge` and classify their restore parity.
+/// Read-only: the selector is pure and quarantine renames only happen in the
+/// restore path, never in diagnostics. Cost is bounded by
+/// `MAX_JOURNAL_PARITY_SCAN_SESSIONS` full journal replays.
 pub fn session_journal_parity_summary() -> SessionJournalParitySummary {
     session_journal_parity_summary_at(&forge_data_dir())
 }
@@ -878,8 +891,15 @@ fn session_journal_parity_summary_at(root: &Path) -> SessionJournalParitySummary
         SessionRestoreNotice,
     };
 
-    let mut summary = SessionJournalParitySummary::default();
-    for session_id in durable_session_ids(root) {
+    let session_ids = durable_session_ids(root);
+    let mut summary = SessionJournalParitySummary {
+        sessions_total: session_ids.len() as u64,
+        ..SessionJournalParitySummary::default()
+    };
+    for session_id in session_ids
+        .into_iter()
+        .take(MAX_JOURNAL_PARITY_SCAN_SESSIONS)
+    {
         let snapshot = try_load_session_snapshot_at(root, &session_id);
         let journal = match SessionJournalStore::new(root.to_path_buf(), session_id.clone()) {
             Ok(store) => match store.load() {
@@ -949,6 +969,11 @@ fn durable_session_ids(root: &Path) -> std::collections::BTreeSet<String> {
 }
 
 /// Check snapshot/journal restore parity across all durable sessions.
+///
+/// Cost note: classification replays each session's journal in memory
+/// (journals grow up to the 32 MiB truncation threshold), so the scan is
+/// capped at `MAX_JOURNAL_PARITY_SCAN_SESSIONS` sessions per run —
+/// `sessions_total` in the detail still reports every durable session found.
 pub fn check_session_journal_parity() -> DiagnosticCheck {
     check_session_journal_parity_at(&forge_data_dir())
 }
@@ -2118,6 +2143,7 @@ mod journal_parity_tests {
 
         let summary = session_journal_parity_summary_at(&root);
 
+        assert_eq!(summary.sessions_total, 6);
         assert_eq!(summary.sessions_scanned, 6);
         assert_eq!(summary.healthy_parity, 1);
         assert_eq!(summary.snapshot_behind, 1);
@@ -2172,6 +2198,41 @@ mod journal_parity_tests {
         let check = check_session_journal_parity_at(&root);
 
         assert_eq!(check.status, CheckStatus::Pass);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn journal_parity_summary_caps_classified_sessions() {
+        let root = journal_root("cap");
+        for index in 0..(MAX_JOURNAL_PARITY_SCAN_SESSIONS + 5) {
+            save_snapshot(
+                &root,
+                &AgentSessionSnapshot::new(
+                    format!("s-cap-{index:03}"),
+                    "deepseek".to_string(),
+                    "deepseek-chat".to_string(),
+                    "/tmp/workspace".to_string(),
+                    Vec::new(),
+                    None,
+                    None,
+                ),
+            );
+        }
+
+        let summary = session_journal_parity_summary_at(&root);
+
+        assert_eq!(
+            summary.sessions_total,
+            (MAX_JOURNAL_PARITY_SCAN_SESSIONS + 5) as u64
+        );
+        assert_eq!(
+            summary.sessions_scanned,
+            MAX_JOURNAL_PARITY_SCAN_SESSIONS as u64
+        );
+        assert_eq!(
+            summary.snapshot_only,
+            MAX_JOURNAL_PARITY_SCAN_SESSIONS as u64
+        );
         let _ = fs::remove_dir_all(&root);
     }
 }

@@ -54,10 +54,11 @@ pub struct AgentSessionSnapshot {
     pub pending_confirms: Vec<PendingConfirmDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_tool_calls: Vec<ActiveToolCallDescriptor>,
-    /// Name of the journal file (`mutations.jsonl`) the recorded sequence was
-    /// read from. Informational only — journal sequences are
-    /// generation-independent (truncation preserves sequence numbers across
-    /// generation promotion), so the restore selector never compares this.
+    /// Reserved for generation-addressable journals. Never written today:
+    /// journal sequences are generation-independent (truncation preserves
+    /// sequence numbers across generation promotion) and the restore
+    /// selector ignores this field, so stamping a constant label would be
+    /// noise. Deserializes as `None` for all current snapshots.
     #[serde(default)]
     pub journal_generation: Option<String>,
     /// Journal sequence captured when this snapshot was written. `0` means

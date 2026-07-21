@@ -9,7 +9,7 @@ use crate::agent::session_guards::lock_unpoisoned;
 use crate::agent::session_journal::{
     JournalDamage, JournalError, JournalLoadResult, SessionJournalStore, SessionMutationEnvelope,
 };
-use crate::agent::session_projection::{snapshots_parity_equivalent, SessionProjection};
+use crate::agent::session_projection::SessionProjection;
 use crate::agent::snapshot::{
     delete_session_snapshot, list_session_snapshots, save_session_snapshot,
     try_load_session_snapshot, ActiveToolCallDescriptor, AgentSessionSnapshot,
@@ -485,34 +485,42 @@ fn journal_projection_payload(projection: &SessionProjection) -> AgentSessionSna
     snapshot
 }
 
-/// Session-restore parity comparator: wraps `snapshots_parity_equivalent`
-/// with additional normalization for fields the journal never captures.
+/// Session-restore parity comparator.
 ///
-/// Excluded beyond the base comparator:
+/// INVARIANT: this is a POSITIVE ALLOWLIST — it compares only the fields the
+/// mutation journal captures. Adding a field to `AgentSessionSnapshot` can
+/// never silently break parity (new fields are simply not compared until a
+/// journaled counterpart exists); conversely, when a field IS added to the
+/// journaled runtime state (`SessionRuntimeState`), it must be added here
+/// too, or parity will not cover it.
+///
+/// Intentionally not compared:
 /// - `latest_workflow`, `latest_delivery`, `pending_confirms`,
 ///   `active_tool_calls`: owned by AppState/IPC layers and never journaled
-///   (see agent/session_mutation.rs "Deferred"), so journaled runtime state
-///   always has them empty;
+///   (see agent/session_mutation.rs "Deferred");
 /// - `context_window_tokens`: not captured by the journal;
-/// - `schema_version`, `journal_generation`, `journal_sequence`: bookkeeping
-///   metadata, not session content.
+/// - `created_at_ms`/`updated_at_ms`, `schema_version`, `journal_generation`,
+///   `journal_sequence`: bookkeeping metadata, not session content. Nested
+///   timestamps inside journaled runtime state (turn/goal/A2A) round-trip
+///   unchanged and ARE compared exactly, matching `snapshots_parity_equivalent`.
 fn snapshots_restore_parity_equivalent(
     left: &AgentSessionSnapshot,
     right: &AgentSessionSnapshot,
 ) -> bool {
-    fn normalized(snapshot: &AgentSessionSnapshot) -> AgentSessionSnapshot {
-        let mut clone = snapshot.clone();
-        clone.latest_workflow = None;
-        clone.latest_delivery = None;
-        clone.pending_confirms = Vec::new();
-        clone.active_tool_calls = Vec::new();
-        clone.context_window_tokens = None;
-        clone.schema_version = 0;
-        clone.journal_generation = None;
-        clone.journal_sequence = 0;
-        clone
+    fn comparable(snapshot: &AgentSessionSnapshot) -> serde_json::Value {
+        serde_json::json!({
+            "session_id": snapshot.session_id,
+            "provider": snapshot.provider,
+            "model": snapshot.model,
+            "working_dir": snapshot.working_dir,
+            "messages": snapshot.messages,
+            "summary": snapshot.summary,
+            "latest_turn": snapshot.latest_turn,
+            "goal_ledger": snapshot.goal_ledger,
+            "a2a_state": snapshot.a2a_state,
+        })
     }
-    snapshots_parity_equivalent(&normalized(left), &normalized(right))
+    comparable(left) == comparable(right)
 }
 
 /// Render a restore notice through the existing recovery-notice surface.
@@ -547,6 +555,48 @@ fn restore_notice_render(
     }
 }
 
+/// Build recovery-notice stream events for restore notices. Shared by the
+/// success path (`emit_restored_session_startup`) and the failure/fresh path
+/// (`startup_restore_active_session`, `resume_session`) so Fresh outcomes —
+/// which have no session to attach notices to — still reach the UI through
+/// the existing transport.
+pub(crate) fn restore_notice_events(
+    session_id: &str,
+    notices: &[SessionRestoreNotice],
+) -> Vec<StreamEvent> {
+    notices
+        .iter()
+        .map(|notice| {
+            let (title, message, reason, recoverable) = restore_notice_render(*notice);
+            session_events::recovery_notice_event(
+                session_id,
+                &format!("notice-{reason}-{session_id}"),
+                title,
+                message,
+                reason,
+                recoverable,
+            )
+        })
+        .collect()
+}
+
+/// Failure of a session restore attempt. Carries the selector's parity
+/// classification and notices so the Fresh outcome (which has no restored
+/// session to attach them to) can still be surfaced to the UI by callers
+/// that own an `AppHandle`.
+#[derive(Debug)]
+pub(crate) struct SessionRestoreFailure {
+    pub reason: String,
+    pub parity: SessionParityStatus,
+    pub notices: Vec<SessionRestoreNotice>,
+}
+
+impl std::fmt::Display for SessionRestoreFailure {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.reason)
+    }
+}
+
 pub(crate) struct RestoredSession {
     pub(crate) session: Arc<AgentSession>,
     pub(crate) session_id: String,
@@ -561,12 +611,14 @@ pub(crate) struct RestoredSession {
     /// `emit_restored_session_startup` through the existing recovery-notice
     /// stream event.
     pub(crate) restore_notices: Vec<SessionRestoreNotice>,
+    /// Which durable source the session was restored from.
+    pub(crate) restore_source: SessionRestoreSource,
 }
 
 pub(crate) async fn restore_session_from_snapshot(
     state: &Arc<AppState>,
     session_id: &str,
-) -> Result<RestoredSession, String> {
+) -> Result<RestoredSession, SessionRestoreFailure> {
     // Load both durable sources, then let the pure selector decide. The
     // journal is a fallback-only source: snapshots are never deleted here
     // and a healthy snapshot always wins.
@@ -619,23 +671,36 @@ pub(crate) async fn restore_session_from_snapshot(
         }
     }
     let Some(snapshot) = decision.snapshot else {
-        return Err(format!(
-            "no durable state remains for session '{session_id}'"
-        ));
+        // Fresh outcome: the failure carries the notices so callers with an
+        // AppHandle can still tell the user what happened (e.g. that their
+        // journal was quarantined and preserved aside).
+        return Err(SessionRestoreFailure {
+            reason: format!("no durable state remains for session '{session_id}'"),
+            parity: decision.parity,
+            notices: decision.notices,
+        });
+    };
+    let restore_source = decision.source;
+    let decision_parity = decision.parity;
+    let decision_notices = decision.notices.clone();
+    let failure = move |reason: String| SessionRestoreFailure {
+        reason,
+        parity: decision_parity,
+        notices: decision_notices.clone(),
     };
     let provider = normalize_provider(Some(&snapshot.provider));
     let profile = state.profiles.get_active_profile();
     let credentials = state
         .credential_resolver()
         .resolve(&provider, profile.as_ref())
-        .map_err(|error| error.to_string())?;
+        .map_err(|error| failure(error.to_string()))?;
     let latest_workflow = snapshot.latest_workflow.clone();
     let latest_delivery = snapshot.latest_delivery.clone();
     let pending_confirms = snapshot.pending_confirms.clone();
     let active_tool_calls = snapshot.active_tool_calls.clone();
 
     let model_str = snapshot.model.clone();
-    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir)?;
+    let working_dir = resolve_safe_workspace_path(&snapshot.working_dir).map_err(&failure)?;
     let (session, missing_api_key) = build_agent_session(BuildAgentSessionRequest {
         session_id: snapshot.session_id.clone(),
         provider: provider.clone(),
@@ -646,17 +711,32 @@ pub(crate) async fn restore_session_from_snapshot(
         pending_confirms: state.pending_confirms.clone(),
         existing_context_window_tokens: snapshot.context_window_tokens,
     })
-    .await?;
-    session.restore_state_with_provenance(
-        snapshot.messages,
-        snapshot.summary,
-        snapshot.latest_turn,
-        snapshot.goal_ledger,
-        snapshot.a2a_state,
-        Some(crate::agent::session_mutation::SessionRestoreProvenance {
-            snapshot_schema_version: snapshot.schema_version,
-        }),
-    );
+    .await
+    .map_err(&failure)?;
+    if restore_source == SessionRestoreSource::JournalProjection {
+        // The journal is already authoritative — re-appending a baseline
+        // would duplicate its own final state back into it (two extra events
+        // on every restore). Snapshot restores keep the baseline so the
+        // journal catches up with the imported snapshot.
+        session.restore_state_without_baseline(
+            snapshot.messages,
+            snapshot.summary,
+            snapshot.latest_turn,
+            snapshot.goal_ledger,
+            snapshot.a2a_state,
+        );
+    } else {
+        session.restore_state_with_provenance(
+            snapshot.messages,
+            snapshot.summary,
+            snapshot.latest_turn,
+            snapshot.goal_ledger,
+            snapshot.a2a_state,
+            Some(crate::agent::session_mutation::SessionRestoreProvenance {
+                snapshot_schema_version: snapshot.schema_version,
+            }),
+        );
+    }
     // Mark as Resuming before registering so list_sessions can report "resuming"
     // during restore; emit_restored_session_startup will promote to Running.
     *lock_unpoisoned(&session.status) = SessionStatus::Resuming;
@@ -676,6 +756,7 @@ pub(crate) async fn restore_session_from_snapshot(
         pending_confirms,
         active_tool_calls,
         restore_notices: decision.notices,
+        restore_source,
     })
 }
 
@@ -776,19 +857,8 @@ pub(crate) async fn emit_restored_session_startup(
     }
     // Task 5: surface restore-selection notices (journal recovery, torn
     // prefix, quarantine) through the existing recovery-notice transport.
-    for notice in &restored.restore_notices {
-        let (title, message, reason, recoverable) = restore_notice_render(*notice);
-        crate::transcript::emit_stream_event(
-            app_handle,
-            session_events::recovery_notice_event(
-                session_id,
-                &format!("notice-{reason}-{session_id}"),
-                title,
-                message,
-                reason,
-                recoverable,
-            ),
-        );
+    for event in restore_notice_events(session_id, &restored.restore_notices) {
+        crate::transcript::emit_stream_event(app_handle, event);
     }
     // Replay complete — promote the session to Running and stream the transition.
     *lock_unpoisoned(&restored.session.status) = SessionStatus::Running;
@@ -911,12 +981,11 @@ pub(crate) async fn session_snapshot_with_workflow_state(
     snapshot = snapshot.with_pending_confirms(pending_confirms);
     snapshot = snapshot.with_active_tool_calls(active_tool_calls);
     // Stamp the journal position so the restore selector can tell when this
-    // snapshot has fallen behind the journal. The generation label records
-    // which journal file the sequence was read from; sequences themselves
-    // are generation-independent.
+    // snapshot has fallen behind the journal. `journal_generation` is left
+    // unset: sequences are generation-independent and the selector never
+    // compares the label, so recording a constant would be noise.
     if let Some(journal) = session.session_journal_handle() {
         snapshot.journal_sequence = journal.store().last_sequence();
-        snapshot.journal_generation = Some("mutations.jsonl".to_string());
     }
     snapshot
 }
@@ -1164,11 +1233,18 @@ pub(crate) async fn startup_restore_active_session(
                 );
             }
         }
-        Err(e) => {
+        Err(failure) => {
             crate::app_log!(
                 "WARN",
-                "[startup_restore] failed to restore session {session_id}: {e}"
+                "[startup_restore] failed to restore session {session_id}: {}",
+                failure.reason
             );
+            // Surface the selector's notices (e.g. journal quarantined and
+            // preserved aside) — the Fresh outcome has no restored session
+            // to carry them, so they are emitted here.
+            for event in restore_notice_events(&session_id, &failure.notices) {
+                crate::transcript::emit_stream_event(app_handle, event);
+            }
 
             // Phase 1.7: if the failed session was the active one, try a fallback.
             let active_id_matches = metadata
@@ -1210,24 +1286,33 @@ pub(crate) async fn startup_restore_active_session(
                     Err(fallback_err) => {
                         crate::app_log!(
                             "WARN",
-                            "[startup_restore] fallback restore of {fallback_id} also failed: {fallback_err}"
+                            "[startup_restore] fallback restore of {fallback_id} also failed: {}",
+                            fallback_err.reason
                         );
+                        for event in restore_notice_events(&fallback_id, &fallback_err.notices) {
+                            crate::transcript::emit_stream_event(app_handle, event);
+                        }
                     }
                 }
             }
 
-            // No fallback (or fallback also failed) — surface notice and start fresh.
-            crate::transcript::emit_stream_event(
-                app_handle,
-                session_events::recovery_notice_event(
-                    &session_id,
-                    &format!("notice-restore-fail-{session_id}"),
-                    "Session restore failed",
-                    "Forge could not restore your last session and started fresh. Your data is safe.",
-                    "snapshot_restore_failed",
-                    false,
-                ),
-            );
+            // No fallback (or fallback also failed) — surface notice and start
+            // fresh. Skip the generic notice when the selector already
+            // emitted a specific one (RestoreFailedFreshStart renders the
+            // same reason).
+            if failure.notices.is_empty() {
+                crate::transcript::emit_stream_event(
+                    app_handle,
+                    session_events::recovery_notice_event(
+                        &session_id,
+                        &format!("notice-restore-fail-{session_id}"),
+                        "Session restore failed",
+                        "Forge could not restore your last session and started fresh. Your data is safe.",
+                        "snapshot_restore_failed",
+                        false,
+                    ),
+                );
+            }
         }
     }
 }

@@ -1033,3 +1033,276 @@ fn restore_selector_journal_without_init_event_is_quarantined() {
         .notices
         .contains(&SessionRestoreNotice::JournalQuarantined));
 }
+
+// ── Task 5 review: end-to-end restore with on-disk journals ──
+
+use crate::agent::session_journal::SessionJournalStore;
+use crate::agent::snapshot::load_session_snapshot;
+use crate::ipc::session_lifecycle::restore_notice_events;
+use crate::protocol::events::StreamEvent;
+
+/// Default (`~/.forge`) sessions directory, matching `snapshot.rs` and
+/// `session_mutation.rs` root resolution. Tests use UUID session ids and
+/// clean up after themselves so they never collide with real data.
+fn default_forge_root() -> std::path::PathBuf {
+    std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+        .join(".forge")
+}
+
+fn journal_envelope(session_id: &str, mutation: SessionMutation) -> SessionMutationEnvelope {
+    SessionMutationEnvelope {
+        schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+        event_id: String::new(),
+        session_id: session_id.to_string(),
+        sequence: 0,
+        created_at_ms: 1,
+        mutation,
+    }
+}
+
+fn write_default_journal(
+    session_id: &str,
+    working_dir: &str,
+    texts: &[&str],
+) -> SessionJournalStore {
+    let store = SessionJournalStore::new(default_forge_root(), session_id.to_string())
+        .expect("journal store");
+    store
+        .append(journal_envelope(
+            session_id,
+            SessionMutation::SessionInitialized {
+                provider: "deepseek".to_string(),
+                model: "deepseek-chat".to_string(),
+                working_dir: working_dir.to_string(),
+            },
+        ))
+        .expect("append init");
+    for text in texts {
+        store
+            .append(journal_envelope(
+                session_id,
+                SessionMutation::MessageAppended {
+                    message: ChatMessage::user(text),
+                },
+            ))
+            .expect("append message");
+    }
+    store
+}
+
+fn append_raw_journal(path: &std::path::Path, bytes: &[u8]) {
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(path)
+        .expect("open journal");
+    file.write_all(bytes).expect("append raw");
+    file.sync_all().expect("sync");
+}
+
+fn cleanup_default_journal(session_id: &str) {
+    let _ = std::fs::remove_dir_all(default_forge_root().join("sessions").join(session_id));
+}
+
+// (a) End-to-end: a real corrupt-on-disk journal is quarantined (renamed
+// aside) and the session is recovered from its snapshot.
+#[tokio::test]
+async fn restore_quarantines_corrupt_journal_and_recovers_from_snapshot() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-quarantine-{nonce}");
+    let workspace = std::env::temp_dir().join(format!("forge-restore-quarantine-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
+
+    let snapshot = AgentSessionSnapshot::new(
+        session_id.clone(),
+        "deepseek".to_string(),
+        "deepseek-chat".to_string(),
+        workspace.to_string_lossy().to_string(),
+        vec![ChatMessage::user("snapshot message")],
+        None,
+        Some(128_000),
+    );
+    save_session_snapshot(&snapshot).expect("save snapshot");
+
+    // Journal with one valid init event followed by a corrupt interior line.
+    let store = write_default_journal(&session_id, &workspace.to_string_lossy(), &[]);
+    let journal_path = store.path();
+    append_raw_journal(&journal_path, b"this is not json\n");
+    drop(store);
+
+    let restored = restore_session_from_snapshot(&state, &session_id)
+        .await
+        .expect("restore from snapshot");
+
+    assert_eq!(restored.restore_source, SessionRestoreSource::Snapshot);
+    assert!(restored
+        .restore_notices
+        .contains(&SessionRestoreNotice::JournalQuarantined));
+    let messages = restored.session.snapshot().messages;
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0].content.as_str(), Some("snapshot message"));
+
+    // The corrupt journal was renamed aside, never deleted or rewritten.
+    let journal_dir = default_forge_root().join("sessions").join(&session_id);
+    let quarantined = journal_dir.join("mutations.gen0.jsonl");
+    assert!(
+        quarantined.exists(),
+        "corrupt journal preserved aside as a generation"
+    );
+    let quarantined_contents = std::fs::read_to_string(&quarantined).expect("read quarantined");
+    assert!(quarantined_contents.contains("this is not json"));
+    // The builder's journal init started a fresh active journal.
+    assert!(
+        journal_path.exists(),
+        "fresh active journal after quarantine"
+    );
+    let fresh_events = SessionJournalStore::new(default_forge_root(), session_id.clone())
+        .expect("loader")
+        .load()
+        .expect("load fresh journal")
+        .events;
+    assert!(
+        fresh_events
+            .iter()
+            .all(|event| !matches!(&event.mutation, SessionMutation::MessageAppended { message } if message.content.as_str() == Some("this is not json"))),
+        "fresh journal must not replay corrupt data"
+    );
+
+    let _ = delete_session_snapshot(&session_id);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+// (b) End-to-end: journal-only recovery flows through the same restore path,
+// and restoring FROM a journal does not append a redundant baseline back into
+// it (regression: journal must not grow on restore).
+#[tokio::test]
+async fn journal_only_restore_recovers_without_growing_journal() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-journal-only-{nonce}");
+    let workspace = std::env::temp_dir().join(format!("forge-restore-journal-only-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
+
+    let store = write_default_journal(
+        &session_id,
+        &workspace.to_string_lossy(),
+        &["first", "second"],
+    );
+    let events_before = store.load().expect("load").events.len();
+    assert_eq!(events_before, 3);
+    drop(store);
+
+    let restored = restore_session_from_snapshot(&state, &session_id)
+        .await
+        .expect("journal restore");
+
+    assert_eq!(
+        restored.restore_source,
+        SessionRestoreSource::JournalProjection
+    );
+    assert!(restored.restore_notices.is_empty());
+    let messages = restored.session.snapshot().messages;
+    let texts: Vec<&str> = messages
+        .iter()
+        .filter_map(|message| message.content.as_str())
+        .collect();
+    assert_eq!(texts, vec!["first", "second"]);
+
+    // Regression (review item 2): no baseline was appended to the journal the
+    // restore just replayed.
+    let events_after = SessionJournalStore::new(default_forge_root(), session_id.clone())
+        .expect("loader")
+        .load()
+        .expect("load after restore")
+        .events
+        .len();
+    assert_eq!(
+        events_after, events_before,
+        "journal-backed restore must not grow the journal"
+    );
+
+    // The follow-up snapshot save was stamped with the journal sequence so
+    // the "snapshot behind" rule can fire on later restores.
+    let saved = load_session_snapshot(&session_id).expect("saved snapshot");
+    assert_eq!(saved.journal_sequence, 3);
+    assert!(saved.journal_generation.is_none());
+
+    let _ = delete_session_snapshot(&session_id);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+// (c) Fresh outcome: when both durable sources are unusable, the failure
+// carries the selector's notices and they convert into recovery-notice
+// stream events (the UI emission path).
+#[tokio::test]
+async fn fresh_restore_outcome_carries_notices_to_emission_path() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-fresh-{nonce}");
+    let workspace = std::env::temp_dir().join(format!("forge-restore-fresh-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let state = Arc::new(AppState::new(Arc::new(Harness::new(workspace.clone()))));
+
+    // Corrupt snapshot on disk.
+    let snapshot_path = default_forge_root()
+        .join("sessions")
+        .join(format!("{session_id}.json"));
+    std::fs::create_dir_all(snapshot_path.parent().expect("parent")).expect("sessions dir");
+    std::fs::write(&snapshot_path, "{ not json").expect("write corrupt snapshot");
+
+    // Corrupt-interior journal on disk.
+    let store = write_default_journal(&session_id, &workspace.to_string_lossy(), &[]);
+    let journal_path = store.path();
+    append_raw_journal(&journal_path, b"this is not json\n");
+    drop(store);
+
+    let result = restore_session_from_snapshot(&state, &session_id).await;
+    let failure = match result {
+        Ok(_) => panic!("both sources unusable must fail"),
+        Err(failure) => failure,
+    };
+
+    assert_eq!(failure.parity, SessionParityStatus::CorruptInterior);
+    assert!(failure
+        .notices
+        .contains(&SessionRestoreNotice::JournalQuarantined));
+    assert!(failure
+        .notices
+        .contains(&SessionRestoreNotice::RestoreFailedFreshStart));
+
+    // The notices reach the emission path as recovery-notice stream events.
+    let events = restore_notice_events(&session_id, &failure.notices);
+    assert_eq!(events.len(), 2);
+    let reasons: Vec<&str> = events
+        .iter()
+        .map(|event| match event {
+            StreamEvent::RecoveryNotice { reason, .. } => reason.as_str(),
+            other => panic!("expected recovery notice, got {other:?}"),
+        })
+        .collect();
+    assert!(reasons.contains(&"journal_quarantined"));
+    assert!(reasons.contains(&"snapshot_restore_failed"));
+
+    // The journal was still quarantined (preserved aside) even though nothing
+    // could be restored.
+    assert!(default_forge_root()
+        .join("sessions")
+        .join(&session_id)
+        .join("mutations.gen0.jsonl")
+        .exists());
+
+    let _ = std::fs::remove_file(&snapshot_path);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
