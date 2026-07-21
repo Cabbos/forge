@@ -16,6 +16,7 @@ pub mod session;
 pub(crate) mod session_events;
 pub(crate) mod session_guards;
 pub(crate) mod session_journal;
+pub(crate) mod session_projection;
 pub mod snapshot;
 pub mod sub;
 pub(crate) mod time;
