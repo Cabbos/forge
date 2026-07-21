@@ -291,4 +291,326 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&workspace);
     }
+
+    // ── Journal shadow-mode mutation ordering ─────────────────────────────
+
+    use crate::agent::session_journal::{SessionJournalStore, SessionMutation};
+    use crate::agent::session_mutation::{SessionJournalHandle, SessionJournalMode};
+
+    fn journal_root(name: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "forge-session-loop-journal-{name}-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&root).expect("journal root");
+        root
+    }
+
+    fn attach_journal(session: &AgentSession, root: &std::path::Path) {
+        let store = SessionJournalStore::new(root.to_path_buf(), session.id.clone())
+            .expect("journal store");
+        session
+            .attach_session_journal(SessionJournalHandle::new(store, SessionJournalMode::Shadow));
+    }
+
+    fn journal_events(root: &std::path::Path, session_id: &str) -> Vec<SessionMutation> {
+        SessionJournalStore::new(root.to_path_buf(), session_id.to_string())
+            .expect("loader store")
+            .load()
+            .expect("journal load")
+            .events
+            .into_iter()
+            .map(|event| event.mutation)
+            .collect()
+    }
+
+    fn journaled_messages(
+        mutations: &[SessionMutation],
+    ) -> Vec<crate::adapters::base::ChatMessage> {
+        mutations
+            .iter()
+            .filter_map(|mutation| match mutation {
+                SessionMutation::MessageAppended { message } => Some(message.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Adapter that, on the first provider call, checks whether the user
+    /// message has already been journaled. Proves the journal append happens
+    /// before the provider call.
+    struct JournalProbeAdapter {
+        journal_path: std::path::PathBuf,
+        expected_user_text: String,
+        observed: Mutex<Option<bool>>,
+        fallback: QueuedAdapter,
+    }
+
+    #[async_trait]
+    impl AiAdapter for JournalProbeAdapter {
+        async fn call(
+            &self,
+            messages: &[crate::adapters::base::ChatMessage],
+            cancel: Arc<tokio::sync::Notify>,
+        ) -> Result<StreamResult, AdapterError> {
+            {
+                let mut observed = self.observed.lock().unwrap();
+                if observed.is_none() {
+                    let found = std::fs::read_to_string(&self.journal_path)
+                        .map(|raw| raw.contains(&self.expected_user_text))
+                        .unwrap_or(false);
+                    *observed = Some(found);
+                }
+            }
+            self.fallback.call(messages, cancel).await
+        }
+
+        fn model_id(&self) -> &str {
+            self.fallback.model_id()
+        }
+
+        fn model_name(&self) -> &str {
+            self.fallback.model_name()
+        }
+    }
+
+    #[tokio::test]
+    async fn user_message_is_journaled_before_provider_call() {
+        let workspace = temp_workspace("journal-user-first");
+        let root = journal_root("user-first");
+        let journal_path = root
+            .join("sessions")
+            .join("session-1")
+            .join("mutations.jsonl");
+        let adapter = Arc::new(JournalProbeAdapter {
+            journal_path,
+            expected_user_text: "probe me".to_string(),
+            observed: Mutex::new(None),
+            fallback: QueuedAdapter::new(vec![Ok(no_tool_result("done"))]),
+        });
+        let session = make_session(&workspace, adapter.clone());
+        attach_journal(&session, &root);
+        let emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
+            Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "probe me",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        assert_eq!(
+            *adapter.observed.lock().unwrap(),
+            Some(true),
+            "user message must be journaled before the provider call"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn assistant_and_tool_result_messages_are_journaled_in_order() {
+        let workspace = temp_workspace("journal-order");
+        std::fs::write(workspace.join("file.txt"), "tool payload").expect("write");
+        let root = journal_root("order");
+
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(StreamResult {
+                assistant_content: vec![serde_json::json!({
+                    "type": "tool_use",
+                    "id": "tu_1",
+                    "name": "read_file",
+                    "input": {"path": "file.txt"}
+                })],
+                tool_calls: vec![crate::adapters::base::ToolCall {
+                    id: "tu_1".to_string(),
+                    name: "read_file".to_string(),
+                    input: serde_json::json!({"path": "file.txt"}),
+                }],
+                stop_reason: Some("tool_use".to_string()),
+            }),
+            Ok(no_tool_result("I read the file.")),
+            Ok(no_tool_result("Final summary.")),
+        ]));
+        let session = make_session(&workspace, adapter);
+        attach_journal(&session, &root);
+        let emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
+            Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "read the file",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        let mutations = journal_events(&root, &session.id);
+        let messages = journaled_messages(&mutations);
+        assert!(
+            messages.len() >= 3,
+            "expected user, assistant, tool-result appends; got {messages:?}"
+        );
+        assert_eq!(messages[0].role, "user");
+        assert_eq!(messages[0].content, "read the file");
+        assert_eq!(messages[1].role, "assistant");
+        let tool_result_index = messages.iter().position(|message| {
+            message.role == "user"
+                && message.content.as_array().is_some_and(|blocks| {
+                    blocks.iter().any(|block| {
+                        block.get("type").and_then(|v| v.as_str()) == Some("tool_result")
+                    })
+                })
+        });
+        assert!(
+            tool_result_index.is_some(),
+            "tool result must be journaled: {messages:?}"
+        );
+        // The assistant message is journaled before tool dispatch, which is
+        // what produces the tool-result message.
+        assert!(tool_result_index.unwrap() > 1);
+        // The final-summary assistant message is journaled too.
+        let final_summary = messages.last().expect("final summary journaled");
+        assert_eq!(final_summary.role, "assistant");
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn auto_continuation_prompts_are_journaled() {
+        let workspace = temp_workspace("journal-continuation");
+        let root = journal_root("continuation");
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(no_tool_result("working")),
+            Ok(no_tool_result("still working")),
+            Ok(no_tool_result("more work")),
+            Ok(no_tool_result("wrapping up")),
+        ]));
+        let session = make_session(&workspace, adapter);
+        attach_journal(&session, &root);
+        session.set_goal_ledger(crate::agent::goal_state::GoalLedger::new_active(
+            "goal-1",
+            "finish everything",
+            vec!["pending task".to_string()],
+            1,
+        ));
+        let emitter: Arc<dyn crate::agent::event_sink::EventEmitter> =
+            Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "do the work",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        let mutations = journal_events(&root, &session.id);
+        let messages = journaled_messages(&mutations);
+        let continuations = messages
+            .iter()
+            .filter(|message| {
+                message.role == "user"
+                    && message
+                        .content
+                        .as_str()
+                        .is_some_and(|text| text.contains("Please continue working"))
+            })
+            .count();
+        assert_eq!(
+            continuations,
+            crate::agent::session::MAX_AUTO_CONTINUATIONS,
+            "every auto-continuation prompt must be journaled: {messages:?}"
+        );
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn compaction_journals_single_conversation_replacement() {
+        let workspace = temp_workspace("journal-compaction");
+        let root = journal_root("compaction");
+        let adapter = Arc::new(QueuedAdapter::new(vec![]));
+        let session = make_session(&workspace, adapter);
+        attach_journal(&session, &root);
+        let emitter = CollectingEventEmitter::new();
+
+        let compacted_messages = vec![crate::adapters::base::ChatMessage::user("condensed")];
+        let compacted = crate::agent::auto_compact::CompactResult {
+            messages: compacted_messages.clone(),
+            summary: Some("condensed summary".to_string()),
+            stats: Some(crate::agent::auto_compact::CompactStats {
+                summary: "condensed summary".to_string(),
+                retained_messages: 1,
+                compacted_messages: 5,
+                estimated_tokens_before: 10_000,
+                estimated_tokens_after: 2_000,
+            }),
+            attempted: true,
+            skipped_reason: None,
+        };
+        let stats = compacted.stats.clone().expect("stats");
+        session.apply_compaction_emitter(&compacted, &stats, "manual_compact", &emitter);
+
+        let mutations = journal_events(&root, &session.id);
+        let replacements: Vec<_> = mutations
+            .iter()
+            .filter(|mutation| matches!(mutation, SessionMutation::ConversationReplaced { .. }))
+            .collect();
+        assert_eq!(
+            replacements.len(),
+            1,
+            "compaction must journal exactly one ConversationReplaced: {mutations:?}"
+        );
+        match &replacements[0] {
+            SessionMutation::ConversationReplaced {
+                checkpoint_id,
+                messages,
+                summary,
+            } => {
+                assert!(checkpoint_id.starts_with("compact-manual_compact-"));
+                assert_eq!(messages.len(), 1);
+                assert_eq!(summary.as_deref(), Some("condensed summary"));
+            }
+            other => unreachable!("filtered above: {other:?}"),
+        }
+        assert!(
+            journaled_messages(&mutations).is_empty(),
+            "compaction must never journal per-message appends or deletes"
+        );
+
+        let messages = session.messages.lock().clone();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content, "condensed");
+        assert_eq!(session.summary.lock().as_deref(), Some("condensed summary"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }

@@ -117,8 +117,13 @@ impl AgentSession {
         reason: &str,
         emitter: &dyn EventEmitter,
     ) {
-        *lock_unpoisoned(&self.summary) = compacted.summary.clone();
-        *lock_unpoisoned(&self.messages) = compacted.messages.clone();
+        let checkpoint_id = format!("compact-{}-{}", reason, uuid::Uuid::now_v7());
+        let _ = self.replace_conversation(
+            checkpoint_id,
+            compacted.messages.clone(),
+            compacted.summary.clone(),
+            crate::agent::session_mutation::SessionMutationSource::Compaction,
+        );
         let saved_tokens = {
             let mut metrics = lock_unpoisoned(&self.turn_metrics);
             metrics.record_compaction(stats.estimated_tokens_before, stats.estimated_tokens_after);

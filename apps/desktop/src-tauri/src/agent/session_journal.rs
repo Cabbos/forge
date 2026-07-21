@@ -191,6 +191,11 @@ impl SessionJournalStore {
         journal_path(&self.root, &self.session_id)
     }
 
+    /// Last committed sequence number (`0` before any append or load).
+    pub(crate) fn last_sequence(&self) -> u64 {
+        self.last_sequence.load(Ordering::SeqCst)
+    }
+
     fn session_dir(&self) -> PathBuf {
         session_dir(&self.root, &self.session_id)
     }

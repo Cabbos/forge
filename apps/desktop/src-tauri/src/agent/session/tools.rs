@@ -441,6 +441,12 @@ impl AgentSession {
 
         self.record_tool_counts_emitter(tool_calls, &result_map, emitter);
 
+        // The delegated sub-agent lifecycle above mutates the A2A bus; mark it
+        // so the round-completion flush journals the final state once.
+        if !delegated.is_empty() {
+            self.mark_a2a_state_dirty();
+        }
+
         let model_tool_results = build_tool_result_message_for_model(&result_map, tool_calls);
         for resolved in &model_tool_results.results {
             if resolved.missing {
@@ -466,7 +472,10 @@ impl AgentSession {
                 resolved.content.len()
             );
         }
-        lock_unpoisoned(&self.messages).push(model_tool_results.message);
+        let _ = self.append_conversation_message(
+            model_tool_results.message,
+            crate::agent::session_mutation::SessionMutationSource::ToolResults,
+        );
     }
 
     fn record_tool_counts_emitter(

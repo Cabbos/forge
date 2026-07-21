@@ -249,12 +249,15 @@ pub(crate) async fn restore_session_from_snapshot(
         existing_context_window_tokens: snapshot.context_window_tokens,
     })
     .await?;
-    session.restore_state(
+    session.restore_state_with_provenance(
         snapshot.messages,
         snapshot.summary,
         snapshot.latest_turn,
         snapshot.goal_ledger,
         snapshot.a2a_state,
+        Some(crate::agent::session_mutation::SessionRestoreProvenance {
+            snapshot_schema_version: snapshot.schema_version,
+        }),
     );
     // Mark as Resuming before registering so list_sessions can report "resuming"
     // during restore; emit_restored_session_startup will promote to Running.

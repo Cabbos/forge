@@ -89,13 +89,17 @@ pub struct AgentSession {
     pub(crate) cancel: Mutex<Option<Arc<Notify>>>,
     pub(crate) goal_ledger: Mutex<Option<GoalLedger>>,
     pub(crate) a2a_bus: Mutex<crate::agent::a2a::bus::AgentA2ABus>,
+    pub(crate) session_journal:
+        Mutex<Option<Arc<crate::agent::session_mutation::SessionJournalHandle>>>,
 }
 
 // Lock discipline for AgentSession:
 // - Prefer taking one mutex per statement and cloning the small value needed.
 // - If multiple locks are unavoidable, acquire them in this order:
 //   status -> system_prompt -> messages -> summary -> latest_turn -> turn_metrics
-//   -> auto_compact_guard -> cancel.
+//   -> auto_compact_guard -> cancel -> session_journal.
+// session_journal is always last: its handle is cloned out of the mutex and
+// released before any journal I/O, so the lock is never held across appends.
 // This keeps resume/snapshot/turn setup from growing accidental lock-order cycles.
 
 pub(crate) struct AgentPreviewStatusUpdate<'a> {
@@ -159,6 +163,7 @@ impl AgentSession {
             cancel: Mutex::new(None),
             goal_ledger: Mutex::new(None),
             a2a_bus: Mutex::new(crate::agent::a2a::bus::AgentA2ABus::default()),
+            session_journal: Mutex::new(None),
         };
 
         *lock_unpoisoned(&session.status) = SessionStatus::Running;
@@ -181,12 +186,50 @@ impl AgentSession {
         goal_ledger: Option<GoalLedger>,
         a2a_state: Option<crate::agent::a2a::bus::AgentA2ABus>,
     ) {
-        *lock_unpoisoned(&self.messages) = repair_tool_use_adjacency(messages);
-        *lock_unpoisoned(&self.summary) = summary;
-        *lock_unpoisoned(&self.latest_turn) = latest_turn.map(|mut turn| {
+        self.restore_state_with_provenance(
+            messages,
+            summary,
+            latest_turn,
+            goal_ledger,
+            a2a_state,
+            None,
+        );
+    }
+
+    /// Restore session state, journaling a `ConversationReplaced` +
+    /// `RuntimeStateUpdated` baseline first when a journal is attached. The
+    /// baseline is journaled BEFORE the in-memory restore so a crash mid-way
+    /// still leaves the journal at least as complete as memory.
+    pub(crate) fn restore_state_with_provenance(
+        &self,
+        messages: Vec<ChatMessage>,
+        summary: Option<String>,
+        latest_turn: Option<AgentTurnState>,
+        goal_ledger: Option<GoalLedger>,
+        a2a_state: Option<crate::agent::a2a::bus::AgentA2ABus>,
+        provenance: Option<crate::agent::session_mutation::SessionRestoreProvenance>,
+    ) {
+        let messages = repair_tool_use_adjacency(messages);
+        let latest_turn = latest_turn.map(|mut turn| {
             turn.normalize_for_session_resume();
             turn
         });
+        if let Some(journal) = self.session_journal_handle() {
+            // Shadow-mode semantics apply to restores regardless of strict
+            // mode: failing to journal a baseline must never block a restore.
+            let _ = journal.record_restore_baseline(
+                &self.id,
+                &messages,
+                &summary,
+                &latest_turn,
+                &goal_ledger,
+                &a2a_state,
+                provenance,
+            );
+        }
+        *lock_unpoisoned(&self.messages) = messages;
+        *lock_unpoisoned(&self.summary) = summary;
+        *lock_unpoisoned(&self.latest_turn) = latest_turn;
         *lock_unpoisoned(&self.goal_ledger) = goal_ledger;
         *lock_unpoisoned(&self.a2a_bus) = a2a_state.unwrap_or_default();
     }
@@ -218,6 +261,7 @@ impl AgentSession {
 
     pub fn set_goal_ledger(&self, ledger: GoalLedger) {
         lifecycle::set_goal_ledger(self, ledger);
+        self.mark_goal_state_dirty();
     }
 
     pub fn current_goal(&self) -> Option<crate::agent::goal_state::GoalState> {
@@ -226,6 +270,7 @@ impl AgentSession {
 
     pub(crate) fn normalize_goal_ledger_for_resume(&self) {
         lifecycle::normalize_goal_ledger_for_resume(self);
+        self.mark_goal_state_dirty();
     }
 
     pub(crate) fn sync_goal_task_for_a2a(
@@ -233,6 +278,7 @@ impl AgentSession {
         target_status: crate::agent::goal_state::GoalTaskStatus,
     ) {
         lifecycle::sync_goal_task_for_a2a(self, target_status);
+        self.mark_goal_state_dirty();
     }
 
     /// Send a user message and run the agent loop through the harness.
