@@ -11,12 +11,13 @@ use crate::agent::snapshot::{
 use crate::agent::snapshot::{
     ActiveToolCallDescriptor, ActiveToolCallStatus, PendingConfirmDescriptor,
 };
+use crate::agent::turn_state::{running_tool_trace, AgentTurnState, AgentTurnStatus};
 use crate::credential_store::{CredentialStore, MemoryCredentialStore};
 use crate::harness::Harness;
 use crate::ipc::session_lifecycle::{
     choose_startup_snapshot, gateway_session_ids_for_shutdown, gateway_session_info_for_session,
     gateway_session_infos_for_state, list_session_infos_for_state, restore_session_from_snapshot,
-    session_snapshot_with_workflow_state,
+    session_snapshot_with_workflow_state, snapshots_restore_parity_equivalent,
 };
 use crate::protocol::events::DeliverySummary;
 use crate::settings::Settings;
@@ -1303,6 +1304,194 @@ async fn fresh_restore_outcome_carries_notices_to_emission_path() {
         .exists());
 
     let _ = std::fs::remove_file(&snapshot_path);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+// ── Task 7 audit: real-AgentSession restore parity corpus ─────────────────
+
+fn assert_restored_journal_parity(session_id: &str, expected_snapshot: &AgentSessionSnapshot) {
+    let events = SessionJournalStore::new(default_forge_root(), session_id.to_string())
+        .expect("loader")
+        .load()
+        .expect("load restored journal")
+        .events;
+    let projection = SessionProjection::from_events(&events)
+        .expect("projection")
+        .to_snapshot();
+    assert!(
+        snapshots_restore_parity_equivalent(expected_snapshot, &projection),
+        "restored journal baseline must parity-match saved snapshot\nsnapshot: {expected_snapshot:?}\nprojection: {projection:?}"
+    );
+}
+
+#[tokio::test]
+async fn pending_confirmation_snapshot_restore_journal_parity() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-pending-parity-{nonce}");
+    let workspace = std::env::temp_dir().join(format!("forge-restore-pending-parity-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let workspace = workspace.canonicalize().unwrap_or(workspace);
+
+    let session = AgentSession::new(
+        session_id.clone(),
+        "deepseek".to_string(),
+        Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")),
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+    session.restore_state(
+        vec![
+            ChatMessage::user("run a shell command"),
+            ChatMessage::assistant(serde_json::json!([{
+                "type": "tool_use",
+                "id": "call_1",
+                "name": "run_shell",
+                "input": {"command": "echo hi"}
+            }])),
+        ],
+        None,
+        None,
+        None,
+        None,
+    );
+    let mut snapshot = session.snapshot();
+    snapshot.pending_confirms = vec![PendingConfirmDescriptor::new(
+        "confirm-1".to_string(),
+        "Allow shell?".to_string(),
+        "run_shell".to_string(),
+        42,
+    )];
+    snapshot.active_tool_calls = vec![ActiveToolCallDescriptor::new(
+        "call_1".to_string(),
+        "run_shell".to_string(),
+        serde_json::json!({"command": "echo hi"}),
+        100,
+    )];
+    save_session_snapshot(&snapshot).expect("save snapshot");
+
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
+    let restored = restore_session_from_snapshot(&state, &session_id)
+        .await
+        .expect("restore");
+
+    assert_eq!(restored.restore_source, SessionRestoreSource::Snapshot);
+    assert_restored_journal_parity(&session_id, &snapshot);
+
+    let _ = delete_session_snapshot(&session_id);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn interrupted_tool_snapshot_restore_journal_parity() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-interrupted-parity-{nonce}");
+    let workspace =
+        std::env::temp_dir().join(format!("forge-restore-interrupted-parity-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+    let workspace = workspace.canonicalize().unwrap_or(workspace);
+
+    let session = AgentSession::new(
+        session_id.clone(),
+        "deepseek".to_string(),
+        Arc::new(MissingKeyAdapter::new("DeepSeek", "deepseek-chat")),
+        Arc::new(Harness::new(workspace.clone())),
+        "system".to_string(),
+        Some(128_000),
+    );
+
+    let messages = vec![
+        ChatMessage::user("先安装依赖"),
+        ChatMessage::assistant(serde_json::json!([{
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "bash",
+            "input": {"command": "npm install"}
+        }])),
+        ChatMessage::user("继续"),
+    ];
+    let mut turn = AgentTurnState::new(
+        "turn-1".to_string(),
+        session_id.clone(),
+        workspace.to_string_lossy().to_string(),
+        "deepseek".to_string(),
+        "deepseek-chat".to_string(),
+        "workflow".to_string(),
+        "implementation".to_string(),
+        "安装依赖并继续生成工具".to_string(),
+    );
+    turn.mark_status_with_reason(
+        AgentTurnStatus::RunningTools,
+        "tool_calls_requested",
+        Some("model requested tool execution"),
+    );
+    turn.record_tool(running_tool_trace(
+        "call_1".to_string(),
+        "bash".to_string(),
+        &serde_json::json!({"command": "npm install"}),
+        10,
+    ));
+
+    session.restore_state(messages, None, Some(turn), None, None);
+    let snapshot = session.snapshot();
+    save_session_snapshot(&snapshot).expect("save snapshot");
+
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
+    let restored = restore_session_from_snapshot(&state, &session_id)
+        .await
+        .expect("restore");
+
+    assert_eq!(restored.restore_source, SessionRestoreSource::Snapshot);
+    assert_restored_journal_parity(&session_id, &snapshot);
+
+    let _ = delete_session_snapshot(&session_id);
+    cleanup_default_journal(&session_id);
+    let _ = std::fs::remove_dir_all(workspace);
+}
+
+#[tokio::test]
+async fn legacy_snapshot_import_restore_journal_parity() {
+    let nonce = uuid::Uuid::now_v7();
+    let session_id = format!("restore-legacy-parity-{nonce}");
+    let workspace = std::env::temp_dir().join(format!("forge-restore-legacy-parity-ws-{nonce}"));
+    std::fs::create_dir_all(&workspace).expect("workspace");
+
+    let mut snapshot = AgentSessionSnapshot::new(
+        session_id.clone(),
+        "deepseek".to_string(),
+        "deepseek-chat".to_string(),
+        workspace.to_string_lossy().to_string(),
+        vec![ChatMessage::user("legacy hello")],
+        None,
+        Some(128_000),
+    );
+    snapshot.journal_sequence = 0; // legacy: no sequence metadata
+    save_session_snapshot(&snapshot).expect("save snapshot");
+
+    // A matching journal written before snapshots recorded sequence metadata.
+    let store = write_default_journal(&session_id, &workspace.to_string_lossy(), &["legacy hello"]);
+    drop(store);
+
+    let state = Arc::new(AppState::new_with_credential_store(
+        Arc::new(Harness::new(workspace.clone())),
+        memory_credential_store_for_saved_references(),
+    ));
+    let restored = restore_session_from_snapshot(&state, &session_id)
+        .await
+        .expect("restore");
+
+    assert_eq!(restored.restore_source, SessionRestoreSource::Snapshot);
+    assert_restored_journal_parity(&session_id, &snapshot);
+
+    let _ = delete_session_snapshot(&session_id);
     cleanup_default_journal(&session_id);
     let _ = std::fs::remove_dir_all(workspace);
 }

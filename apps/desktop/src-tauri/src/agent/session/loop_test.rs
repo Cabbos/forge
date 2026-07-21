@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
-    use crate::adapters::base::{AdapterError, AiAdapter, StreamResult};
-    use crate::agent::event_sink::CollectingEventEmitter;
+    use crate::adapters::base::{AdapterError, AiAdapter, ChatMessage, StreamResult, ToolCall};
+    use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
     use crate::agent::loop_guard::LoopStopReason;
     use crate::agent::session::{AgentSession, AgentTurnRunRequest};
     use crate::agent::session_guards::try_begin_turn;
@@ -294,8 +294,13 @@ mod tests {
 
     // ── Journal shadow-mode mutation ordering ─────────────────────────────
 
-    use crate::agent::session_journal::{SessionJournalStore, SessionMutation};
+    use crate::agent::session_journal::{
+        SessionJournalStore, SessionMutation, SessionMutationEnvelope,
+        SESSION_JOURNAL_SCHEMA_VERSION,
+    };
     use crate::agent::session_mutation::{SessionJournalHandle, SessionJournalMode};
+    use crate::agent::session_projection::SessionProjection;
+    use crate::ipc::session_lifecycle::snapshots_restore_parity_equivalent;
 
     fn journal_root(name: &str) -> std::path::PathBuf {
         let root = std::env::temp_dir().join(format!(
@@ -311,6 +316,43 @@ mod tests {
             .expect("journal store");
         session
             .attach_session_journal(SessionJournalHandle::new(store, SessionJournalMode::Shadow));
+    }
+
+    fn attach_initialized_journal(session: &AgentSession, root: &std::path::Path) {
+        let store = SessionJournalStore::new(root.to_path_buf(), session.id.clone())
+            .expect("journal store");
+        if store.load().map(|r| r.events.is_empty()).unwrap_or(true) {
+            let _ = store.append(SessionMutationEnvelope {
+                schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+                event_id: String::new(),
+                session_id: session.id.clone(),
+                sequence: 0,
+                created_at_ms: 1,
+                mutation: SessionMutation::SessionInitialized {
+                    provider: session.agent_type.clone(),
+                    model: session.model_id.clone(),
+                    working_dir: session.harness.working_dir.to_string_lossy().to_string(),
+                },
+            });
+        }
+        session
+            .attach_session_journal(SessionJournalHandle::new(store, SessionJournalMode::Shadow));
+    }
+
+    fn assert_journal_parity(session: &AgentSession, journal_root: &std::path::Path) {
+        let events = SessionJournalStore::new(journal_root.to_path_buf(), session.id.clone())
+            .expect("loader store")
+            .load()
+            .expect("journal load")
+            .events;
+        let projection = SessionProjection::from_events(&events)
+            .expect("projection")
+            .to_snapshot();
+        let snapshot = session.snapshot();
+        assert!(
+            snapshots_restore_parity_equivalent(&snapshot, &projection),
+            "journal replay must parity-match saved snapshot\nsnapshot: {snapshot:?}\nprojection: {projection:?}"
+        );
     }
 
     fn journal_events(root: &std::path::Path, session_id: &str) -> Vec<SessionMutation> {
@@ -609,6 +651,289 @@ mod tests {
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].content, "condensed");
         assert_eq!(session.summary.lock().as_deref(), Some("condensed summary"));
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    // ── Shadow replay parity corpus ─────────────────────────────────────────
+    //
+    // Each test drives a real AgentSession through a scenario with the journal
+    // attached, then proves that replaying the on-disk journal produces a
+    // snapshot parity-equivalent to the in-memory snapshot. The comparator is
+    // the same positive allowlist used by restore selection:
+    // session_id/provider/model/working_dir, messages, summary, latest_turn,
+    // goal_ledger, and a2a_state. Pending confirms, active tool calls, workflow,
+    // delivery, context_window_tokens, and bookkeeping metadata are excluded.
+
+    #[tokio::test]
+    async fn plain_chat_journal_parity_matches_snapshot() {
+        let workspace = temp_workspace("parity-plain");
+        let root = journal_root("parity-plain");
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(no_tool_result("I can help.")),
+            Ok(no_tool_result("Done.")),
+        ]));
+        let session = make_session(&workspace, adapter);
+        attach_initialized_journal(&session, &root);
+        let emitter: Arc<dyn EventEmitter> = Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "say hi",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        assert_journal_parity(&session, &root);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn multiple_tool_calls_journal_parity_matches_snapshot() {
+        let workspace = temp_workspace("parity-multi-tool");
+        std::fs::write(workspace.join("a.txt"), "alpha").expect("write a");
+        std::fs::write(workspace.join("b.txt"), "beta").expect("write b");
+        let root = journal_root("parity-multi-tool");
+
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(StreamResult {
+                assistant_content: vec![
+                    serde_json::json!({"type": "tool_use", "id": "tu_a", "name": "read_file", "input": {"path": "a.txt"}}),
+                    serde_json::json!({"type": "tool_use", "id": "tu_b", "name": "read_file", "input": {"path": "b.txt"}}),
+                ],
+                tool_calls: vec![
+                    ToolCall {
+                        id: "tu_a".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({"path": "a.txt"}),
+                    },
+                    ToolCall {
+                        id: "tu_b".to_string(),
+                        name: "read_file".to_string(),
+                        input: serde_json::json!({"path": "b.txt"}),
+                    },
+                ],
+                stop_reason: Some("tool_use".to_string()),
+            }),
+            Ok(no_tool_result("I read both files.")),
+            Ok(no_tool_result("Done.")),
+        ]));
+        let session = make_session(&workspace, adapter);
+        attach_initialized_journal(&session, &root);
+        let emitter: Arc<dyn EventEmitter> = Arc::new(CollectingEventEmitter::new());
+
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "read both files",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        assert_journal_parity(&session, &root);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn permission_denial_journal_parity_matches_snapshot() {
+        let workspace = temp_workspace("parity-deny");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        let root = journal_root("parity-deny");
+
+        let pending_confirms: Arc<
+            tokio::sync::RwLock<
+                std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+            >,
+        > = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness = Arc::new(Harness::new_with_pending(
+            workspace.clone(),
+            pending_confirms.clone(),
+        ));
+        let adapter = Arc::new(QueuedAdapter::new(vec![
+            Ok(StreamResult {
+                assistant_content: vec![serde_json::json!({
+                    "type": "tool_use",
+                    "id": "tu-write",
+                    "name": "write_to_file",
+                    "input": {"path": "secret.txt", "content": "should not write"}
+                })],
+                tool_calls: vec![ToolCall {
+                    id: "tu-write".to_string(),
+                    name: "write_to_file".to_string(),
+                    input: serde_json::json!({"path": "secret.txt", "content": "should not write"}),
+                }],
+                stop_reason: Some("tool_use".to_string()),
+            }),
+            Ok(no_tool_result("I was denied.")),
+            Ok(no_tool_result("Done.")),
+        ]));
+        let session = AgentSession::new(
+            "session-deny".to_string(),
+            "claude".to_string(),
+            adapter,
+            harness,
+            "system".to_string(),
+            None,
+        );
+        attach_initialized_journal(&session, &root);
+
+        struct DenyPendingEmitter {
+            pending_confirms: Arc<
+                tokio::sync::RwLock<
+                    std::collections::HashMap<String, tokio::sync::oneshot::Sender<bool>>,
+                >,
+            >,
+        }
+        impl EventEmitter for DenyPendingEmitter {
+            fn emit(&self, event: crate::protocol::events::StreamEvent) {
+                if let crate::protocol::events::StreamEvent::ConfirmAsk { block_id, .. } = event {
+                    let pending_confirms = self.pending_confirms.clone();
+                    tokio::spawn(async move {
+                        for _ in 0..100 {
+                            if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
+                                let _ = sender.send(false);
+                                return;
+                            }
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                        }
+                    });
+                }
+            }
+        }
+
+        let emitter: Arc<dyn EventEmitter> = Arc::new(DenyPendingEmitter { pending_confirms });
+        let turn_guard = session.reserve_turn().expect("reserve turn");
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            session.send_message_with_shared_emitter(
+                "write a file",
+                emitter,
+                vec![],
+                None,
+                None,
+                turn_guard,
+            ),
+        )
+        .await
+        .expect("turn should not hang")
+        .expect("agent turn should succeed");
+
+        assert_journal_parity(&session, &root);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn compaction_journal_parity_matches_snapshot() {
+        let workspace = temp_workspace("parity-compaction");
+        let root = journal_root("parity-compaction");
+        let adapter = Arc::new(QueuedAdapter::new(vec![]));
+        let session = make_session(&workspace, adapter);
+        attach_initialized_journal(&session, &root);
+        let emitter = CollectingEventEmitter::new();
+
+        // Seed a few messages first so compaction actually replaces them.
+        session
+            .append_conversation_message(
+                ChatMessage::user("first"),
+                crate::agent::session_mutation::SessionMutationSource::UserInput,
+            )
+            .expect("append first");
+        session
+            .append_conversation_message(
+                ChatMessage::assistant(serde_json::json!("second")),
+                crate::agent::session_mutation::SessionMutationSource::AssistantResponse,
+            )
+            .expect("append second");
+
+        let compacted_messages = vec![ChatMessage::user("condensed")];
+        let compacted = crate::agent::auto_compact::CompactResult {
+            messages: compacted_messages.clone(),
+            summary: Some("condensed summary".to_string()),
+            stats: Some(crate::agent::auto_compact::CompactStats {
+                summary: "condensed summary".to_string(),
+                retained_messages: 1,
+                compacted_messages: 2,
+                estimated_tokens_before: 10_000,
+                estimated_tokens_after: 2_000,
+            }),
+            attempted: true,
+            skipped_reason: None,
+        };
+        let stats = compacted.stats.clone().expect("stats");
+        session.apply_compaction_emitter(&compacted, &stats, "manual_compact", &emitter);
+
+        assert_journal_parity(&session, &root);
+
+        let _ = std::fs::remove_dir_all(&workspace);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[tokio::test]
+    async fn a2a_state_journal_parity_matches_snapshot() {
+        let workspace = temp_workspace("parity-a2a");
+        let root = journal_root("parity-a2a");
+        let adapter = Arc::new(QueuedAdapter::new(vec![Ok(no_tool_result("Ack."))]));
+        let session = make_session(&workspace, adapter);
+        attach_initialized_journal(&session, &root);
+
+        // Restore A2A state into the session; restore_state journals a baseline
+        // (ConversationReplaced + RuntimeStateUpdated) before applying memory.
+        let mut bus = crate::agent::a2a::bus::AgentA2ABus::default();
+        let task_id = crate::agent::a2a::supervisor::assign_delegate_task(
+            &mut bus,
+            "Review parity",
+            "Check A2A state round-trips through the journal",
+            10,
+        );
+        bus.complete_task(&task_id, "looks good", 20);
+        session.restore_state(
+            vec![ChatMessage::user("plan review")],
+            None,
+            None,
+            None,
+            Some(bus),
+        );
+
+        // A subsequent turn flushes the runtime-state mutation again.
+        let emitter: Arc<dyn EventEmitter> = Arc::new(CollectingEventEmitter::new());
+        let guard = try_begin_turn(session.turn_inflight.clone()).expect("begin turn");
+        session
+            .run_agent_turn(AgentTurnRunRequest {
+                text: "continue",
+                hidden_contexts: vec![],
+                turn_metadata: None,
+                activation_text: None,
+                _turn_guard: guard,
+                emitter: &*emitter,
+                tool_emitter: Some(emitter.clone()),
+                app_handle: None,
+            })
+            .await
+            .expect("turn ok");
+
+        assert_journal_parity(&session, &root);
 
         let _ = std::fs::remove_dir_all(&workspace);
         let _ = std::fs::remove_dir_all(&root);
