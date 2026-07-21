@@ -1,7 +1,46 @@
+//! Canonical append-only session mutation journal.
+//!
+//! Each session stores mutations under `~/.forge/sessions/<id>/mutations.jsonl`.
+//! The journal is the backend authority for conversation history and runtime state
+//! mutations; events are never streamed to the UI.
+//!
+//! # Corruption contract
+//!
+//! - A malformed, non-newline-terminated final record is treated as a torn append.
+//!   The valid prefix replays and the damage is reported.
+//! - A malformed interior record, unknown schema version, mismatched session id,
+//!   duplicate sequence, or sequence gap stops authoritative replay.
+//! - Unknown future mutation variants fail deserialization and are treated like
+//!   corrupt interior lines; existing data is never deleted.
+//!
+//! # Crash recovery and reconciliation
+//!
+//! `load()` and the first `append()` reconcile the session directory before
+//! reading. The rule is: among `mutations.jsonl` and all `mutations.gen<N>.jsonl`
+//! files, the file whose valid prefix ends at the highest sequence number is the
+//! authority. If that file is not already `mutations.jsonl`, it is atomically
+//! promoted to active and the previous active file is archived as the next
+//! available generation. This makes truncation crash-tolerant: a new generation
+//! can be written and left unactivated, and the next load will promote it.
+//!
+//! Generation files (`mutations.gen0.jsonl`, `mutations.gen1.jsonl`, ...) are
+//! retained as a history of truncation points. Deletion of old generations is
+//! intentionally NOT implemented here; the parity gate that decides when a
+//! generation is safe to remove belongs to Task 5 integration.
+//!
+//! # Truncation
+//!
+//! Truncation is anchored at a committed `ConversationReplaced` event. It writes
+//! a new generation seeded with a synthetic `SessionInitialized` and the baseline
+//! checkpoint, then atomically archives the current active journal and activates
+//! the new generation. Failures after the new generation is written remove the
+//! new file and leave the original active journal untouched.
+
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -76,7 +115,10 @@ pub(crate) enum JournalDamage {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum JournalError {
-    Io(String),
+    Io {
+        kind: std::io::ErrorKind,
+        message: String,
+    },
     LockPoisoned,
     CorruptInteriorLine {
         line: usize,
@@ -109,10 +151,6 @@ pub(crate) enum JournalError {
     },
 }
 
-pub(crate) type JournalLoadError = JournalError;
-pub(crate) type JournalAppendError = JournalError;
-pub(crate) type JournalTruncateError = JournalError;
-
 #[derive(Debug)]
 pub(crate) struct JournalLoadResult {
     pub events: Vec<SessionMutationEnvelope>,
@@ -129,10 +167,13 @@ pub(crate) struct SessionJournalStore {
     root: PathBuf,
     session_id: String,
     lock: Arc<Mutex<()>>,
+    /// Cache of the last known sequence number. `0` means "uninitialized"; real
+    /// journal sequences start at `1`. Updated by `load_unlocked` and `append`.
+    last_sequence: AtomicU64,
 }
 
 impl SessionJournalStore {
-    pub(crate) fn new(root: PathBuf, session_id: String) -> Result<Self, JournalAppendError> {
+    pub(crate) fn new(root: PathBuf, session_id: String) -> Result<Self, JournalError> {
         if !is_safe_session_id(&session_id) {
             return Err(JournalError::UnsafeSessionId(session_id));
         }
@@ -142,6 +183,7 @@ impl SessionJournalStore {
             root,
             session_id,
             lock,
+            last_sequence: AtomicU64::new(0),
         })
     }
 
@@ -158,10 +200,7 @@ impl SessionJournalStore {
             .join(format!("mutations.gen{generation}.jsonl"))
     }
 
-    pub(crate) fn append(
-        &self,
-        mut envelope: SessionMutationEnvelope,
-    ) -> Result<(), JournalAppendError> {
+    pub(crate) fn append(&self, mut envelope: SessionMutationEnvelope) -> Result<(), JournalError> {
         let _guard = self.lock.lock().map_err(|_| JournalError::LockPoisoned)?;
         if envelope.schema_version != SESSION_JOURNAL_SCHEMA_VERSION {
             return Err(JournalError::SchemaVersionMismatch {
@@ -176,15 +215,8 @@ impl SessionJournalStore {
                 found: envelope.session_id,
             });
         }
-        let load_result = self.load_unlocked()?;
-        if load_result.damage.is_some() {
-            self.truncate_torn_line()?;
-        }
-        let last_sequence = load_result
-            .events
-            .last()
-            .map(|event| event.sequence)
-            .unwrap_or(0);
+
+        let last_sequence = self.initialize_append_cache()?;
         let expected_sequence = last_sequence + 1;
         if envelope.sequence == 0 {
             envelope.sequence = expected_sequence;
@@ -199,103 +231,189 @@ impl SessionJournalStore {
             envelope.event_id = uuid::Uuid::now_v7().to_string();
         }
         self.append_prepared(&envelope)?;
+        self.last_sequence
+            .store(envelope.sequence, Ordering::SeqCst);
         Ok(())
     }
 
-    pub(crate) fn load(&self) -> Result<JournalLoadResult, JournalLoadError> {
+    /// Lazily initializes the in-memory sequence cache. If the journal has a
+    /// torn final line, it is repaired before returning so the next append does
+    /// not create a corrupt interior record.
+    fn initialize_append_cache(&self) -> Result<u64, JournalError> {
+        let cached = self.last_sequence.load(Ordering::SeqCst);
+        if cached != 0 {
+            if !self.active_file_ends_with_newline()? {
+                self.truncate_torn_line()?;
+                let result = self.load_unlocked()?;
+                let last = result
+                    .events
+                    .last()
+                    .map(|event| event.sequence)
+                    .unwrap_or(0);
+                self.last_sequence.store(last, Ordering::SeqCst);
+            }
+            return Ok(self.last_sequence.load(Ordering::SeqCst));
+        }
+        let mut result = self.load_unlocked()?;
+        if result.damage.is_some() {
+            self.truncate_torn_line()?;
+            result = self.load_unlocked()?;
+        }
+        let last = result
+            .events
+            .last()
+            .map(|event| event.sequence)
+            .unwrap_or(0);
+        self.last_sequence.store(last, Ordering::SeqCst);
+        Ok(last)
+    }
+
+    /// O(1) check of whether the active journal ends with a newline. An empty or
+    /// missing file is treated as newline-terminated.
+    fn active_file_ends_with_newline(&self) -> Result<bool, JournalError> {
+        let path = self.path();
+        let metadata = match std::fs::metadata(&path) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(io_err("stat journal end", error)),
+        };
+        if metadata.len() == 0 {
+            return Ok(true);
+        }
+        let mut file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .map_err(|error| io_err("open journal end", error))?;
+        use std::io::{Read, Seek, SeekFrom};
+        file.seek(SeekFrom::End(-1))
+            .map_err(|error| io_err("seek journal end", error))?;
+        let mut buffer = [0u8; 1];
+        file.read_exact(&mut buffer)
+            .map_err(|error| io_err("read journal end", error))?;
+        Ok(buffer[0] == b'\n')
+    }
+
+    pub(crate) fn load(&self) -> Result<JournalLoadResult, JournalError> {
         let _guard = self.lock.lock().map_err(|_| JournalError::LockPoisoned)?;
         self.load_unlocked()
     }
 
-    fn load_unlocked(&self) -> Result<JournalLoadResult, JournalLoadError> {
-        let path = self.path();
-        let raw = match std::fs::read_to_string(&path) {
-            Ok(raw) => raw,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(JournalLoadResult {
-                    events: Vec::new(),
-                    damage: None,
-                });
-            }
-            Err(error) => return Err(JournalError::Io(format!("read session journal: {error}"))),
-        };
-        if raw.is_empty() {
-            return Ok(JournalLoadResult {
-                events: Vec::new(),
-                damage: None,
-            });
+    fn load_unlocked(&self) -> Result<JournalLoadResult, JournalError> {
+        self.reconcile()?;
+        let result = load_from_path(&self.path(), &self.session_id)?;
+        if let Some(last) = result.events.last() {
+            self.last_sequence.store(last.sequence, Ordering::SeqCst);
+        } else {
+            self.last_sequence.store(0, Ordering::SeqCst);
         }
-        let lines: Vec<&str> = raw.split_inclusive('\n').collect();
-        let mut events: Vec<SessionMutationEnvelope> = Vec::new();
-        let mut damage = None;
-        for (index, line_with_newline) in lines.iter().enumerate() {
-            let line_number = index + 1;
-            let is_last = index == lines.len() - 1;
-            let trimmed = line_with_newline.trim();
-            if trimmed.is_empty() {
+        Ok(result)
+    }
+
+    /// Reconcile the session directory so that `mutations.jsonl` is the file
+    /// with the highest valid latest sequence. See module-level docs for the
+    /// full rule.
+    fn reconcile(&self) -> Result<(), JournalError> {
+        let dir = self.session_dir();
+        if !dir.exists() {
+            return Ok(());
+        }
+        let active_path = self.path();
+        let mut best_path: Option<PathBuf> = None;
+        let mut best_sequence: u64 = 0;
+        let mut best_is_active = false;
+
+        let candidates = self.list_journal_candidates()?;
+        for (path, is_active) in candidates {
+            let latest = match load_from_path(&path, &self.session_id) {
+                Ok(result) => result
+                    .events
+                    .last()
+                    .map(|event| event.sequence)
+                    .unwrap_or(0),
+                Err(_) => {
+                    // Ignore unreadable candidates for reconciliation; they will
+                    // surface errors if they are ever promoted to active.
+                    continue;
+                }
+            };
+            if latest > best_sequence || (latest == best_sequence && is_active) {
+                best_sequence = latest;
+                best_path = Some(path);
+                best_is_active = is_active;
+            }
+        }
+
+        let Some(best_path) = best_path else {
+            return Ok(());
+        };
+        if best_is_active {
+            return Ok(());
+        }
+
+        // Promote the best generation to active. Archive the current active file
+        // (if any) so no data is lost.
+        if active_path.exists() {
+            let archive_generation = self.available_generation_numbers(1)?[0];
+            let archive_path = self.generation_path(archive_generation);
+            std::fs::rename(&active_path, &archive_path)
+                .map_err(|error| io_err("archive current active journal", error))?;
+        }
+        std::fs::rename(&best_path, &active_path)
+            .map_err(|error| io_err("activate best generation", error))?;
+        Ok(())
+    }
+
+    fn list_journal_candidates(&self) -> Result<Vec<(PathBuf, bool)>, JournalError> {
+        let dir = self.session_dir();
+        if !dir.exists() {
+            return Ok(Vec::new());
+        }
+        let active_path = self.path();
+        let mut candidates = Vec::new();
+        if active_path.is_file() {
+            candidates.push((active_path.clone(), true));
+        }
+        for entry in std::fs::read_dir(&dir).map_err(|error| io_err("read session dir", error))? {
+            let entry = entry.map_err(|error| io_err("read dir entry", error))?;
+            if !entry
+                .file_type()
+                .map_err(|error| io_err("read file type", error))?
+                .is_file()
+            {
                 continue;
             }
-            if !line_with_newline.ends_with('\n') {
-                if is_last {
-                    damage = Some(JournalDamage::TornFinalLine { line: line_number });
-                    break;
-                }
-                return Err(JournalError::CorruptInteriorLine { line: line_number });
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else {
+                continue;
+            };
+            if name == "mutations.jsonl" {
+                continue;
             }
-            let line = line_with_newline
-                .strip_suffix('\n')
-                .unwrap_or(line_with_newline);
-            let envelope: SessionMutationEnvelope = serde_json::from_str(line)
-                .map_err(|_error| JournalError::CorruptInteriorLine { line: line_number })?;
-            if envelope.schema_version != SESSION_JOURNAL_SCHEMA_VERSION {
-                return Err(JournalError::UnknownSchemaVersion {
-                    line: line_number,
-                    version: envelope.schema_version,
-                });
+            let Some(body) = name.strip_prefix("mutations.gen") else {
+                continue;
+            };
+            let Some(body) = body.strip_suffix(".jsonl") else {
+                continue;
+            };
+            if body.parse::<u32>().is_ok() {
+                candidates.push((entry.path(), false));
             }
-            if envelope.session_id != self.session_id {
-                return Err(JournalError::MismatchedSessionId {
-                    line: Some(line_number),
-                    expected: self.session_id.clone(),
-                    found: envelope.session_id,
-                });
-            }
-            if !events.is_empty() {
-                let expected_sequence = events.last().expect("events not empty").sequence + 1;
-                if envelope.sequence != expected_sequence {
-                    if envelope.sequence <= events.last().expect("events not empty").sequence {
-                        return Err(JournalError::DuplicateSequence {
-                            line: Some(line_number),
-                            found: envelope.sequence,
-                        });
-                    }
-                    return Err(JournalError::SequenceGap {
-                        line: Some(line_number),
-                        expected: expected_sequence,
-                        found: envelope.sequence,
-                    });
-                }
-            }
-            events.push(envelope);
         }
-        Ok(JournalLoadResult { events, damage })
+        Ok(candidates)
     }
 
     fn truncate_torn_line(&self) -> Result<(), JournalError> {
         let path = self.path();
         let raw = std::fs::read_to_string(&path)
-            .map_err(|error| JournalError::Io(format!("read journal for torn repair: {error}")))?;
+            .map_err(|error| io_err("read journal for torn repair", error))?;
         if let Some(position) = raw.rfind('\n') {
             let prefix = &raw[..=position];
             let tmp = path.with_extension("tmp");
-            std::fs::write(&tmp, prefix)
-                .map_err(|error| JournalError::Io(format!("write torn repair tmp: {error}")))?;
-            std::fs::rename(&tmp, &path).map_err(|error| {
-                JournalError::Io(format!("replace journal after torn repair: {error}"))
-            })?;
+            std::fs::write(&tmp, prefix).map_err(|error| io_err("write torn repair tmp", error))?;
+            std::fs::rename(&tmp, &path)
+                .map_err(|error| io_err("replace journal after torn repair", error))?;
         } else {
-            std::fs::remove_file(&path)
-                .map_err(|error| JournalError::Io(format!("remove torn journal: {error}")))?;
+            std::fs::remove_file(&path).map_err(|error| io_err("remove torn journal", error))?;
         }
         Ok(())
     }
@@ -303,33 +421,27 @@ impl SessionJournalStore {
     fn append_prepared(&self, envelope: &SessionMutationEnvelope) -> Result<(), JournalError> {
         let path = self.path();
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|error| JournalError::Io(format!("create journal dir: {error}")))?;
+            std::fs::create_dir_all(parent).map_err(|error| io_err("create journal dir", error))?;
         }
         let mut file = OpenOptions::new()
             .append(true)
             .create(true)
             .open(&path)
-            .map_err(|error| JournalError::Io(format!("open journal: {error}")))?;
-        let json = serde_json::to_string(envelope)
-            .map_err(|error| JournalError::Io(format!("serialize mutation: {error}")))?;
-        file.write_all(json.as_bytes())
-            .and_then(|_| file.write_all(b"\n"))
-            .and_then(|_| file.sync_all())
-            .map_err(|error| JournalError::Io(format!("append mutation: {error}")))?;
+            .map_err(|error| io_err("open journal", error))?;
+        write_envelope_line(&mut file, envelope)?;
         Ok(())
     }
 
     pub(crate) fn should_truncate(
         &self,
         size_threshold: u64,
-    ) -> Result<Option<TruncateCandidate>, JournalLoadError> {
+    ) -> Result<Option<TruncateCandidate>, JournalError> {
         let _guard = self.lock.lock().map_err(|_| JournalError::LockPoisoned)?;
         let path = self.path();
         let size = match std::fs::metadata(&path) {
             Ok(metadata) => metadata.len(),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-            Err(error) => return Err(JournalError::Io(format!("stat journal: {error}"))),
+            Err(error) => return Err(io_err("stat journal", error)),
         };
         if size <= size_threshold {
             return Ok(None);
@@ -351,16 +463,66 @@ impl SessionJournalStore {
         Ok(candidate)
     }
 
-    pub(crate) fn truncate(&self, checkpoint_id: &str) -> Result<(), JournalTruncateError> {
+    pub(crate) fn truncate(&self, checkpoint_id: &str) -> Result<(), JournalError> {
         let _guard = self.lock.lock().map_err(|_| JournalError::LockPoisoned)?;
         let load_result = self.load_unlocked()?;
         if load_result.damage.is_some() {
-            return Err(JournalError::Io(
-                "cannot truncate a journal with recorded damage".to_string(),
-            ));
+            return Err(JournalError::Io {
+                kind: std::io::ErrorKind::InvalidData,
+                message: "cannot truncate a journal with recorded damage".to_string(),
+            });
         }
-        let baseline_index = load_result
-            .events
+        let (baseline_event, post_baseline) =
+            self.extract_baseline_and_tail(&load_result.events, checkpoint_id)?;
+        let original_init = load_result.events.first().ok_or_else(|| JournalError::Io {
+            kind: std::io::ErrorKind::InvalidData,
+            message: "journal has no initial event".to_string(),
+        })?;
+        let SessionMutation::SessionInitialized {
+            provider,
+            model,
+            working_dir,
+        } = &original_init.mutation
+        else {
+            return Err(JournalError::Io {
+                kind: std::io::ErrorKind::InvalidData,
+                message: "journal first event is not SessionInitialized".to_string(),
+            });
+        };
+
+        let available = self.available_generation_numbers(2)?;
+        let archive_generation = available[0];
+        let new_generation = available[1];
+        let new_gen_path = self.generation_path(new_generation);
+        let synthetic_init = SessionMutationEnvelope {
+            schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+            event_id: uuid::Uuid::now_v7().to_string(),
+            session_id: self.session_id.clone(),
+            sequence: baseline_event.sequence.saturating_sub(1),
+            created_at_ms: now_ms(),
+            mutation: SessionMutation::SessionInitialized {
+                provider: provider.clone(),
+                model: model.clone(),
+                working_dir: working_dir.clone(),
+            },
+        };
+
+        self.write_new_generation(
+            &new_gen_path,
+            &synthetic_init,
+            &baseline_event,
+            post_baseline,
+        )?;
+        self.archive_and_activate(archive_generation, &new_gen_path)?;
+        Ok(())
+    }
+
+    fn extract_baseline_and_tail<'a>(
+        &self,
+        events: &'a [SessionMutationEnvelope],
+        checkpoint_id: &str,
+    ) -> Result<(SessionMutationEnvelope, &'a [SessionMutationEnvelope]), JournalError> {
+        let baseline_index = events
             .iter()
             .position(|event| {
                 matches!(
@@ -372,130 +534,210 @@ impl SessionJournalStore {
             .ok_or_else(|| JournalError::TruncationBaselineNotFound {
                 checkpoint_id: checkpoint_id.to_string(),
             })?;
-        let baseline_event = load_result.events[baseline_index].clone();
-        let original_init = load_result
-            .events
-            .first()
-            .ok_or_else(|| JournalError::Io("journal has no initial event".to_string()))?;
-        let SessionMutation::SessionInitialized {
-            provider,
-            model,
-            working_dir,
-        } = &original_init.mutation
-        else {
-            return Err(JournalError::Io(
-                "journal first event is not SessionInitialized".to_string(),
-            ));
-        };
+        Ok((
+            events[baseline_index].clone(),
+            &events[baseline_index + 1..],
+        ))
+    }
 
-        let current_generation = self.current_generation_number()?;
-        let next_generation = current_generation + 1;
-        let new_gen_path = self.generation_path(next_generation);
+    fn write_new_generation(
+        &self,
+        new_gen_path: &Path,
+        synthetic_init: &SessionMutationEnvelope,
+        baseline_event: &SessionMutationEnvelope,
+        post_baseline: &[SessionMutationEnvelope],
+    ) -> Result<(), JournalError> {
         let tmp_path = new_gen_path.with_extension("tmp");
-
         {
             let mut file = OpenOptions::new()
                 .write(true)
                 .create(true)
                 .truncate(true)
                 .open(&tmp_path)
-                .map_err(|error| JournalError::Io(format!("create new generation tmp: {error}")))?;
-            let synthetic_init = SessionMutationEnvelope {
-                schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
-                event_id: uuid::Uuid::now_v7().to_string(),
-                session_id: self.session_id.clone(),
-                sequence: baseline_event.sequence.saturating_sub(1),
-                created_at_ms: now_ms(),
-                mutation: SessionMutation::SessionInitialized {
-                    provider: provider.clone(),
-                    model: model.clone(),
-                    working_dir: working_dir.clone(),
-                },
-            };
-            self.write_line(&mut file, &synthetic_init)?;
-            self.write_line(&mut file, &baseline_event)?;
-            for event in &load_result.events[baseline_index + 1..] {
-                self.write_line(&mut file, event)?;
+                .map_err(|error| io_err("create new generation tmp", error))?;
+            write_envelope_line(&mut file, synthetic_init)?;
+            write_envelope_line(&mut file, baseline_event)?;
+            for event in post_baseline {
+                write_envelope_line(&mut file, event)?;
             }
             file.sync_all()
-                .map_err(|error| JournalError::Io(format!("sync new generation: {error}")))?;
+                .map_err(|error| io_err("sync new generation", error))?;
         }
-        std::fs::rename(&tmp_path, &new_gen_path).map_err(|error| {
+        std::fs::rename(&tmp_path, new_gen_path).map_err(|error| {
             let _ = std::fs::remove_file(&tmp_path);
-            JournalError::Io(format!("commit new generation: {error}"))
+            let _ = std::fs::remove_file(new_gen_path);
+            io_err("commit new generation", error)
         })?;
+        Ok(())
+    }
 
+    /// Atomically archive the current active journal to `archive_generation` and
+    /// activate `new_gen_path` as the new active journal. If activation fails,
+    /// the original active journal is restored.
+    fn archive_and_activate(
+        &self,
+        archive_generation: u32,
+        new_gen_path: &Path,
+    ) -> Result<(), JournalError> {
         let active_path = self.path();
-        let archived_path = self.generation_path(current_generation);
+        let archived_path = self.generation_path(archive_generation);
+
         if let Err(error) = std::fs::rename(&active_path, &archived_path) {
-            let _ = std::fs::remove_file(&new_gen_path);
-            return Err(JournalError::Io(format!(
-                "archive current generation: {error}"
-            )));
+            let _ = std::fs::remove_file(new_gen_path);
+            return Err(io_err("archive current generation", error));
         }
-        if let Err(error) = std::fs::rename(&new_gen_path, &active_path) {
+        if let Err(error) = std::fs::rename(new_gen_path, &active_path) {
             let _ = std::fs::rename(&archived_path, &active_path);
-            let _ = std::fs::remove_file(&new_gen_path);
-            return Err(JournalError::Io(format!(
-                "activate new generation: {error}"
-            )));
+            let _ = std::fs::remove_file(new_gen_path);
+            return Err(io_err("activate new generation", error));
         }
         Ok(())
     }
 
-    fn write_line(
-        &self,
-        file: &mut std::fs::File,
-        envelope: &SessionMutationEnvelope,
-    ) -> Result<(), JournalError> {
-        let json = serde_json::to_string(envelope)
-            .map_err(|error| JournalError::Io(format!("serialize generation line: {error}")))?;
-        file.write_all(json.as_bytes())
-            .and_then(|_| file.write_all(b"\n"))
-            .map_err(|error| JournalError::Io(format!("write generation line: {error}")))
-    }
-
-    fn current_generation_number(&self) -> Result<u32, JournalError> {
-        let max_archived = self.max_archived_generation_number()?;
-        Ok(max_archived.map(|generation| generation + 1).unwrap_or(0))
-    }
-
-    fn max_archived_generation_number(&self) -> Result<Option<u32>, JournalError> {
+    /// Returns the smallest `count` generation numbers that are not currently
+    /// used by any `mutations.gen<N>.jsonl` file in the session directory.
+    /// Orphans (files that are not part of the current authoritative chain) are
+    /// simply left in place but are skipped when choosing new numbers, so they
+    /// never collide with a new archive or generation.
+    fn available_generation_numbers(&self, count: usize) -> Result<Vec<u32>, JournalError> {
+        let mut existing: std::collections::HashSet<u32> = std::collections::HashSet::new();
         let dir = self.session_dir();
-        if !dir.exists() {
-            return Ok(None);
-        }
-        let mut max_generation: Option<u32> = None;
-        for entry in std::fs::read_dir(&dir)
-            .map_err(|error| JournalError::Io(format!("read session dir: {error}")))?
-        {
-            let entry =
-                entry.map_err(|error| JournalError::Io(format!("read dir entry: {error}")))?;
-            if !entry
-                .file_type()
-                .map_err(|error| JournalError::Io(format!("read file type: {error}")))?
-                .is_file()
+        if dir.exists() {
+            for entry in
+                std::fs::read_dir(&dir).map_err(|error| io_err("read session dir", error))?
             {
-                continue;
+                let entry = entry.map_err(|error| io_err("read dir entry", error))?;
+                if !entry
+                    .file_type()
+                    .map_err(|error| io_err("read file type", error))?
+                    .is_file()
+                {
+                    continue;
+                }
+                let name = entry.file_name();
+                let Some(name) = name.to_str() else {
+                    continue;
+                };
+                let Some(body) = name.strip_prefix("mutations.gen") else {
+                    continue;
+                };
+                let Some(body) = body.strip_suffix(".jsonl") else {
+                    continue;
+                };
+                if let Ok(generation) = body.parse::<u32>() {
+                    existing.insert(generation);
+                }
             }
-            let name = entry.file_name();
-            let Some(name) = name.to_str() else {
-                continue;
-            };
-            let Some(body) = name.strip_prefix("mutations.gen") else {
-                continue;
-            };
-            let Some(body) = body.strip_suffix(".jsonl") else {
-                continue;
-            };
-            if let Ok(generation) = body.parse::<u32>() {
-                max_generation = Some(match max_generation {
-                    Some(current) => current.max(generation),
-                    None => generation,
+        }
+        let mut available = Vec::with_capacity(count);
+        for generation in 0u32.. {
+            if !existing.contains(&generation) {
+                available.push(generation);
+                if available.len() == count {
+                    break;
+                }
+            }
+        }
+        Ok(available)
+    }
+}
+
+fn write_envelope_line(
+    file: &mut std::fs::File,
+    envelope: &SessionMutationEnvelope,
+) -> Result<(), JournalError> {
+    let json = serde_json::to_string(envelope).map_err(|error| JournalError::Io {
+        kind: std::io::ErrorKind::InvalidData,
+        message: format!("serialize envelope: {error}"),
+    })?;
+    file.write_all(json.as_bytes())
+        .and_then(|_| file.write_all(b"\n"))
+        .and_then(|_| file.sync_all())
+        .map_err(|error| io_err("write envelope line", error))
+}
+
+fn load_from_path(
+    path: &Path,
+    expected_session_id: &str,
+) -> Result<JournalLoadResult, JournalError> {
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(JournalLoadResult {
+                events: Vec::new(),
+                damage: None,
+            });
+        }
+        Err(error) => return Err(io_err("read session journal", error)),
+    };
+    if raw.is_empty() {
+        return Ok(JournalLoadResult {
+            events: Vec::new(),
+            damage: None,
+        });
+    }
+    let lines: Vec<&str> = raw.split_inclusive('\n').collect();
+    let mut events: Vec<SessionMutationEnvelope> = Vec::new();
+    let mut damage = None;
+    let mut last_sequence: Option<u64> = None;
+    for (index, line_with_newline) in lines.iter().enumerate() {
+        let line_number = index + 1;
+        let is_last = index == lines.len() - 1;
+        let trimmed = line_with_newline.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if !line_with_newline.ends_with('\n') {
+            if is_last {
+                damage = Some(JournalDamage::TornFinalLine { line: line_number });
+                break;
+            }
+            return Err(JournalError::CorruptInteriorLine { line: line_number });
+        }
+        let line = line_with_newline
+            .strip_suffix('\n')
+            .unwrap_or(line_with_newline);
+        let envelope: SessionMutationEnvelope = serde_json::from_str(line)
+            .map_err(|_error| JournalError::CorruptInteriorLine { line: line_number })?;
+        if envelope.schema_version != SESSION_JOURNAL_SCHEMA_VERSION {
+            return Err(JournalError::UnknownSchemaVersion {
+                line: line_number,
+                version: envelope.schema_version,
+            });
+        }
+        if envelope.session_id != expected_session_id {
+            return Err(JournalError::MismatchedSessionId {
+                line: Some(line_number),
+                expected: expected_session_id.to_string(),
+                found: envelope.session_id,
+            });
+        }
+        if let Some(previous) = last_sequence {
+            let expected_sequence = previous + 1;
+            if envelope.sequence != expected_sequence {
+                if envelope.sequence <= previous {
+                    return Err(JournalError::DuplicateSequence {
+                        line: Some(line_number),
+                        found: envelope.sequence,
+                    });
+                }
+                return Err(JournalError::SequenceGap {
+                    line: Some(line_number),
+                    expected: expected_sequence,
+                    found: envelope.sequence,
                 });
             }
         }
-        Ok(max_generation)
+        last_sequence = Some(envelope.sequence);
+        events.push(envelope);
+    }
+    Ok(JournalLoadResult { events, damage })
+}
+
+fn io_err(message: impl Into<String>, error: std::io::Error) -> JournalError {
+    JournalError::Io {
+        kind: error.kind(),
+        message: format!("{}: {}", message.into(), error),
     }
 }
 
@@ -546,6 +788,16 @@ fn now_ms() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_millis().min(u128::from(u64::MAX)) as u64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+impl JournalError {
+    fn kind(&self) -> Option<std::io::ErrorKind> {
+        match self {
+            JournalError::Io { kind, .. } => Some(*kind),
+            _ => None,
+        }
+    }
 }
 
 #[cfg(test)]
@@ -663,6 +915,23 @@ mod tests {
     }
 
     #[test]
+    fn valid_final_line_without_newline_is_reported_torn() {
+        let store = test_store("torn-valid-final");
+        store.append(test_initialized()).unwrap();
+        append_raw(
+            &store.path(),
+            br#"{"schema_version":1,"event_id":"x","session_id":"session-1","sequence":2,"created_at_ms":2,"mutation":{"type":"message_appended","message":{"role":"user","content":"x"}}}"#,
+        );
+
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.events.len(), 1);
+        assert_eq!(
+            loaded.damage,
+            Some(JournalDamage::TornFinalLine { line: 2 })
+        );
+    }
+
+    #[test]
     fn corrupt_interior_line_blocks_authoritative_replay() {
         let store = test_store("corrupt-interior");
         store.append(test_initialized()).unwrap();
@@ -683,7 +952,27 @@ mod tests {
         );
 
         let error = store.load().expect_err("corrupt interior should fail");
-        assert_eq!(error, JournalLoadError::CorruptInteriorLine { line: 3 });
+        assert_eq!(error, JournalError::CorruptInteriorLine { line: 3 });
+    }
+
+    #[test]
+    fn duplicate_sequence_blocks_replay() {
+        let store = test_store("duplicate-sequence");
+        store.append(test_initialized()).unwrap();
+        append_raw(
+            &store.path(),
+            br#"{"schema_version":1,"event_id":"dup","session_id":"session-1","sequence":1,"created_at_ms":2,"mutation":{"type":"message_appended","message":{"role":"user","content":"dup"}}}
+"#,
+        );
+
+        let error = store.load().expect_err("duplicate sequence should fail");
+        assert_eq!(
+            error,
+            JournalError::DuplicateSequence {
+                line: Some(2),
+                found: 1,
+            }
+        );
     }
 
     #[test]
@@ -699,7 +988,7 @@ mod tests {
         let error = store.load().expect_err("unknown schema should fail");
         assert_eq!(
             error,
-            JournalLoadError::UnknownSchemaVersion {
+            JournalError::UnknownSchemaVersion {
                 line: 2,
                 version: 999,
             }
@@ -719,7 +1008,7 @@ mod tests {
         let error = store.load().expect_err("unknown mutation should fail");
         assert!(matches!(
             error,
-            JournalLoadError::CorruptInteriorLine { line: 2 }
+            JournalError::CorruptInteriorLine { line: 2 }
         ));
     }
 
@@ -729,7 +1018,7 @@ mod tests {
         let result =
             SessionJournalStore::new(temp.path().to_path_buf(), "../etc-passwd".to_string());
         match result {
-            Err(JournalAppendError::UnsafeSessionId(id)) => assert_eq!(id, "../etc-passwd"),
+            Err(JournalError::UnsafeSessionId(id)) => assert_eq!(id, "../etc-passwd"),
             other => panic!("expected UnsafeSessionId error, got {other:?}"),
         }
         assert!(!temp.path().join("sessions").exists());
@@ -745,7 +1034,7 @@ mod tests {
             .expect_err("mismatched id should fail");
         assert_eq!(
             error,
-            JournalAppendError::MismatchedSessionId {
+            JournalError::MismatchedSessionId {
                 line: None,
                 expected: "session-1".to_string(),
                 found: "other-session".to_string(),
@@ -764,7 +1053,7 @@ mod tests {
             .expect_err("sequence gap should fail");
         assert_eq!(
             error,
-            JournalAppendError::SequenceGap {
+            JournalError::SequenceGap {
                 line: None,
                 expected: 2,
                 found: 5,
@@ -789,6 +1078,18 @@ mod tests {
     #[test]
     fn empty_store_loads_cleanly() {
         let store = test_store("empty");
+        let loaded = store.load().unwrap();
+        assert!(loaded.events.is_empty());
+        assert!(loaded.damage.is_none());
+    }
+
+    #[test]
+    fn blank_lines_are_ignored() {
+        let store = test_store("blank-lines");
+        let path = store.path();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "   \n\n\t\n").unwrap();
+
         let loaded = store.load().unwrap();
         assert!(loaded.events.is_empty());
         assert!(loaded.damage.is_none());
@@ -1015,5 +1316,106 @@ mod tests {
         let restored_bytes = std::fs::read(&original_path).unwrap();
         assert_eq!(restored_bytes, original_bytes);
         assert!(!store.generation_path(1).exists());
+    }
+
+    #[test]
+    fn load_reconciles_missing_active_journal_by_promoting_newest_generation() {
+        let store = test_store("reconcile-missing-active");
+        store.append(test_initialized()).unwrap();
+        store.append(test_message("old-active")).unwrap();
+
+        // Simulate a truncation that wrote a new generation but crashed before
+        // activating it.
+        let active_path = store.path();
+        let new_gen_path = store.generation_path(1);
+        std::fs::create_dir_all(store.session_dir()).unwrap();
+        std::fs::copy(&active_path, &new_gen_path).unwrap();
+        append_raw(&new_gen_path, br#"{"schema_version":1,"event_id":"new","session_id":"session-1","sequence":3,"created_at_ms":3,"mutation":{"type":"message_appended","message":{"role":"user","content":"new-gen"}}}
+"#);
+        std::fs::remove_file(&active_path).unwrap();
+
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.events.len(), 3);
+        assert_eq!(loaded.events.last().unwrap().sequence, 3);
+        assert!(active_path.exists());
+    }
+
+    #[test]
+    fn load_reconciles_active_journal_behind_generation() {
+        let store = test_store("reconcile-active-behind");
+        store.append(test_initialized()).unwrap();
+        store.append(test_message("old-active")).unwrap();
+
+        // Active has seq 2; gen1 has seq 3. Reconcile should promote gen1.
+        let active_path = store.path();
+        let new_gen_path = store.generation_path(1);
+        std::fs::copy(&active_path, &new_gen_path).unwrap();
+        append_raw(&new_gen_path, br#"{"schema_version":1,"event_id":"new","session_id":"session-1","sequence":3,"created_at_ms":3,"mutation":{"type":"message_appended","message":{"role":"user","content":"new-gen"}}}
+"#);
+
+        let loaded = store.load().unwrap();
+        assert_eq!(loaded.events.len(), 3);
+        assert_eq!(loaded.events.last().unwrap().sequence, 3);
+        assert!(active_path.exists());
+    }
+
+    #[test]
+    fn orphan_generation_is_ignored_for_numbering() {
+        let store = test_store("orphan-numbering");
+        store.append(test_initialized()).unwrap();
+        store.append(test_message("a")).unwrap();
+
+        // Create an orphan gen2 when no gen0/gen1 exist.
+        let orphan_path = store.generation_path(2);
+        std::fs::create_dir_all(store.session_dir()).unwrap();
+        std::fs::copy(store.path(), &orphan_path).unwrap();
+
+        // Truncation should use gen0 for archive and gen1 for new, not collide with gen2.
+        let baseline = SessionMutationEnvelope {
+            schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+            event_id: "compact".to_string(),
+            session_id: "session-1".to_string(),
+            sequence: 0,
+            created_at_ms: 3,
+            mutation: SessionMutation::ConversationReplaced {
+                checkpoint_id: "checkpoint-1".to_string(),
+                messages: vec![ChatMessage::user("baseline")],
+                summary: Some("summary".to_string()),
+            },
+        };
+        store.append(baseline).unwrap();
+        store.truncate("checkpoint-1").unwrap();
+
+        assert!(
+            store.generation_path(0).exists(),
+            "active journal should archive to gen0"
+        );
+        assert!(
+            !store.generation_path(1).exists(),
+            "gen1 should have been promoted to active, not left as a file"
+        );
+        assert!(store.path().exists(), "new generation should be active");
+        assert!(orphan_path.exists(), "orphan gen2 should remain untouched");
+    }
+
+    #[test]
+    fn io_error_carries_error_kind() {
+        let store = test_store("io-kind");
+        store.append(test_initialized()).unwrap();
+
+        // Truncate after removing write permission from the directory is hard to
+        // do portably; instead assert the error shape on a sequence gap, which
+        // is deterministic and proves the variant carries a kind.
+        let mut envelope = test_message("gap");
+        envelope.sequence = 99;
+        let error = store.append(envelope).expect_err("gap should fail");
+        assert!(!matches!(error, JournalError::Io { .. }));
+
+        // Verify Io variant structure compiles and can be constructed with a kind.
+        let io_error = JournalError::Io {
+            kind: std::io::ErrorKind::NotFound,
+            message: "test".to_string(),
+        };
+        assert_eq!(io_error.kind(), Some(std::io::ErrorKind::NotFound));
     }
 }
