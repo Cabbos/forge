@@ -49,6 +49,9 @@ impl SessionProjection {
     /// - `created_at_ms`/`updated_at_ms` are taken from the first and last event
     ///   timestamps respectively. These are expected to drift from snapshot
     ///   wall-clock times and are ignored by the parity comparator.
+    /// - `schema_version` is set to the current snapshot schema version because
+    ///   the projection always replays into the current format. Parity against
+    ///   legacy schema-0 snapshots is not handled here.
     pub(crate) fn to_snapshot(&self) -> AgentSessionSnapshot {
         let mut snapshot = AgentSessionSnapshot::new(
             self.session_id.clone(),
@@ -165,11 +168,22 @@ fn apply_event(
     Ok(())
 }
 
-/// Compare two snapshots for parity, ignoring only `created_at_ms` and
-/// `updated_at_ms` skew. The journal does not preserve wall-clock timestamps, so
-/// the only normalized fields are those two. All other fields, including
-/// `schema_version`, `messages`, runtime state, and descriptors, must match
-/// exactly.
+/// Compare two snapshots for parity.
+///
+/// Normalization policy: only the TOP-LEVEL `created_at_ms` and `updated_at_ms`
+/// fields are removed before comparison. Nested timestamps inside runtime state
+/// — for example `AgentTurnState.created_at_ms`/`updated_at_ms`,
+/// `GoalState`/`GoalTask` timestamps, `PendingConfirmDescriptor.created_at_ms`,
+/// `ActiveToolCallDescriptor.started_at_ms`, and A2A task/message timestamps —
+/// are compared exactly. This is intentional: the journal captures runtime state
+/// wholesale from `RuntimeStateUpdated` events, so those nested values round-trip
+/// unchanged and must not be pre-normalized by callers.
+///
+/// `schema_version`: this comparator expects both snapshots to be in the current
+/// schema format. The projection's `to_snapshot` always emits the current schema
+/// version. Parity against legacy on-disk snapshots (schema 0) is the caller's
+/// responsibility; Task 5's restore-fallback parity check compares projections
+/// against current-format snapshots only.
 pub(crate) fn snapshots_parity_equivalent(
     left: &AgentSessionSnapshot,
     right: &AgentSessionSnapshot,
@@ -190,9 +204,15 @@ pub(crate) fn snapshots_parity_equivalent(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::a2a::bus::AgentA2ABus;
+    use crate::agent::a2a::types::{AgentExecutionMode, AgentRole};
+    use crate::agent::goal_state::{GoalLedger, GoalStatus};
     use crate::agent::snapshot::{
         ActiveToolCallDescriptor, ActiveToolCallStatus, PendingConfirmDescriptor,
     };
+    use crate::agent::turn_state::{AgentTurnState, AgentTurnStatus};
+    use crate::protocol::events::DeliverySummary;
+    use crate::workflow::{classify_workflow, WorkflowRoute};
 
     fn initialized(sequence: u64) -> SessionMutationEnvelope {
         SessionMutationEnvelope {
@@ -479,5 +499,264 @@ mod tests {
         assert!(snapshots_parity_equivalent(&base, &base));
         assert!(!snapshots_parity_equivalent(&base, &different_messages));
         assert!(!snapshots_parity_equivalent(&base, &different_provider));
+    }
+
+    #[test]
+    fn parity_comparator_detects_identity_and_summary_differences() {
+        let base = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/workspace".to_string(),
+            vec![ChatMessage::user("hello")],
+            Some("summary".to_string()),
+            None,
+        );
+        let different_session_id = AgentSessionSnapshot::new(
+            "session-2".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/workspace".to_string(),
+            vec![ChatMessage::user("hello")],
+            Some("summary".to_string()),
+            None,
+        );
+        let different_model = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-4".to_string(),
+            "/workspace".to_string(),
+            vec![ChatMessage::user("hello")],
+            Some("summary".to_string()),
+            None,
+        );
+        let different_working_dir = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/other".to_string(),
+            vec![ChatMessage::user("hello")],
+            Some("summary".to_string()),
+            None,
+        );
+        let different_summary = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/workspace".to_string(),
+            vec![ChatMessage::user("hello")],
+            Some("other".to_string()),
+            None,
+        );
+
+        assert!(!snapshots_parity_equivalent(&base, &different_session_id));
+        assert!(!snapshots_parity_equivalent(&base, &different_model));
+        assert!(!snapshots_parity_equivalent(&base, &different_working_dir));
+        assert!(!snapshots_parity_equivalent(&base, &different_summary));
+    }
+
+    fn make_turn(turn_id: &str) -> AgentTurnState {
+        let mut turn = AgentTurnState::new(
+            turn_id.to_string(),
+            "session-1".to_string(),
+            "/workspace".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "agent-core".to_string(),
+            "phase-1".to_string(),
+            "Build turn state".to_string(),
+        );
+        turn.mark_status(AgentTurnStatus::Completed);
+        turn.created_at_ms = 0;
+        turn.updated_at_ms = 0;
+        turn.transition_log[0].created_at_ms = 0;
+        turn
+    }
+
+    fn make_workflow(input: &str) -> crate::workflow::WorkflowState {
+        let mut workflow = classify_workflow("session-1", input, 42);
+        workflow.updated_at = 0;
+        workflow
+    }
+
+    fn make_goal(objective: &str) -> GoalLedger {
+        GoalLedger::new_active("goal-1", objective, vec!["Task A".to_string()], 0)
+    }
+
+    fn make_a2a(title: &str) -> AgentA2ABus {
+        let mut bus = AgentA2ABus::default();
+        bus.assign_task(
+            AgentRole::Researcher,
+            AgentExecutionMode::ReadOnly,
+            title,
+            "prompt",
+            0,
+        );
+        bus
+    }
+
+    #[test]
+    fn parity_comparator_detects_runtime_state_differences() {
+        let base = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/workspace".to_string(),
+            vec![ChatMessage::user("hello")],
+            None,
+            None,
+        );
+
+        let different_turn = base.clone().with_latest_turn(make_turn("turn-2"));
+        let different_workflow = base.clone().with_latest_workflow(make_workflow("other"));
+        let different_delivery = base.clone().with_latest_delivery(DeliverySummary {
+            project_path: Some("/workspace".to_string()),
+            preview_label: "different".to_string(),
+            checkpoint_label: "检查点已就绪".to_string(),
+            next_action: "下一步".to_string(),
+            verification_label: None,
+            verification_status: None,
+            verification_command: None,
+            record_label: None,
+            record_status: None,
+            record_target_pages: Vec::new(),
+        });
+        let different_goal = base.clone().with_goal_ledger(make_goal("Other goal"));
+        let different_a2a = base.clone().with_a2a_state(make_a2a("Other task"));
+        let pending = PendingConfirmDescriptor::new(
+            "confirm-1".to_string(),
+            "Question?".to_string(),
+            "ask_user".to_string(),
+            0,
+        );
+        let different_pending = base.clone().with_pending_confirms(vec![pending]);
+        let active = ActiveToolCallDescriptor::new(
+            "tool-1".to_string(),
+            "read_file".to_string(),
+            serde_json::json!({"path": "x"}),
+            0,
+        );
+        let different_active = base.clone().with_active_tool_calls(vec![active]);
+
+        assert!(!snapshots_parity_equivalent(&base, &different_turn));
+        assert!(!snapshots_parity_equivalent(&base, &different_workflow));
+        assert!(!snapshots_parity_equivalent(&base, &different_delivery));
+        assert!(!snapshots_parity_equivalent(&base, &different_goal));
+        assert!(!snapshots_parity_equivalent(&base, &different_a2a));
+        assert!(!snapshots_parity_equivalent(&base, &different_pending));
+        assert!(!snapshots_parity_equivalent(&base, &different_active));
+    }
+
+    #[test]
+    fn to_snapshot_maps_all_runtime_fields() {
+        let turn = make_turn("turn-1");
+        let workflow = make_workflow("实现功能");
+        let delivery = DeliverySummary {
+            project_path: Some("/workspace".to_string()),
+            preview_label: "预览运行中".to_string(),
+            checkpoint_label: "检查点已就绪".to_string(),
+            next_action: "下一步".to_string(),
+            verification_label: Some("检查已通过".to_string()),
+            verification_status: Some("passed".to_string()),
+            verification_command: Some("npm run build".to_string()),
+            record_label: Some("建议更新项目记录".to_string()),
+            record_status: Some("pending".to_string()),
+            record_target_pages: vec!["tasks.md".to_string()],
+        };
+        let goal = make_goal("Ship feature");
+        let a2a = make_a2a("调研 A2A");
+
+        let runtime_state = SessionRuntimeState {
+            latest_turn: Some(turn.clone()),
+            latest_workflow: Some(workflow.clone()),
+            latest_delivery: Some(delivery.clone()),
+            goal_ledger: Some(goal.clone()),
+            a2a_state: Some(a2a.clone()),
+            pending_confirms: Vec::new(),
+            active_tool_calls: Vec::new(),
+        };
+        let events = vec![initialized(1), runtime(2, runtime_state)];
+        let projection = SessionProjection::from_events(&events).unwrap();
+        let from_projection = projection.to_snapshot();
+
+        let mut expected = AgentSessionSnapshot::new(
+            "session-1".to_string(),
+            "openai".to_string(),
+            "gpt-5".to_string(),
+            "/workspace".to_string(),
+            Vec::new(),
+            None,
+            None,
+        )
+        .with_latest_turn(turn)
+        .with_latest_workflow(workflow)
+        .with_latest_delivery(delivery)
+        .with_goal_ledger(goal)
+        .with_a2a_state(a2a);
+        expected.created_at_ms = projection.created_at_ms;
+        expected.updated_at_ms = projection.updated_at_ms;
+
+        assert!(
+            snapshots_parity_equivalent(&from_projection, &expected),
+            "all runtime fields should map from projection to snapshot"
+        );
+        assert!(matches!(
+            from_projection.latest_workflow.as_ref().unwrap().route,
+            WorkflowRoute::Workflow | WorkflowRoute::Direct | WorkflowRoute::Recovery
+        ));
+        assert_eq!(
+            from_projection
+                .goal_ledger
+                .as_ref()
+                .unwrap()
+                .current_goal()
+                .unwrap()
+                .status,
+            GoalStatus::Active
+        );
+    }
+
+    #[test]
+    fn runtime_state_survives_conversation_replacement() {
+        let runtime_state = runtime_with_pending("keep");
+        let events = vec![
+            initialized(1),
+            runtime(2, runtime_state.clone()),
+            replaced(
+                3,
+                "checkpoint-1",
+                vec![ChatMessage::user("retained")],
+                Some("summary"),
+            ),
+        ];
+
+        let projection = SessionProjection::from_events(&events).unwrap();
+
+        assert_eq!(projection.messages.len(), 1);
+        assert_eq!(
+            projection.messages[0].content,
+            serde_json::json!("retained")
+        );
+        assert_eq!(projection.summary.as_deref(), Some("summary"));
+        assert_eq!(projection.runtime.pending_confirms.len(), 1);
+        assert_eq!(projection.runtime.pending_confirms[0].question, "keep");
+        assert_eq!(projection.last_sequence, 3);
+    }
+
+    #[test]
+    fn multiple_consecutive_conversation_replacements() {
+        let events = vec![
+            initialized(1),
+            replaced(2, "cp-1", vec![ChatMessage::user("one")], Some("first")),
+            replaced(3, "cp-2", vec![ChatMessage::user("two")], None),
+            replaced(4, "cp-3", vec![ChatMessage::user("three")], Some("third")),
+        ];
+
+        let projection = SessionProjection::from_events(&events).unwrap();
+
+        assert_eq!(projection.messages.len(), 1);
+        assert_eq!(projection.messages[0].content, serde_json::json!("three"));
+        assert_eq!(projection.summary.as_deref(), Some("third"));
+        assert_eq!(projection.last_sequence, 4);
     }
 }
