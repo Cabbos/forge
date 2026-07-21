@@ -1,5 +1,10 @@
 import { test, expect } from "@playwright/test";
-import { setup } from "./fixtures/app";
+import {
+  journalParityDiagnosticsReport,
+  journalRecoveredSessionSummary,
+  journalRecoveryTranscriptEvents,
+  setup,
+} from "./fixtures/app";
 import { simulateStream } from "./mock-ipc";
 
 async function resolveCssColor(locator: import("@playwright/test").Locator, variable: string) {
@@ -2700,5 +2705,58 @@ test.describe("Phase 7 acceptance surfaces", () => {
     const usageTask = panel.getByRole("region", { name: "子任务 Runtime usage auditor" });
     await expect(usageTask.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("input 3200 / output unknown / cost unknown");
     await expect(usageTask.locator(".forge-a2a-runtime-facts", { hasText: "用量" })).toContainText("pricing unknown");
+  });
+
+  test("journal-backed session recovery surfaces history, restored conversation, recovery notice, and healthy parity diagnostics", async ({ page }) => {
+    const sessionId = "acceptance-journal-recovery-session";
+    const summary = journalRecoveredSessionSummary(sessionId);
+    const streamEvents = journalRecoveryTranscriptEvents(sessionId);
+
+    await page.evaluate(
+      ({ summary, streamEvents, diagnosticsReport }) => {
+        // @ts-expect-error acceptance mock
+        window.__mockSessionStoreSearchResults = [summary];
+        // @ts-expect-error acceptance mock
+        window.__mockResumeStreamEvents = streamEvents;
+        // @ts-expect-error acceptance mock
+        window.__mockDiagnosticsReport = diagnosticsReport;
+      },
+      {
+        summary,
+        streamEvents,
+        diagnosticsReport: journalParityDiagnosticsReport(),
+      },
+    );
+
+    await page.getByRole("button", { name: "历史" }).click();
+    const historyDialog = page.getByRole("dialog", { name: "历史" });
+    await expect(historyDialog).toBeVisible();
+
+    const result = historyDialog
+      .locator(".forge-history-result")
+      .filter({ hasText: "Journal recovery acceptance session" });
+    await expect(result).toBeVisible();
+    await expect(result).toContainText("deepseek/deepseek-v4-flash[1m]");
+
+    await result.getByRole("button", { name: `恢复 ${sessionId}` }).click();
+    await expect(historyDialog).toHaveCount(0);
+
+    const notice = page.getByTestId(`recovery-notice-notice-snapshot-recovered-from-journal-${sessionId}`);
+    await expect(notice).toBeVisible();
+    await expect(notice).toContainText("Session recovered from durable history");
+    await expect(notice).toContainText("durable session journal");
+
+    await expect(page.getByTestId("user-message").filter({ hasText: "What did we build yesterday?" })).toBeVisible();
+    await expect(
+      page.getByTestId("assistant-message").filter({ hasText: "We built the journal-backed session recovery flow." }),
+    ).toBeVisible();
+
+    await page.getByRole("button", { name: "设置" }).click();
+    const settingsDialog = page.getByRole("dialog");
+    await settingsDialog.getByRole("button", { name: "诊断" }).click();
+    await expect(settingsDialog.getByRole("heading", { name: "诊断", exact: true })).toBeVisible();
+    await expect(settingsDialog).toContainText("Session journal parity");
+    await expect(settingsDialog).toContainText("session_journal_parity");
+    await expect(settingsDialog).toContainText("1 healthy parity");
   });
 });
