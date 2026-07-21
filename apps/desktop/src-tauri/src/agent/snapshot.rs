@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -247,6 +248,32 @@ pub fn save_session_snapshot(snapshot: &AgentSessionSnapshot) -> Result<(), Stri
     save_session_snapshot_at(&app_data_dir(), snapshot)
 }
 
+fn atomic_write_json(path: &Path, bytes: &[u8]) -> Result<(), String> {
+    let tmp = path.with_extension("tmp");
+    let mut file = fs::File::create(&tmp)
+        .map_err(|e| format!("create snapshot tmp '{}': {e}", tmp.display()))?;
+    if let Err(e) = file.write_all(bytes).and_then(|_| file.sync_all()) {
+        // Best-effort cleanup: don't leave a partial tmp file behind.
+        let _ = fs::remove_file(&tmp);
+        return Err(format!("flush snapshot tmp '{}': {e}", tmp.display()));
+    }
+    if let Err(e) = fs::rename(&tmp, path) {
+        // Best-effort cleanup: the tmp file is no longer useful.
+        let _ = fs::remove_file(&tmp);
+        return Err(format!(
+            "replace session snapshot '{}': {e}",
+            path.display()
+        ));
+    }
+    // Best-effort sync of the parent directory so the new directory entry is
+    // durable. Directory sync is not supported on every platform, so errors are
+    // intentionally ignored.
+    if let Some(parent) = path.parent() {
+        let _ = fs::File::open(parent).and_then(|dir| dir.sync_all());
+    }
+    Ok(())
+}
+
 fn save_session_snapshot_at(
     root: &std::path::Path,
     snapshot: &AgentSessionSnapshot,
@@ -266,7 +293,8 @@ fn save_session_snapshot_at(
     }
     let json = serde_json::to_string_pretty(&snapshot)
         .map_err(|e| format!("Failed to serialize session snapshot: {e}"))?;
-    fs::write(&path, json).map_err(|e| format!("Failed to write session snapshot: {e}"))?;
+    atomic_write_json(&path, json.as_bytes())
+        .map_err(|e| format!("Failed to write session snapshot: {e}"))?;
     sync_a2a_ledger_at(root, &snapshot)?;
     Ok(())
 }
@@ -841,6 +869,89 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["session-1"]
         );
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_json_replaces_existing_snapshot_and_removes_tmp() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-atomic-replace-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let path = root.join("sessions").join("session-1.json");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, br#"{"summary":"first"}"#).unwrap();
+
+        atomic_write_json(&path, br#"{"summary":"second"}"#).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(&path).unwrap(),
+            r#"{"summary":"second"}"#
+        );
+        assert!(!path.with_extension("tmp").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn atomic_write_json_cleans_up_tmp_on_rename_failure() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-atomic-cleanup-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).unwrap();
+        let path = sessions_dir.join("session-1.json");
+        // Create a directory at the destination path so the rename fails.
+        fs::create_dir(&path).unwrap();
+
+        let result = atomic_write_json(&path, br#"{"summary":"second"}"#);
+
+        assert!(
+            result.is_err(),
+            "rename should fail when destination is a directory"
+        );
+        assert!(
+            !path.with_extension("tmp").exists(),
+            "tmp file should be cleaned up after failed rename"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn snapshot_listing_ignores_tmp_and_backup_files() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-list-tmp-bak-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        let mut valid = snapshot();
+        valid.session_id = "session-1".to_string();
+        valid.updated_at_ms = 20;
+        fs::write(
+            sessions_dir.join("session-1.json"),
+            serde_json::to_string(&valid).expect("valid json"),
+        )
+        .expect("write valid");
+
+        fs::write(sessions_dir.join("session-1.tmp"), "partial").expect("write tmp");
+        fs::write(sessions_dir.join("session-1.bak"), "backup").expect("write bak");
+
+        let listed = list_session_snapshots_from_dir(&root).expect("list snapshots");
+
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].session_id, "session-1");
 
         let _ = fs::remove_dir_all(root);
     }
