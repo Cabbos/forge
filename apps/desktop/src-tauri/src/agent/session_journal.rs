@@ -423,6 +423,32 @@ impl SessionJournalStore {
         Ok(())
     }
 
+    /// Quarantine the active journal by renaming it aside to the next
+    /// available generation file, returning the quarantined path. Used when
+    /// the active journal has a corrupt interior line (or otherwise cannot
+    /// replay): repair never rewrites data in place, so the corrupt file is
+    /// preserved as a generation and the next append starts a fresh
+    /// `mutations.jsonl`. A quarantined file is never promoted back to active
+    /// — `reconcile` skips candidates that fail to load.
+    ///
+    /// Note: appends to a corrupt-interior journal keep failing until a
+    /// quarantine happens (the append path refuses to replay damaged state),
+    /// so the restore path calls this as soon as the selector decides the
+    /// journal is unusable.
+    pub(crate) fn quarantine_active(&self) -> Result<Option<PathBuf>, JournalError> {
+        let _guard = self.lock.lock().map_err(|_| JournalError::LockPoisoned)?;
+        let active_path = self.path();
+        if !active_path.exists() {
+            return Ok(None);
+        }
+        let generation = self.available_generation_numbers(1)?[0];
+        let quarantined_path = self.generation_path(generation);
+        std::fs::rename(&active_path, &quarantined_path)
+            .map_err(|error| io_err("quarantine active journal", error))?;
+        self.last_sequence.store(0, Ordering::SeqCst);
+        Ok(Some(quarantined_path))
+    }
+
     fn append_prepared(&self, envelope: &SessionMutationEnvelope) -> Result<(), JournalError> {
         let path = self.path();
         if let Some(parent) = path.parent() {
@@ -1401,6 +1427,44 @@ mod tests {
         );
         assert!(store.path().exists(), "new generation should be active");
         assert!(orphan_path.exists(), "orphan gen2 should remain untouched");
+    }
+
+    #[test]
+    fn quarantine_active_archives_corrupt_journal_and_next_append_starts_fresh() {
+        let store = test_store("quarantine");
+        store.append(test_initialized()).unwrap();
+        append_raw(&store.path(), b"this is not json\n");
+        assert!(matches!(
+            store.load(),
+            Err(JournalError::CorruptInteriorLine { .. })
+        ));
+
+        let quarantined = store
+            .quarantine_active()
+            .expect("quarantine")
+            .expect("quarantined path");
+        assert!(
+            quarantined.exists(),
+            "corrupt data is preserved, not deleted"
+        );
+        assert!(!store.path().exists(), "active journal moved aside");
+
+        // Reconcile must never promote the corrupt generation back to active.
+        let loaded = store.load().expect("load after quarantine");
+        assert!(loaded.events.is_empty());
+        assert!(!store.path().exists());
+
+        // The next append starts a fresh journal from sequence 1.
+        store.append(test_initialized()).expect("fresh append");
+        let loaded = store.load().expect("reload");
+        assert_eq!(loaded.events.len(), 1);
+        assert_eq!(loaded.events[0].sequence, 1);
+    }
+
+    #[test]
+    fn quarantine_active_without_journal_is_noop() {
+        let store = test_store("quarantine-noop");
+        assert!(store.quarantine_active().expect("quarantine").is_none());
     }
 
     #[test]

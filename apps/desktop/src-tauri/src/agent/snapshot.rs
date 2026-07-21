@@ -54,6 +54,17 @@ pub struct AgentSessionSnapshot {
     pub pending_confirms: Vec<PendingConfirmDescriptor>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub active_tool_calls: Vec<ActiveToolCallDescriptor>,
+    /// Name of the journal file (`mutations.jsonl`) the recorded sequence was
+    /// read from. Informational only — journal sequences are
+    /// generation-independent (truncation preserves sequence numbers across
+    /// generation promotion), so the restore selector never compares this.
+    #[serde(default)]
+    pub journal_generation: Option<String>,
+    /// Journal sequence captured when this snapshot was written. `0` means
+    /// "no metadata" (legacy snapshots and snapshots written before the
+    /// mutation journal existed) and never counts as "behind" on its own.
+    #[serde(default)]
+    pub journal_sequence: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -192,6 +203,8 @@ impl AgentSessionSnapshot {
             schema_version: CURRENT_SNAPSHOT_SCHEMA_VERSION,
             pending_confirms: Vec::new(),
             active_tool_calls: Vec::new(),
+            journal_generation: None,
+            journal_sequence: 0,
         }
     }
 
@@ -301,6 +314,40 @@ fn save_session_snapshot_at(
 
 pub fn load_session_snapshot(session_id: &str) -> Result<AgentSessionSnapshot, String> {
     load_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+/// Typed snapshot load failure for the restore selector. A missing snapshot
+/// file is NOT a failure — it is reported as `Ok(None)` so the selector can
+/// distinguish "no snapshot was ever written" from "a snapshot exists but is
+/// unusable".
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SnapshotLoadFailure {
+    /// The file exists but could not be read, parsed, or validated (unsafe or
+    /// mismatched session id, corrupted JSON, I/O error).
+    Corrupt { reason: String },
+}
+
+/// Load a snapshot, distinguishing missing (`Ok(None)`) from unusable
+/// (`Err(SnapshotLoadFailure)`). Used by the journal-backed restore selector
+/// and the parity diagnostics scan.
+pub(crate) fn try_load_session_snapshot(
+    session_id: &str,
+) -> Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure> {
+    try_load_session_snapshot_at(&app_data_dir(), session_id)
+}
+
+pub(crate) fn try_load_session_snapshot_at(
+    root: &std::path::Path,
+    session_id: &str,
+) -> Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure> {
+    let path = snapshot_path_at(root, session_id)
+        .map_err(|reason| SnapshotLoadFailure::Corrupt { reason })?;
+    if !path.exists() {
+        return Ok(None);
+    }
+    load_session_snapshot_at(root, session_id)
+        .map(Some)
+        .map_err(|reason| SnapshotLoadFailure::Corrupt { reason })
 }
 
 fn load_session_snapshot_at(
@@ -1719,6 +1766,60 @@ mod tests {
 
         assert!(restored.pending_confirms.is_empty());
         assert!(restored.active_tool_calls.is_empty());
+    }
+
+    #[test]
+    fn legacy_snapshot_deserializes_with_zero_journal_sequence() {
+        let json = r#"{
+            "session_id": "session-1",
+            "provider": "openai",
+            "model": "gpt-5",
+            "working_dir": "/workspace",
+            "messages": [],
+            "summary": null,
+            "context_window_tokens": null,
+            "updated_at_ms": 123
+        }"#;
+
+        let restored: AgentSessionSnapshot =
+            serde_json::from_str(json).expect("legacy snapshot should deserialize");
+
+        assert_eq!(restored.journal_sequence, 0);
+        assert!(restored.journal_generation.is_none());
+    }
+
+    #[test]
+    fn try_load_session_snapshot_distinguishes_missing_from_corrupt() {
+        let root = std::env::temp_dir().join(format!(
+            "forge-snapshot-typed-load-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        let sessions_dir = root.join("sessions");
+        fs::create_dir_all(&sessions_dir).expect("sessions dir");
+
+        // Missing file → Ok(None).
+        let missing = try_load_session_snapshot_at(&root, "missing-session")
+            .expect("missing is not an error");
+        assert!(missing.is_none());
+
+        // Unparseable file → Err(Corrupt).
+        fs::write(sessions_dir.join("corrupt-session.json"), "{").expect("write corrupt");
+        let error = try_load_session_snapshot_at(&root, "corrupt-session")
+            .expect_err("corrupt snapshot should fail");
+        assert!(matches!(error, SnapshotLoadFailure::Corrupt { .. }));
+
+        // Valid file → Ok(Some).
+        save_session_snapshot_at(&root, &snapshot()).expect("save snapshot");
+        let loaded = try_load_session_snapshot_at(&root, "session-1")
+            .expect("valid snapshot should load")
+            .expect("snapshot present");
+        assert_eq!(loaded.session_id, "session-1");
+        assert_eq!(loaded.journal_sequence, 0);
+
+        let _ = fs::remove_dir_all(root);
     }
 
     // ── Phase 1.8: Agent snapshot shape roundtrip ──────────────────────

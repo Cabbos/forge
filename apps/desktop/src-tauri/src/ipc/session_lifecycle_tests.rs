@@ -713,3 +713,323 @@ async fn restore_session_from_snapshot_normalizes_provider_alias() {
     let _ = delete_session_snapshot(&session_id);
     let _ = std::fs::remove_dir_all(workspace);
 }
+
+// ── Task 5: journal-backed restore selection matrix ──
+
+use crate::adapters::base::ChatMessage;
+use crate::agent::session_journal::{
+    JournalDamage, JournalError, SessionMutation, SessionMutationEnvelope,
+    SESSION_JOURNAL_SCHEMA_VERSION,
+};
+use crate::agent::session_projection::SessionProjection;
+use crate::agent::snapshot::SnapshotLoadFailure;
+use crate::ipc::session_lifecycle::{
+    choose_session_restore_source, SessionJournalLoad, SessionParityStatus, SessionRestoreNotice,
+    SessionRestoreSource,
+};
+
+fn journal_init_event(session_id: &str, sequence: u64) -> SessionMutationEnvelope {
+    SessionMutationEnvelope {
+        schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+        event_id: format!("init-{sequence}"),
+        session_id: session_id.to_string(),
+        sequence,
+        created_at_ms: sequence,
+        mutation: SessionMutation::SessionInitialized {
+            provider: "deepseek".to_string(),
+            model: "deepseek-chat".to_string(),
+            working_dir: "/tmp/workspace".to_string(),
+        },
+    }
+}
+
+fn journal_message_event(session_id: &str, sequence: u64, text: &str) -> SessionMutationEnvelope {
+    SessionMutationEnvelope {
+        schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+        event_id: format!("msg-{sequence}"),
+        session_id: session_id.to_string(),
+        sequence,
+        created_at_ms: sequence,
+        mutation: SessionMutation::MessageAppended {
+            message: ChatMessage::user(text),
+        },
+    }
+}
+
+/// A journal with one init event (sequence 1) plus one message per text,
+/// so `texts.len() + 1` is the last sequence.
+fn journal_events(session_id: &str, texts: &[&str]) -> Vec<SessionMutationEnvelope> {
+    let mut events = vec![journal_init_event(session_id, 1)];
+    for (index, text) in texts.iter().enumerate() {
+        events.push(journal_message_event(session_id, (index + 2) as u64, text));
+    }
+    events
+}
+
+fn journal_load(events: Vec<SessionMutationEnvelope>, torn_final_line: bool) -> SessionJournalLoad {
+    SessionJournalLoad {
+        damage: torn_final_line.then_some(JournalDamage::TornFinalLine { line: 99 }),
+        events,
+    }
+}
+
+fn projection_snapshot(events: &[SessionMutationEnvelope]) -> AgentSessionSnapshot {
+    SessionProjection::from_events(events)
+        .expect("projection")
+        .to_snapshot()
+}
+
+fn corrupt_snapshot() -> Result<Option<AgentSessionSnapshot>, SnapshotLoadFailure> {
+    Err(SnapshotLoadFailure::Corrupt {
+        reason: "invalid JSON".to_string(),
+    })
+}
+
+fn corrupt_interior_journal() -> Result<Option<SessionJournalLoad>, JournalError> {
+    Err(JournalError::CorruptInteriorLine { line: 3 })
+}
+
+fn message_texts(snapshot: &AgentSessionSnapshot) -> Vec<String> {
+    snapshot
+        .messages
+        .iter()
+        .filter_map(|message| message.content.as_str().map(String::from))
+        .collect()
+}
+
+// Row 1: valid snapshot at the same sequence as a valid journal restores the
+// snapshot with healthy parity. Fields the journal never captures
+// (latest_workflow, latest_delivery, pending_confirms, active_tool_calls,
+// context_window_tokens) must not break parity.
+#[test]
+fn restore_selector_same_sequence_snapshot_wins_with_healthy_parity() {
+    let events = journal_events("session-1", &["hello", "world"]);
+    let mut snapshot = projection_snapshot(&events);
+    snapshot.journal_sequence = 3;
+    snapshot.context_window_tokens = Some(128_000);
+    snapshot.pending_confirms = vec![PendingConfirmDescriptor::new(
+        "confirm-1".to_string(),
+        "Allow write?".to_string(),
+        "file_write".to_string(),
+        42,
+    )];
+    snapshot.active_tool_calls = vec![ActiveToolCallDescriptor::new(
+        "tool-1".to_string(),
+        "read_file".to_string(),
+        serde_json::json!({"path": "x"}),
+        100,
+    )];
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::Healthy);
+    assert!(decision.notices.is_empty());
+    let payload = decision.snapshot.expect("snapshot payload");
+    assert_eq!(message_texts(&payload), vec!["hello", "world"]);
+}
+
+// Row 2: valid snapshot behind the journal restores the journal projection.
+#[test]
+fn restore_selector_snapshot_behind_uses_journal_projection() {
+    let events = journal_events("session-1", &["hello", "world"]);
+    let mut snapshot = projection_snapshot(&events[..2]); // only "hello"
+    snapshot.journal_sequence = 1; // recorded before the last two appends
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::JournalProjection);
+    assert_eq!(decision.parity, SessionParityStatus::SnapshotBehind);
+    assert!(decision.notices.is_empty());
+    let payload = decision.snapshot.expect("journal projection payload");
+    assert_eq!(message_texts(&payload), vec!["hello", "world"]);
+    assert_eq!(payload.journal_sequence, 3);
+}
+
+// Row 3: missing snapshot with a valid journal restores the journal projection.
+#[test]
+fn restore_selector_missing_snapshot_uses_journal_projection() {
+    let events = journal_events("session-1", &["hello"]);
+
+    let decision = choose_session_restore_source(Ok(None), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::JournalProjection);
+    assert_eq!(decision.parity, SessionParityStatus::JournalOnly);
+    assert!(decision.notices.is_empty());
+    let payload = decision.snapshot.expect("journal projection payload");
+    assert_eq!(message_texts(&payload), vec!["hello"]);
+}
+
+// Row 4: corrupt snapshot with a valid journal restores the journal projection
+// and surfaces a recovery notice.
+#[test]
+fn restore_selector_corrupt_snapshot_uses_journal_with_recovery_notice() {
+    let events = journal_events("session-1", &["hello"]);
+
+    let decision =
+        choose_session_restore_source(corrupt_snapshot(), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::JournalProjection);
+    assert_eq!(decision.parity, SessionParityStatus::JournalOnly);
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::SnapshotRecoveredFromJournal));
+    let payload = decision.snapshot.expect("journal projection payload");
+    assert_eq!(message_texts(&payload), vec!["hello"]);
+}
+
+// Row 5: valid snapshot with a corrupt-interior journal restores the snapshot
+// and quarantines the journal.
+#[test]
+fn restore_selector_corrupt_interior_journal_keeps_snapshot_and_quarantines() {
+    let snapshot = snapshot_with("session-1", 100);
+
+    let decision = choose_session_restore_source(Ok(Some(snapshot)), corrupt_interior_journal());
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::CorruptInterior);
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalQuarantined));
+    assert!(decision.snapshot.is_some());
+}
+
+// Row 6: corrupt snapshot AND corrupt-interior journal leaves nothing durable —
+// start fresh with a recovery notice.
+#[test]
+fn restore_selector_corrupt_snapshot_and_journal_starts_fresh_with_notice() {
+    let decision = choose_session_restore_source(corrupt_snapshot(), corrupt_interior_journal());
+
+    assert_eq!(decision.source, SessionRestoreSource::Fresh);
+    assert_eq!(decision.parity, SessionParityStatus::CorruptInterior);
+    assert!(decision.snapshot.is_none());
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalQuarantined));
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::RestoreFailedFreshStart));
+}
+
+// Row 7a: valid snapshot behind a journal with a torn final line restores the
+// journal's valid prefix, with a warning.
+#[test]
+fn restore_selector_torn_final_journal_newer_than_snapshot_uses_prefix_with_warning() {
+    let events = journal_events("session-1", &["hello", "world"]);
+    let mut snapshot = projection_snapshot(&events[..2]);
+    snapshot.journal_sequence = 1;
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, true))));
+
+    assert_eq!(decision.source, SessionRestoreSource::JournalProjection);
+    assert_eq!(decision.parity, SessionParityStatus::TornFinalLine);
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalTornFinalLine));
+    let payload = decision.snapshot.expect("journal prefix payload");
+    assert_eq!(message_texts(&payload), vec!["hello", "world"]);
+}
+
+// Row 7b: valid snapshot NOT behind a torn journal keeps the snapshot, with a
+// warning.
+#[test]
+fn restore_selector_torn_final_journal_not_newer_keeps_snapshot_with_warning() {
+    let events = journal_events("session-1", &["hello"]);
+    let mut snapshot = projection_snapshot(&events);
+    snapshot.journal_sequence = 2; // same as the journal's last sequence
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, true))));
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::TornFinalLine);
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalTornFinalLine));
+    assert!(decision.snapshot.is_some());
+}
+
+// Legacy snapshots (no journal sequence metadata) are never treated as behind:
+// the snapshot wins and parity is decided by content comparison.
+#[test]
+fn restore_selector_legacy_snapshot_with_matching_journal_is_healthy() {
+    let events = journal_events("session-1", &["hello"]);
+    let snapshot = projection_snapshot(&events); // journal_sequence defaults to 0
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::Healthy);
+    assert!(decision.notices.is_empty());
+}
+
+// A legacy snapshot whose content diverges from the journal (e.g. the known
+// repair_message_history parity gap) still wins, reported as diverged — never
+// treated as corrupt.
+#[test]
+fn restore_selector_legacy_snapshot_diverging_from_journal_reports_diverged() {
+    let events = journal_events("session-1", &["hello", "repaired-away"]);
+    let mut snapshot = projection_snapshot(&events[..2]); // only "hello"
+    snapshot.journal_sequence = 0;
+
+    let decision =
+        choose_session_restore_source(Ok(Some(snapshot)), Ok(Some(journal_load(events, false))));
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::Diverged);
+    assert!(decision.notices.is_empty());
+}
+
+#[test]
+fn restore_selector_valid_snapshot_without_journal_is_snapshot_only() {
+    let snapshot = snapshot_with("session-1", 100);
+
+    let decision = choose_session_restore_source(Ok(Some(snapshot)), Ok(None));
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::SnapshotOnly);
+    assert!(decision.notices.is_empty());
+}
+
+#[test]
+fn restore_selector_nothing_durable_starts_fresh_without_notices() {
+    let decision = choose_session_restore_source(Ok(None), Ok(None));
+
+    assert_eq!(decision.source, SessionRestoreSource::Fresh);
+    assert!(decision.snapshot.is_none());
+    assert!(decision.notices.is_empty());
+}
+
+#[test]
+fn restore_selector_corrupt_snapshot_without_journal_starts_fresh_with_notice() {
+    let decision = choose_session_restore_source(corrupt_snapshot(), Ok(None));
+
+    assert_eq!(decision.source, SessionRestoreSource::Fresh);
+    assert!(decision.snapshot.is_none());
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::RestoreFailedFreshStart));
+}
+
+// A journal whose events cannot form a projection (no init event) is
+// quarantined like a corrupt-interior journal.
+#[test]
+fn restore_selector_journal_without_init_event_is_quarantined() {
+    let orphan_events = vec![journal_message_event("session-1", 1, "orphan")];
+    let snapshot = snapshot_with("session-1", 100);
+
+    let decision = choose_session_restore_source(
+        Ok(Some(snapshot)),
+        Ok(Some(journal_load(orphan_events, false))),
+    );
+
+    assert_eq!(decision.source, SessionRestoreSource::Snapshot);
+    assert_eq!(decision.parity, SessionParityStatus::CorruptInterior);
+    assert!(decision
+        .notices
+        .contains(&SessionRestoreNotice::JournalQuarantined));
+}

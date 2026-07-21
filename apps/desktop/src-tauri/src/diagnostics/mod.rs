@@ -138,6 +138,7 @@ pub fn run_diagnostics_with_store(
     let checks: Vec<DiagnosticCheck> = vec![
         check_config_key_presence_with_store(store),
         check_session_snapshots(),
+        check_session_journal_parity(),
         check_a2a_ledgers(),
         check_app_metadata(),
         check_log_directory(),
@@ -832,6 +833,170 @@ pub fn check_project_runtime() -> DiagnosticCheck {
     }
 }
 
+// ── Session journal parity summary (Task 5) ────────────────────────────────
+
+/// Aggregate restore-parity counts over every durable session (snapshot
+/// and/or mutation journal). Counts ONLY — conversation body text never
+/// appears here.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionJournalParitySummary {
+    pub sessions_scanned: u64,
+    /// Snapshot and journal agree (or a legacy snapshot matches journal
+    /// content).
+    pub healthy_parity: u64,
+    /// Same recorded sequence but content differs — today only reachable via
+    /// the known `repair_message_history` parity gap, so it is reported, not
+    /// alarmed on.
+    pub diverged: u64,
+    /// Journal committed events beyond the snapshot's recorded sequence.
+    pub snapshot_behind: u64,
+    /// Sessions with a snapshot but no journal events.
+    pub snapshot_only: u64,
+    /// Sessions restorable only from the journal (snapshot missing/corrupt).
+    pub journal_only: u64,
+    /// Journals with a torn final line (interrupted append).
+    pub torn_final_line: u64,
+    /// Journals with a corrupt interior line or unreplayable events.
+    pub corrupt_interior: u64,
+    /// Journals the restore selector quarantined.
+    pub quarantined: u64,
+}
+
+/// Scan every durable session under `~/.forge` and classify its restore
+/// parity. Read-only: the selector is pure and quarantine renames only happen
+/// in the restore path, never in diagnostics.
+pub fn session_journal_parity_summary() -> SessionJournalParitySummary {
+    session_journal_parity_summary_at(&forge_data_dir())
+}
+
+fn session_journal_parity_summary_at(root: &Path) -> SessionJournalParitySummary {
+    use crate::agent::session_journal::SessionJournalStore;
+    use crate::agent::snapshot::try_load_session_snapshot_at;
+    use crate::ipc::session_lifecycle::{
+        choose_session_restore_source, SessionJournalLoad, SessionParityStatus,
+        SessionRestoreNotice,
+    };
+
+    let mut summary = SessionJournalParitySummary::default();
+    for session_id in durable_session_ids(root) {
+        let snapshot = try_load_session_snapshot_at(root, &session_id);
+        let journal = match SessionJournalStore::new(root.to_path_buf(), session_id.clone()) {
+            Ok(store) => match store.load() {
+                Ok(result) if result.events.is_empty() => Ok(None),
+                Ok(result) => Ok(Some(SessionJournalLoad::from(result))),
+                Err(error) => Err(error),
+            },
+            Err(error) => Err(error),
+        };
+        let decision = choose_session_restore_source(snapshot, journal);
+        summary.sessions_scanned += 1;
+        match decision.parity {
+            SessionParityStatus::Healthy => summary.healthy_parity += 1,
+            SessionParityStatus::Diverged => summary.diverged += 1,
+            SessionParityStatus::SnapshotBehind => summary.snapshot_behind += 1,
+            SessionParityStatus::SnapshotOnly => summary.snapshot_only += 1,
+            SessionParityStatus::JournalOnly => summary.journal_only += 1,
+            SessionParityStatus::TornFinalLine => summary.torn_final_line += 1,
+            SessionParityStatus::CorruptInterior => summary.corrupt_interior += 1,
+        }
+        if decision
+            .notices
+            .contains(&SessionRestoreNotice::JournalQuarantined)
+        {
+            summary.quarantined += 1;
+        }
+    }
+    summary
+}
+
+/// Session ids that have either a snapshot file or a journal directory under
+/// `<root>/sessions/`.
+fn durable_session_ids(root: &Path) -> std::collections::BTreeSet<String> {
+    let mut ids = std::collections::BTreeSet::new();
+    let sessions_dir = root.join("sessions");
+    let Ok(entries) = std::fs::read_dir(&sessions_dir) else {
+        return ids;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_file() {
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json") {
+                if let Some(stem) = path.file_stem().and_then(|stem| stem.to_str()) {
+                    ids.insert(stem.to_string());
+                }
+            }
+        } else if path.is_dir() {
+            let has_journal = std::fs::read_dir(&path)
+                .map(|mut entries| {
+                    entries.any(|entry| {
+                        entry
+                            .map(|entry| {
+                                entry.file_name().to_string_lossy().starts_with("mutations")
+                            })
+                            .unwrap_or(false)
+                    })
+                })
+                .unwrap_or(false);
+            if has_journal {
+                if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
+                    ids.insert(name.to_string());
+                }
+            }
+        }
+    }
+    ids
+}
+
+/// Check snapshot/journal restore parity across all durable sessions.
+pub fn check_session_journal_parity() -> DiagnosticCheck {
+    check_session_journal_parity_at(&forge_data_dir())
+}
+
+fn check_session_journal_parity_at(root: &Path) -> DiagnosticCheck {
+    let summary = session_journal_parity_summary_at(root);
+    let detail = serde_json::to_value(&summary).unwrap_or(serde_json::Value::Null);
+    if summary.sessions_scanned == 0 {
+        return DiagnosticCheck::pass(
+            "session_journal_parity",
+            "Session journal parity",
+            "No durable sessions found (fresh install or all sessions cleaned).",
+        )
+        .with_detail(detail);
+    }
+    if summary.corrupt_interior > 0 || summary.quarantined > 0 {
+        return DiagnosticCheck::warn(
+            "session_journal_parity",
+            "Session journal parity",
+            format!(
+                "{} durable session{} scanned — {} journal{} quarantined for corrupt interior lines.",
+                summary.sessions_scanned,
+                if summary.sessions_scanned == 1 { "" } else { "s" },
+                summary.quarantined,
+                if summary.quarantined == 1 { "" } else { "s" },
+            ),
+        )
+        .with_detail(detail)
+        .with_remediation(
+            "Quarantined journals are renamed aside automatically on the next restore and journaling restarts on a fresh generation; delete old ~/.forge/sessions/<id>/mutations.gen*.jsonl files to silence this warning.",
+        );
+    }
+    DiagnosticCheck::pass(
+        "session_journal_parity",
+        "Session journal parity",
+        format!(
+            "{} durable session{} scanned — {} healthy parity, {} snapshot-behind, {} journal-only, {} torn-final.",
+            summary.sessions_scanned,
+            if summary.sessions_scanned == 1 { "" } else { "s" },
+            summary.healthy_parity,
+            summary.snapshot_behind,
+            summary.journal_only,
+            summary.torn_final_line,
+        ),
+    )
+    .with_detail(detail)
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────
 
 fn forge_data_dir() -> std::path::PathBuf {
@@ -912,6 +1077,7 @@ mod tests {
             vec![
                 "config_settings",
                 "session_snapshots",
+                "session_journal_parity",
                 "a2a_ledger",
                 "app_metadata",
                 "log_directory",
@@ -1791,5 +1957,221 @@ mod tests {
                 "Open a project workspace in Forge to enable project runtime checks.",
             ),
         }
+    }
+}
+
+// ── Task 5: session journal parity summary tests ────────────────────────────
+
+#[cfg(test)]
+mod journal_parity_tests {
+    use super::*;
+    use crate::adapters::base::ChatMessage;
+    use crate::agent::session_journal::{
+        SessionJournalStore, SessionMutation, SessionMutationEnvelope,
+        SESSION_JOURNAL_SCHEMA_VERSION,
+    };
+    use crate::agent::session_projection::SessionProjection;
+    use crate::agent::snapshot::AgentSessionSnapshot;
+    use std::fs;
+
+    fn journal_root(prefix: &str) -> std::path::PathBuf {
+        let root = std::env::temp_dir().join(format!(
+            "forge-diag-journal-parity-{}-{}",
+            prefix,
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("time")
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("sessions")).expect("sessions dir");
+        root
+    }
+
+    fn envelope(session_id: &str, mutation: SessionMutation) -> SessionMutationEnvelope {
+        SessionMutationEnvelope {
+            schema_version: SESSION_JOURNAL_SCHEMA_VERSION,
+            event_id: String::new(),
+            session_id: session_id.to_string(),
+            sequence: 0,
+            created_at_ms: 1,
+            mutation,
+        }
+    }
+
+    /// Write a journal of one init event plus one message per text; returns the
+    /// committed events.
+    fn write_journal(
+        root: &std::path::Path,
+        session_id: &str,
+        texts: &[&str],
+    ) -> Vec<SessionMutationEnvelope> {
+        let store = SessionJournalStore::new(root.to_path_buf(), session_id.to_string())
+            .expect("journal store");
+        store
+            .append(envelope(
+                session_id,
+                SessionMutation::SessionInitialized {
+                    provider: "deepseek".to_string(),
+                    model: "deepseek-chat".to_string(),
+                    working_dir: "/tmp/workspace".to_string(),
+                },
+            ))
+            .expect("append init");
+        for text in texts {
+            store
+                .append(envelope(
+                    session_id,
+                    SessionMutation::MessageAppended {
+                        message: ChatMessage::user(text),
+                    },
+                ))
+                .expect("append message");
+        }
+        store.load().expect("load").events
+    }
+
+    fn journal_path(root: &std::path::Path, session_id: &str) -> std::path::PathBuf {
+        root.join("sessions")
+            .join(session_id)
+            .join("mutations.jsonl")
+    }
+
+    fn append_raw(root: &std::path::Path, session_id: &str, bytes: &[u8]) {
+        use std::io::Write;
+        let path = journal_path(root, session_id);
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .expect("open journal");
+        file.write_all(bytes).expect("append raw");
+        file.sync_all().expect("sync");
+    }
+
+    fn snapshot_matching(
+        events: &[SessionMutationEnvelope],
+        journal_sequence: u64,
+    ) -> AgentSessionSnapshot {
+        let mut snapshot = SessionProjection::from_events(events)
+            .expect("projection")
+            .to_snapshot();
+        snapshot.journal_sequence = journal_sequence;
+        snapshot
+    }
+
+    fn save_snapshot(root: &std::path::Path, snapshot: &AgentSessionSnapshot) {
+        fs::write(
+            root.join("sessions")
+                .join(format!("{}.json", snapshot.session_id)),
+            serde_json::to_string(snapshot).expect("snapshot json"),
+        )
+        .expect("write snapshot");
+    }
+
+    #[test]
+    fn journal_parity_summary_empty_root_is_all_zeros() {
+        let root = journal_root("empty");
+
+        let summary = session_journal_parity_summary_at(&root);
+
+        assert_eq!(summary, SessionJournalParitySummary::default());
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn journal_parity_summary_counts_each_restore_category() {
+        let root = journal_root("categories");
+
+        // Healthy: snapshot and journal at the same sequence with equal content.
+        let events = write_journal(&root, "s-healthy", &["alpha", "beta"]);
+        save_snapshot(&root, &snapshot_matching(&events, 3));
+
+        // Snapshot behind: journal has newer events than the snapshot recorded.
+        let events = write_journal(&root, "s-behind", &["alpha", "beta"]);
+        save_snapshot(&root, &snapshot_matching(&events[..2], 1));
+
+        // Snapshot only: no journal at all.
+        save_snapshot(
+            &root,
+            &AgentSessionSnapshot::new(
+                "s-snap-only".to_string(),
+                "deepseek".to_string(),
+                "deepseek-chat".to_string(),
+                "/tmp/workspace".to_string(),
+                Vec::new(),
+                None,
+                None,
+            ),
+        );
+
+        // Journal only: no snapshot file.
+        write_journal(&root, "s-journal-only", &["alpha"]);
+
+        // Corrupt interior: valid snapshot, journal has a garbage interior line.
+        let events = write_journal(&root, "s-corrupt", &["alpha"]);
+        append_raw(&root, "s-corrupt", b"this is not json\n");
+        save_snapshot(&root, &snapshot_matching(&events, 2));
+
+        // Torn final line: snapshot behind the valid prefix.
+        let events = write_journal(&root, "s-torn", &["alpha", "beta"]);
+        append_raw(&root, "s-torn", br#"{"schema_version":1"#);
+        save_snapshot(&root, &snapshot_matching(&events[..2], 1));
+
+        let summary = session_journal_parity_summary_at(&root);
+
+        assert_eq!(summary.sessions_scanned, 6);
+        assert_eq!(summary.healthy_parity, 1);
+        assert_eq!(summary.snapshot_behind, 1);
+        assert_eq!(summary.snapshot_only, 1);
+        assert_eq!(summary.journal_only, 1);
+        assert_eq!(summary.corrupt_interior, 1);
+        assert_eq!(summary.quarantined, 1);
+        assert_eq!(summary.torn_final_line, 1);
+        assert_eq!(summary.diverged, 0);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn journal_parity_summary_never_contains_conversation_text() {
+        let root = journal_root("privacy");
+        let events = write_journal(&root, "s-private", &["top-secret-body-text"]);
+        save_snapshot(&root, &snapshot_matching(&events, 2));
+
+        let summary = session_journal_parity_summary_at(&root);
+        let json = serde_json::to_string(&summary).expect("serialize summary");
+        assert!(
+            !json.contains("top-secret-body-text"),
+            "diagnostics summary must never include conversation body text: {json}"
+        );
+        assert!(json.contains("healthyParity"), "counts only: {json}");
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn journal_parity_check_warns_when_journal_quarantined() {
+        let root = journal_root("warn");
+        let events = write_journal(&root, "s-corrupt", &["alpha"]);
+        append_raw(&root, "s-corrupt", b"not json\n");
+        save_snapshot(&root, &snapshot_matching(&events, 2));
+
+        let check = check_session_journal_parity_at(&root);
+
+        assert_eq!(check.id, "session_journal_parity");
+        assert_eq!(check.status, CheckStatus::Warn);
+        let detail = check.detail.expect("detail");
+        assert_eq!(detail["corruptInterior"], 1);
+        assert_eq!(detail["quarantined"], 1);
+        let _ = fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn journal_parity_check_passes_for_healthy_sessions() {
+        let root = journal_root("pass");
+        let events = write_journal(&root, "s-healthy", &["alpha"]);
+        save_snapshot(&root, &snapshot_matching(&events, 2));
+
+        let check = check_session_journal_parity_at(&root);
+
+        assert_eq!(check.status, CheckStatus::Pass);
+        let _ = fs::remove_dir_all(&root);
     }
 }
