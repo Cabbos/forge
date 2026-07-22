@@ -1,298 +1,302 @@
-# Forge Dual-Theme Glass Workbench Design
+# Forge 双主题玻璃工作台设计方案
 
-Date: 2026-07-22
+日期：2026-07-22
 
-Status: User-approved design
+状态：设计已获用户确认
 
-Scope: Forge desktop application visual system, conversation, navigation, work panel, settings, controls, and streaming-render stability
+范围：Forge 桌面端的视觉系统、对话区、导航、工作面板、设置、控件和流式渲染稳定性
 
-## Goal
+## 一、目标
 
-Redesign Forge as one coherent desktop workspace with two structurally identical themes:
+将 Forge 重构成一个视觉统一的桌面工作空间，并提供两套结构完全一致的主题：
 
-- a graphite dark theme inspired by the supplied desktop-workbench references;
-- a cool-white translucent theme with restrained glass materiality.
+- 深色主题：以参考图中的石墨黑工作台为方向；
+- 浅色主题：以冷白、半透明的玻璃材质为方向。
 
-The redesign preserves Forge's product information architecture and runtime authority model. It changes visual hierarchy, material treatment, interaction feedback, conversation presentation, and streaming stability. It does not add a new navigation model or silently replace Forge's generation protocol.
+本次重构保留 Forge 现有的信息架构和运行权限边界，调整视觉层级、材质表现、交互反馈、对话排版和流式渲染稳定性。不新增导航体系，也不会在没有验证的情况下替换现有生成协议。
 
-## Design Read
+## 二、设计定位
 
-This is a redesign overhaul for a developer-facing desktop workbench. The intended language combines a quiet result-first conversation, native macOS-like spatial hierarchy, and tactile controls. The product must remain dense enough for daily technical work without looking like an admin dashboard or a card wall.
+这是一次面向开发者桌面工作台的整体视觉重构。设计语言由三部分组成：安静且结果优先的对话体验、接近 macOS 的空间与材质层级、具有真实触感的控件。产品仍需保持适合日常技术工作的有效密度，但不能继续呈现为后台管理系统或卡片墙。
 
-Design dials:
+设计参数：
 
-- Design variance: 6
-- Motion intensity: 4
-- Visual density: 6
+- 设计变化度：6
+- 动效强度：4
+- 信息密度：6
 
-These values allow a calm asymmetric workspace, purposeful state transitions, and practical developer density without ornamental motion.
+这组参数允许工作区具有适度的不对称关系、明确而克制的状态动效，以及适合开发工具的内容密度，同时避免为了视觉效果加入无意义装饰。
 
-## Reference Translation
+## 三、参考图转译规则
 
-The supplied references establish the following reusable principles:
+用户提供的参考图确立了以下可复用原则：
 
-- conversation content is the primary visual object;
-- assistant answers sit directly on the canvas instead of inside message cards;
-- user messages remain compact, right-aligned bubbles;
-- process details collapse into a quiet duration row and concise evidence summaries;
-- the sidebar is a stable navigation plane with restrained selected-row treatment;
-- settings use grouped rows and whitespace instead of one card per setting;
-- controls have visible hover, pressed, focus, disabled, and loading states;
-- the right-side output surface is contextual and subordinate to the conversation.
+- 对话内容是界面的第一视觉主体；
+- 助手回答直接铺在画布上，不再包裹消息卡片；
+- 用户消息保留紧凑的右对齐气泡；
+- 过程信息收束为安静的耗时行和简洁的操作摘要；
+- 侧栏是稳定的导航平面，选中状态克制而清晰；
+- 设置页依靠分组、对齐和留白组织信息，不为每个设置项单独创建卡片；
+- 控件必须具备明确的悬停、按下、聚焦、禁用和加载状态；
+- 右侧输出区域只在需要时出现，视觉优先级低于对话区。
 
-The references are not a pixel-copy target. Forge keeps its own file, review, terminal, permission, verification, and work-panel semantics.
+参考图只作为视觉基准，不进行逐像素复制。Forge 继续保留自己的文件、审查、终端、权限、验证和工作面板语义。
 
-## Theme Architecture
+## 四、双主题架构
 
-Both themes use the same layout, spacing, type roles, radii, component anatomy, and interaction rules. Theme switching changes semantic material tokens only. It must not remount the conversation tree or reset scroll, input, disclosure, or work-panel state.
+两套主题使用完全一致的布局、间距、字体角色、圆角、组件结构和交互规则。主题切换只替换语义化材质变量，不能重新挂载对话组件，也不能重置滚动位置、输入内容、展开状态或工作面板状态。
 
-### Dark Theme
+### 4.1 深色主题
 
-- The main canvas uses a soft graphite near-black rather than pure black.
-- The sidebar uses a low-saturation blue-gray material that is distinct from the main canvas without becoming a bright color block.
-- Composer, dialogs, menus, settings groups, and other true overlays use translucent dark material with a subtle inner highlight and restrained edge definition.
-- Blue is the single interaction accent for focus, enabled toggles, active states, and primary actions.
-- Semantic success, warning, and danger colors remain available only where status meaning requires them.
+- 主画布使用柔和的石墨黑，不使用纯黑。
+- 侧栏使用低饱和蓝灰色，与主内容区形成安静但明确的空间区分。
+- 输入框、弹窗、菜单、设置分组等真实浮层使用半透明深色材质，并通过轻微内高光和边缘线建立厚度。
+- 蓝色是唯一的交互强调色，用于焦点、已启用开关、当前选中状态和主要操作。
+- 成功、警告和危险色只在确实表达状态语义时使用。
 
-### Light Theme
+### 4.2 浅色主题
 
-- The base is a very light cool white with enough tonal variation for transparent materials to remain legible.
-- Sidebar, composer, dialogs, and settings groups use differentiated white-glass materials.
-- Glass depth comes from a translucent fill, a cool outer edge, a brighter inner edge, and a background-tinted shadow. Blur alone is insufficient.
-- Routine content sits directly on the canvas. Containers are reserved for real grouping, input, or elevation.
-- The solid-surface fallback remains visually complete when transparency is reduced or unsupported.
+- 基础背景使用极浅冷白，并保留足够的明暗变化，让透明材质仍然可辨认。
+- 侧栏、输入框、弹窗和设置分组使用不同层级的白色玻璃材质。
+- 玻璃厚度由半透明填充、冷色外边缘、明亮内边缘和带背景色倾向的阴影共同形成，不能只使用背景模糊。
+- 普通内容尽量直接放在画布上，只有真实的分组、输入和浮层关系才使用容器。
+- 当系统减少透明度或环境不支持背景模糊时，实体表面降级方案必须保持完整可用。
 
-### Material Ladder
+### 4.3 材质层级
 
-The semantic ladder consists of:
+全局材质分为六个语义层级：
 
-1. base canvas;
-2. navigation plane;
-3. quiet grouped surface;
-4. raised control surface;
-5. floating popover;
-6. modal overlay.
+1. 基础画布；
+2. 导航平面；
+3. 安静的分组表面；
+4. 抬升的控件表面；
+5. 浮动弹出层；
+6. 模态遮罩层。
 
-Components consume these roles rather than declaring local colors or blur values. Blur is limited to actual overlays and selected glass surfaces. It must not be applied to every card or scrolling content container.
+组件只能引用这些语义角色，不能在局部自行声明颜色和模糊参数。背景模糊只用于真实浮层和少量明确的玻璃表面，不能覆盖所有卡片或大型滚动容器。
 
-### Shape and Shadow Rules
+### 4.4 圆角与阴影
 
-- Large shells and modal containers: 18px radius.
-- Composer, popovers, and grouped settings surfaces: 16px radius.
-- Standard controls and compact containers: 10px radius.
-- Icon-only circular actions may use a full radius.
-- Shadows communicate actual elevation only and are tinted to the current background family.
-- Inner highlights and hairline borders provide material edges without outer glow.
+- 大型外壳和模态容器：18px 圆角；
+- 输入框、弹出层和设置分组：16px 圆角；
+- 标准控件和紧凑容器：10px 圆角；
+- 纯图标圆形按钮可以使用完全圆角；
+- 阴影只表达真实的空间抬升关系，并带有当前背景色系的倾向；
+- 使用内高光和细边缘表现材质折射，不使用外发光。
 
-## Typography and Density
+## 五、字体与信息密度
 
-- Continue using the existing Geist and Geist Mono families.
-- Conversation prose uses the sans family with larger line height and paragraph spacing.
-- Evidence, file paths, commands, durations, and compact technical metadata use the mono family.
-- Assistant prose targets a readable measure of roughly 70 to 82 Chinese characters at common desktop widths.
-- Settings and navigation remain compact, while conversation spacing prioritizes reading.
-- Section labels are used only when they improve navigation. Decorative uppercase labels and repeated micro-headings are removed.
+- 继续使用现有 Geist 和 Geist Mono 字体族。
+- 对话正文使用无衬线字体，并提高行高和段落间距。
+- 运行证据、文件路径、命令、耗时和紧凑技术信息使用等宽字体。
+- 助手正文在常见桌面宽度下，以每行约 70 至 82 个中文字符为舒适阅读范围。
+- 设置和导航保持紧凑，对话区则优先保障阅读舒适度。
+- 只有在确实改善导航时才使用分节标签，删除装饰性的全大写标签和重复小标题。
 
-## Application Shell
+## 六、应用骨架
 
-The desktop shell has three spatial roles:
+桌面应用由三个空间角色组成：
 
-1. The left sidebar owns projects, tasks, history, and global navigation.
-2. The central conversation is always the primary workspace.
-3. The right Work Panel appears only for user-opened previews, files, reviews, terminals, and subtasks.
+1. 左侧栏负责项目、任务、历史和全局导航；
+2. 中间对话区始终是主工作区；
+3. 右侧工作面板只在用户主动打开预览、文件、审查、终端或子任务时出现。
 
-Opening the Work Panel reduces the conversation width only while a comfortable reading measure remains. At narrow widths, the Work Panel becomes a flush full-workspace surface instead of crushing the conversation into a narrow column. The titlebar remains thin and contains only the current task identity, workspace location, and necessary window or panel actions.
+打开工作面板后，只有在对话区仍能保持舒适阅读宽度时才压缩对话区。窗口较窄时，工作面板切换为占满工作区的无边框独立表面，不能把对话区挤成过窄列。标题栏保持轻薄，只显示当前任务、工作区位置和必要的窗口或面板操作。
 
-## Conversation Design
+## 七、对话区设计
 
-### Turn Anatomy
+### 7.1 单轮对话结构
 
-Each turn follows a result-first sequence:
+每轮对话采用结果优先的展示顺序：
 
-1. The user message appears as a right-aligned, low-contrast bubble.
-2. A compact progress row communicates the current stage while work is running.
-3. The final assistant answer appears directly on the canvas without an avatar, author label, or card shell.
-4. A terminal duration row such as `已处理 32s` separates the result from the expandable process evidence.
-5. Copy, feedback, retry, and related actions sit beneath the answer with low default contrast and stronger hover visibility.
+1. 用户消息显示为右对齐、低对比度的圆角气泡；
+2. 任务运行时使用紧凑的进度行显示当前阶段；
+3. 助手最终回答直接显示在画布上，不再显示头像、作者名称或外层卡片；
+4. 使用类似“已处理 32s”的结束行，将结果与可展开的过程证据分隔；
+5. 复制、反馈、重试等操作放在回答底部，默认低对比度，悬停后增强可见性。
 
-### Evidence Hierarchy
+### 7.2 过程证据层级
 
-Routine reads, commands, edits, and checks collapse into concise summaries such as:
+普通的读取、命令、修改和检查默认折叠为简洁摘要，例如：
 
 - `运行了多个命令`
 - `查看了 3 个文件`
 - `修改了 2 个文件`
 - `完成了构建验证`
 
-Users can expand these summaries to inspect full evidence. Permission requests, unresolved failures, risky actions, and recovery choices remain expanded and prominent. Evidence is never hidden when user action is required.
+用户可以展开摘要查看完整证据。权限请求、未解决失败、危险操作和恢复选择必须保持展开和醒目。任何需要用户处理的证据都不能隐藏在摘要中。
 
-### Composer
+### 7.3 输入框
 
-- The composer is anchored at the bottom of the reading workspace without obscuring the final message.
-- It uses the theme's raised glass material and follows the 16px radius rule.
-- Model, permission, attachment, and context controls remain visible but subordinate to the text entry.
-- The send action is the only persistent primary action.
-- Loading or stop states preserve control width and position to prevent layout movement.
+- 输入框固定在阅读工作区底部，但不能遮挡最后一条消息；
+- 使用当前主题对应的抬升玻璃材质和 16px 圆角；
+- 模型、权限、附件和上下文控件保持可见，但视觉优先级低于文本输入；
+- 发送按钮是唯一持续显示的主要操作；
+- 加载和停止状态保持控件宽度与位置稳定，避免布局跳动。
 
-## Stable Streaming and Generate UI
+## 八、稳定流式渲染与生成式界面
 
-### Current Diagnosis
+### 8.1 当前问题判断
 
-The current conversation renderer has no independent structured Generate UI layer. Text responses pass through `ReactMarkdown`. Streaming updates are throttled and unclosed code fences are repaired, but the full active Markdown content is still reprocessed as it grows. Incomplete lists, code fences, tables, and diagrams can therefore change element structure during streaming. This is the primary implementation hypothesis for visible flashing and must be confirmed with a reproducible streaming case before modification.
+当前对话渲染器没有独立的结构化生成式界面层。文本回答通过 `ReactMarkdown` 渲染。现有实现已经对流式更新做了节流，也会修复未闭合的代码围栏，但活动中的 Markdown 全文仍会随着内容增长反复重新解析。
 
-### Stability Contract
+未完成的列表、代码块、表格和图表在流式阶段可能多次改变元素结构，因此可能造成可见闪烁。这是当前最主要的实现假设，后续修改前必须通过可重复的真实流式用例确认。
 
-- A new answer container may animate once when it first appears. Streaming text within it does not repeatedly animate.
-- Completed paragraphs, list items, and code blocks become immutable render segments.
-- Only the active trailing segment updates during streaming.
-- Complex structures such as tables, diagrams, and fenced code use a stable provisional representation until structurally complete, then replace it once.
-- Turn ids, block ids, React keys, scroll anchors, disclosure state, composer focus, and work-panel state remain stable throughout streaming.
-- Theme changes do not remount streamed content.
-- Auto-scroll follows the stream only while the user remains at the bottom. Manual upward scrolling is never overridden.
+### 8.2 稳定性约束
 
-### Fix-First Strategy
+- 新回答容器第一次出现时可以播放一次入场动画，内部流式文字不能反复播放动画；
+- 已完成的段落、列表项和代码块应成为不可变的稳定渲染片段；
+- 流式过程中只更新尾部仍在生成的活动片段；
+- 表格、图表和代码围栏等复杂结构，在语法闭合前使用稳定的临时形态，闭合后只替换一次；
+- 对话轮次编号、内容块编号、React 键值、滚动锚点、展开状态、输入焦点和工作面板状态必须在流式过程中保持稳定；
+- 切换主题不能重新挂载正在生成的内容；
+- 只有当用户仍停留在底部时才自动跟随流式内容，用户主动向上滚动后不能被强制拉回底部。
 
-The first implementation path keeps the existing Forge renderer and introduces stable render segments around it. This preserves file references, code actions, diagrams, evidence presentation, and current security boundaries.
+### 8.3 优先修复现有实现
 
-If the existing path remains unstable after the stability contract is implemented and measured, evaluate Streamdown as the first open-source streaming Markdown replacement. Any replacement must support Forge's custom renderers and pass the same stability, accessibility, and security tests before adoption.
+第一条实施路径是保留现有 Forge 渲染器，在现有渲染链路中加入稳定片段机制。这样可以继续复用文件引用、代码操作、图表、过程证据和现有安全边界。
 
-If Forge later adds model-generated structured interactive components, treat that as a separate product capability. Evaluate Vercel's open-source json-render with:
+如果完成稳定片段机制并经过测量后，现有方案仍无法满足稳定性标准，再评估使用开源的 Streamdown 替代流式 Markdown 渲染。任何替代方案都必须支持 Forge 的自定义渲染组件，并通过同一组稳定性、可访问性和安全测试后才能采用。
 
-- a schema-validated component tree;
-- a fixed allowlisted component catalog;
-- explicit action bindings;
-- stable incremental JSON patches;
-- no evaluation of arbitrary model-generated JavaScript or component source.
+### 8.4 结构化生成式界面的备选方案
 
-Structured generative UI is not required to complete the present conversation redesign.
+如果 Forge 后续需要由模型生成可交互的结构化组件，应将其作为独立产品能力设计。可以评估 Vercel 开源的 json-render，但必须满足以下约束：
 
-## Sidebar
+- 使用经过模式校验的组件树；
+- 只能使用固定白名单中的组件；
+- 所有操作绑定都必须显式声明；
+- 使用稳定的增量 JSON 补丁更新；
+- 禁止执行模型任意生成的 JavaScript 或组件源码。
 
-- Dark mode uses the low-saturation blue-gray navigation material from the reference family.
-- Light mode uses a translucent cool-white navigation material.
-- Current project and task selection use a quiet full-row fill rather than a bright outline or accent flood.
-- Navigation is grouped by work, projects, and system only where grouping improves scanability.
-- Icons use one family, one optical size, and one stroke-weight rule.
-- Colored dots appear only for real semantic state.
-- The collapsed sidebar retains essential icons and accessible tooltips.
+完成本次对话区重构不依赖结构化生成式界面。
 
-## Work Panel
+## 九、侧栏
 
-- The panel remains a native split workspace, not a drawer containing another card.
-- Its object bar is compact and aligned with the titlebar hierarchy.
-- Preview, file, review, terminal, and subtask content fills the available area without redundant outer containers.
-- Empty, unavailable, and failed states remain local to the active tab and preserve sibling tabs.
-- New output may mark an existing object as unread but never steals focus or changes the active tab.
+- 深色主题使用参考图方向的低饱和蓝灰导航材质；
+- 浅色主题使用半透明冷白导航材质；
+- 当前项目和当前任务使用安静的整行底色表示选中，不使用亮色描边或大面积强调色；
+- 只有在提高扫描效率时才按工作、项目和系统分组；
+- 图标统一使用一个图标族、一个视觉尺寸和一套线宽规则；
+- 彩色状态点只在表达真实状态时出现；
+- 侧栏折叠后保留核心图标，并提供可访问的悬浮说明。
 
-## Settings
+## 十、工作面板
 
-- Use a stable left navigation and right content structure.
-- Search remains at the top of the settings navigation.
-- Related settings share one grouped material surface.
-- Setting rows align label and description on the left with the action on the right.
-- Dividers are sparse and support grouping rather than boxing every row.
-- High-risk permissions receive a dedicated group and explicit impact copy.
-- Search results navigate to and focus the exact setting row.
+- 工作面板继续作为原生的分栏工作区，而不是包含另一张卡片的抽屉；
+- 对象栏保持紧凑，并与标题栏的视觉层级对齐；
+- 预览、文件、审查、终端和子任务内容直接占满可用区域，不添加重复的外层容器；
+- 空白、不可用和失败状态只影响当前标签页，不能重置其他标签页；
+- 新输出可以给相关对象添加未读提示，但不能抢占焦点或自动切换当前标签页。
 
-## Controls and Interaction
+## 十一、设置页
 
-Every interactive control implements the full state cycle:
+- 使用稳定的左侧导航和右侧内容结构；
+- 设置搜索固定在左侧导航顶部；
+- 相关设置共享一个分组材质表面；
+- 每行设置的名称和说明放在左侧，操作控件放在右侧，形成稳定对齐；
+- 分隔线只用于表达分组，不为每一行同时添加上下边框；
+- 高风险权限使用独立分组，并明确说明影响；
+- 搜索结果可以直接定位并聚焦到具体设置行。
 
-- default;
-- hover;
-- active;
-- focus-visible;
-- disabled;
-- loading or pending;
-- selected where applicable.
+## 十二、控件与交互
 
-Interaction rules:
+每个交互控件必须实现完整状态：
 
-- Hover increases edge clarity and fill concentration without outer glow.
-- Active controls scale to approximately 0.98 and move down by 1px where layout permits.
-- Transitions run between 120ms and 220ms with a fast-start, soft-stop curve.
-- Icon buttons provide at least a 32px target.
-- Switches communicate state through position, shape, and color.
-- Menus align spatially with their triggers and preserve a consistent minimum width.
-- Loading labels do not change the control's measured width.
-- Focus is always visible for keyboard users.
+- 默认；
+- 悬停；
+- 按下；
+- 键盘聚焦；
+- 禁用；
+- 加载或等待；
+- 选中（适用时）。
 
-Motion above basic state feedback respects `prefers-reduced-motion`. Translucent materials provide a solid accessible fallback for reduced-transparency preferences and unsupported environments.
+交互规则：
 
-## Empty, Loading, Error, and Recovery States
+- 悬停时增强边缘清晰度和填充浓度，不使用外发光；
+- 按下时在布局允许的情况下缩放至约 0.98，并向下移动 1px；
+- 过渡时间控制在 120ms 至 220ms，采用快速开始、柔和停止的曲线；
+- 纯图标按钮的点击区域不得小于 32px；
+- 开关通过位置、形状和颜色共同表达状态；
+- 菜单在空间上与触发控件对齐，并保持一致的最小宽度；
+- 加载文案变化不能改变控件实际宽度；
+- 键盘用户必须始终能够看到焦点。
 
-- Empty states contain one clear next action and no decorative card wall.
-- Loading uses skeletons that match the final content geometry.
-- Errors stay adjacent to the failed message, setting, preview, or panel tab.
-- Existing content remains visible during provider, preview, or network failures.
-- Retry, switch-provider, open-externally, close, and recovery choices appear only where valid.
-- Permission and dangerous-action prompts stay highly visible and explain both action and impact.
+所有超出基础状态反馈的动效都要遵循系统的减少动态效果偏好。透明材质必须为减少透明度和不支持背景模糊的环境提供完整、可访问的实体表面降级方案。
 
-## Migration Plan Boundary
+## 十三、空白、加载、错误与恢复状态
 
-The implementation plan should sequence work as follows:
+- 空白状态只提供一个清晰的下一步，不使用装饰性卡片墙；
+- 加载状态使用与最终内容形状一致的骨架；
+- 错误信息显示在对应消息、设置项、预览或工作面板标签页附近；
+- 模型、预览或网络失败时，已有内容必须继续保留；
+- 重试、切换模型、外部打开、关闭和恢复操作只在确实有效的位置出现；
+- 权限请求和危险操作必须保持高可见度，并同时解释操作内容和影响。
 
-1. Establish dual-theme semantic tokens, material roles, radii, shadows, and control states.
-2. Rebuild conversation presentation and stable streaming behavior.
-3. Align composer, menus, message actions, permissions, and evidence summaries.
-4. Align sidebar, titlebar, and Work Panel.
-5. Align settings, command palette, dialogs, and shared primitives.
-6. Remove superseded Console Craft recipes and redundant theme overrides.
-7. Update design documentation, desktop documentation, changelog, screenshots, and acceptance coverage.
+## 十四、实施范围与顺序
 
-The implementation plan must isolate visual-token work from streaming-render behavior so regressions can be attributed and reviewed independently.
+后续实施计划按以下顺序拆分：
 
-## Accessibility and Performance
+1. 建立双主题语义变量、材质层级、圆角、阴影和控件状态；
+2. 重构对话排版和稳定流式渲染；
+3. 统一输入框、菜单、消息操作、权限确认和过程摘要；
+4. 统一侧栏、标题栏和工作面板；
+5. 统一设置页、命令面板、弹窗和共享基础控件；
+6. 删除被替代的 Console Craft 专属样式和重复主题覆盖；
+7. 更新设计语言文档、桌面端说明、变更记录、截图和验收覆盖。
 
-- Body text and control labels meet WCAG AA contrast in both themes.
-- Keyboard navigation covers sidebar, composer, evidence disclosures, Work Panel, settings, menus, and dialogs.
-- Focus order follows the visual order.
-- Reduced motion and reduced transparency preserve complete functionality.
-- Blur is not applied to large scrolling descendants that would cause continuous repaint cost.
-- Streaming updates avoid full-tree remounts and retain input responsiveness.
-- Theme switching retains hierarchy and contrast parity.
+实施计划必须将纯视觉变量调整与流式渲染行为调整拆成独立阶段，方便定位回归问题和分别审查。
 
-## Verification
+## 十五、可访问性与性能
 
-### Visual Verification
+- 两套主题的正文和控件标签都要达到 WCAG AA 对比度；
+- 键盘可以完成侧栏导航、输入、过程展开、工作面板、设置、菜单和弹窗操作；
+- 焦点顺序与视觉顺序一致；
+- 减少动态效果和减少透明度模式必须保持完整功能；
+- 不能在大型滚动子树上使用会持续重绘的模糊效果；
+- 流式更新不能重新挂载整棵内容树，必须保持输入响应；
+- 两套主题必须保持相同的视觉层级和对比关系。
 
-Capture stable screenshots for both themes covering:
+## 十六、验证方案
 
-- empty workbench;
-- active conversation with a user message and long assistant answer;
-- streaming progress and completed duration disclosure;
-- expanded evidence with commands, file changes, and verification;
-- focused composer and control states;
-- Work Panel preview and review;
-- settings navigation and grouped rows;
-- command palette, permission prompt, and error state.
+### 16.1 视觉验证
 
-### Streaming Verification
+为两套主题分别保存以下稳定截图：
 
-- Stream a response for at least 60 seconds without full-answer flashes or repeated entry animation.
-- Exercise paragraphs, nested lists, fenced code, tables, file references, and diagrams.
-- Confirm stable scroll anchoring when following the stream and when manually scrolled upward.
-- Confirm composer focus, disclosure state, and selected Work Panel tab survive streaming updates.
-- Confirm reduced-motion mode removes entry transitions.
+- 空白工作台；
+- 包含用户消息和长助手回答的活跃对话；
+- 流式进度和完成后的耗时展开行；
+- 展开的命令、文件修改和验证证据；
+- 聚焦状态下的输入框和控件；
+- 工作面板预览与审查；
+- 设置导航和分组设置行；
+- 命令面板、权限确认和错误状态。
 
-### Interaction Verification
+### 16.2 流式验证
 
-- Verify default, hover, active, focus-visible, disabled, loading, and selected states for shared buttons and controls.
-- Verify theme switching does not change layout geometry or lose state.
-- Verify sidebar collapse, Work Panel resize, narrow-window fallback, settings search, menus, and dialogs by keyboard.
-- Verify transparency fallbacks remain readable without backdrop blur.
+- 连续生成至少 60 秒，不能出现整段回答闪白或重复入场动画；
+- 覆盖普通段落、嵌套列表、代码围栏、表格、文件引用和图表；
+- 验证处于底部时的稳定跟随滚动，以及用户向上滚动后的锚点保持；
+- 验证输入焦点、展开状态和当前工作面板标签页在流式更新中不会丢失；
+- 验证减少动态效果模式会关闭入场动画。
 
-### Required Project Gates
+### 16.3 交互验证
+
+- 验证共享按钮和控件的默认、悬停、按下、键盘聚焦、禁用、加载和选中状态；
+- 验证主题切换不会改变布局尺寸或丢失状态；
+- 使用键盘验证侧栏折叠、工作面板调整尺寸、窄窗口降级、设置搜索、菜单和弹窗；
+- 验证关闭背景模糊后，透明材质的降级表面仍然清晰可读。
+
+### 16.4 必须通过的项目检查
 
 - `npm run build:desktop`
-- relevant desktop component tests for conversation grouping, streaming segmentation, controls, settings, and Work Panel
-- relevant Playwright coverage in `apps/desktop/e2e/acceptance.spec.ts`
-- theme and conversation guardrails
+- 对话分组、流式片段、控件、设置和工作面板相关的桌面端组件测试
+- `apps/desktop/e2e/acceptance.spec.ts` 中对应的 Playwright 验收覆盖
+- 主题与对话样式守卫检查
 - `scripts/acceptance.sh --dry-run`
 
-## Documentation Impact
+## 十七、文档同步范围
 
-Because this redesign changes user-visible runtime surfaces, implementation must keep these files aligned:
+由于本次重构会改变用户可见的运行界面，实施时必须同步以下文件：
 
 - `apps/desktop/docs/product/forge-design-language.md`
 - `README.md`
@@ -301,24 +305,24 @@ Because this redesign changes user-visible runtime surfaces, implementation must
 - `apps/desktop/e2e/acceptance.spec.ts`
 - `scripts/acceptance.sh`
 
-## Out of Scope
+## 十八、不在本次范围内
 
-- Changing Forge's product information architecture.
-- Adding new runtime authority or bypassing permission gates.
-- Executing arbitrary model-generated UI code.
-- Replacing the current renderer before a reproducible stability test exists.
-- Introducing a second component design system.
-- Reworking the website prototype as part of the desktop redesign.
+- 改变 Forge 的产品信息架构；
+- 新增运行权限，或绕过现有权限确认；
+- 执行模型任意生成的界面代码；
+- 在没有可重复稳定性测试前替换现有渲染器；
+- 引入第二套组件设计系统；
+- 同时重构网站原型。
 
-## Acceptance Criteria
+## 十九、最终验收标准
 
-The design is complete when:
+满足以下条件后，本次设计才能视为完成：
 
-1. Dark and light themes share one component anatomy and interaction model.
-2. Conversation matches the result-first reference hierarchy while retaining Forge evidence and permission semantics.
-3. Routine evidence is concise by default and risky or failed states remain prominent.
-4. Streaming for 60 seconds produces no full-answer flash, repeated entry animation, focus loss, or forced scroll jump.
-5. Sidebar, Work Panel, settings, composer, dialogs, and command surfaces use one coherent material and radius system.
-6. Every shared control has complete pointer, keyboard, loading, and disabled behavior.
-7. Reduced motion and reduced transparency modes remain fully usable.
-8. Documentation, screenshots, tests, and acceptance coverage describe and verify the new design language.
+1. 深浅主题共享同一套组件结构和交互模型；
+2. 对话区达到参考图的结果优先层级，同时保留 Forge 的证据与权限语义；
+3. 普通过程默认简洁，高风险和失败状态始终醒目；
+4. 连续流式生成 60 秒，不出现整段闪白、重复入场、焦点丢失或强制滚动跳转；
+5. 侧栏、工作面板、设置、输入框、弹窗和命令界面使用统一的材质与圆角系统；
+6. 所有共享控件具备完整的鼠标、键盘、加载和禁用反馈；
+7. 减少动态效果和减少透明度模式保持完整可用；
+8. 文档、截图、测试和验收脚本都能描述并验证新的设计语言。
