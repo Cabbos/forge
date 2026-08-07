@@ -12,7 +12,9 @@
  */
 
 import { spawnSync } from "node:child_process";
-import { resolve } from "node:path";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 // Use process.cwd() since this script is always run from the monorepo root
@@ -20,18 +22,45 @@ import { pathToFileURL } from "node:url";
 const repoRoot = process.cwd();
 const cliEntry = resolve(repoRoot, "apps", "desktop", "cli", "src", "index.ts");
 
+export function runDoctorIsolated({
+  spawn = spawnSync,
+  baseEnv = process.env,
+} = {}) {
+  const originalHome = baseEnv.HOME ?? baseEnv.USERPROFILE;
+  const isolatedHome = mkdtempSync(join(tmpdir(), "forge-eval-doctor-"));
+  mkdirSync(join(isolatedHome, ".forge"), { recursive: true });
+  try {
+    const result = spawn("bun", ["run", cliEntry, "doctor", "--json"], {
+      cwd: repoRoot,
+      env: {
+        ...baseEnv,
+        ...(originalHome
+          ? {
+              CARGO_HOME: baseEnv.CARGO_HOME ?? join(originalHome, ".cargo"),
+              RUSTUP_HOME: baseEnv.RUSTUP_HOME ?? join(originalHome, ".rustup"),
+            }
+          : {}),
+        HOME: isolatedHome,
+        USERPROFILE: isolatedHome,
+      },
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "pipe"],
+      timeout: 30_000,
+    });
+    return {
+      stdout: result.stdout ?? "",
+      stderr: result.stderr ?? "",
+      status: result.status,
+      isolatedHome,
+    };
+  } finally {
+    rmSync(isolatedHome, { recursive: true, force: true });
+  }
+}
+
 export function runDoctor() {
-  const result = spawnSync("bun", ["run", cliEntry, "doctor", "--json"], {
-    cwd: repoRoot,
-    encoding: "utf-8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 30_000,
-  });
-  return {
-    stdout: result.stdout ?? "",
-    stderr: result.stderr ?? "",
-    status: result.status,
-  };
+  const { stdout, stderr, status } = runDoctorIsolated();
+  return { stdout, stderr, status };
 }
 
 export function classifyDoctorReport(report) {
