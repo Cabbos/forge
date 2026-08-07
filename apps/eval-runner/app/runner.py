@@ -943,15 +943,45 @@ def prepare_workspace(
     workspace = temp_dir / workspace_name
     if task.fixture_path is None:
         workspace.mkdir(parents=True, exist_ok=True)
-        return workspace
+    else:
+        fixture = Path(task.fixture_path).expanduser()
+        if fixture.exists():
+            shutil.copytree(fixture, workspace)
+        else:
+            workspace.mkdir(parents=True, exist_ok=True)
 
-    fixture = Path(task.fixture_path).expanduser()
-    if not fixture.exists():
-        workspace.mkdir(parents=True, exist_ok=True)
-        return workspace
-
-    shutil.copytree(fixture, workspace)
+    if task.scenario_path is not None:
+        apply_scenario_overlay(Path(task.scenario_path).expanduser(), workspace)
     return workspace
+
+
+def apply_scenario_overlay(scenario: Path, workspace: Path) -> None:
+    if scenario.is_symlink():
+        raise ValueError("scenario symlinks are forbidden: .")
+    if not scenario.is_dir():
+        raise ValueError(f"scenario overlay does not exist: {scenario}")
+
+    workspace_root = workspace.resolve()
+    for source in sorted(
+        scenario.rglob("*"),
+        key=lambda path: path.relative_to(scenario).as_posix(),
+    ):
+        relative = source.relative_to(scenario)
+        if source.is_symlink():
+            raise ValueError(f"scenario symlinks are forbidden: {relative.as_posix()}")
+        target = workspace / relative
+        resolved_target = target.resolve(strict=False)
+        if not resolved_target.is_relative_to(workspace_root):
+            raise ValueError(f"scenario path escapes workspace: {relative.as_posix()}")
+        if target.is_symlink():
+            raise ValueError(f"scenario target symlinks are forbidden: {relative.as_posix()}")
+        if source.is_dir():
+            target.mkdir(parents=True, exist_ok=True)
+        elif source.is_file():
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, target)
+        else:
+            raise ValueError(f"scenario contains unsupported entry: {relative.as_posix()}")
 
 
 def continuity_db_diagnostic(workspace: Path) -> dict[str, Any] | None:

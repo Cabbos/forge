@@ -26,6 +26,7 @@ from app.runner import (
     ForgeAgentRunner,
     continuity_db_diagnostic,
     create_runner,
+    prepare_workspace,
     scope_violations_for,
 )
 
@@ -92,6 +93,82 @@ def test_task_supports_regression_and_fix_validation_commands() -> None:
 
     assert task.pass_to_pass_commands == ["pytest tests/test_existing.py"]
     assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
+
+
+def test_prepare_workspace_applies_scenario_overlay_without_mutating_sources(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    (fixture / "src").mkdir(parents=True)
+    (scenario / "src").mkdir(parents=True)
+    (scenario / "tests").mkdir()
+    (fixture / "src" / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (fixture / "README.md").write_text("baseline\n", encoding="utf-8")
+    (scenario / "src" / "app.py").write_text("VALUE = 0\n", encoding="utf-8")
+    (scenario / "tests" / "regression.py").write_text("assert True\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="scenario-overlay",
+        title="Scenario overlay",
+        prompt="Repair the scenario.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+
+    workspace = prepare_workspace(task, tmp_path / "attempt")
+
+    assert (workspace / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+    assert (workspace / "README.md").read_text(encoding="utf-8") == "baseline\n"
+    assert (workspace / "tests" / "regression.py").is_file()
+    assert (fixture / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert (scenario / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_prepare_workspace_creates_independent_scoring_and_replay_copies(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    fixture.mkdir()
+    scenario.mkdir()
+    (fixture / "app.py").write_text("baseline\n", encoding="utf-8")
+    (scenario / "app.py").write_text("broken\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="independent-copies",
+        title="Independent copies",
+        prompt="Repair the scenario.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+    attempt_root = tmp_path / "attempt"
+
+    scoring = prepare_workspace(task, attempt_root)
+    replay = prepare_workspace(task, attempt_root, workspace_name="patch-replay")
+    (scoring / "app.py").write_text("repaired\n", encoding="utf-8")
+
+    assert replay != scoring
+    assert (replay / "app.py").read_text(encoding="utf-8") == "broken\n"
+    assert (scenario / "app.py").read_text(encoding="utf-8") == "broken\n"
+
+
+def test_prepare_workspace_rejects_scenario_symlinks(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    outside = tmp_path / "outside.txt"
+    fixture.mkdir()
+    scenario.mkdir()
+    outside.write_text("secret\n", encoding="utf-8")
+    (scenario / "escape.txt").symlink_to(outside)
+    task = EvaluationTask(
+        id="scenario-symlink",
+        title="Scenario symlink",
+        prompt="Reject unsafe input.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+
+    with pytest.raises(ValueError, match="scenario symlinks are forbidden"):
+        prepare_workspace(task, tmp_path / "attempt")
 
 
 def test_scope_treats_workspace_runtime_files_as_unexpected_changes() -> None:
