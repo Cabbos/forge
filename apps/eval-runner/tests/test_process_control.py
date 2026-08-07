@@ -1,4 +1,5 @@
 import os
+import shlex
 import sys
 import threading
 import time
@@ -6,6 +7,16 @@ from pathlib import Path
 
 from app.models import ProcessOutcome
 from app.process_control import run_bounded_process
+
+
+def test_bounded_process_parses_command_strings_without_a_shell(tmp_path: Path) -> None:
+    command = shlex.join([sys.executable, "-c", "print('string-command')"])
+
+    result = run_bounded_process(command, cwd=tmp_path, timeout_seconds=2)
+
+    assert result.outcome == ProcessOutcome.COMPLETED
+    assert result.returncode == 0
+    assert result.stdout == "string-command\n"
 
 
 def test_bounded_process_accepts_an_explicit_environment(tmp_path: Path) -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -39,8 +40,15 @@ def run_bounded_process(
     env: Mapping[str, str] | None = None,
 ) -> BoundedProcessResult:
     started = time.monotonic()
+    launch_command: str | Sequence[str]
+    if isinstance(command, str) and not shell:
+        launch_command = shlex.split(command)
+        if not launch_command:
+            raise ValueError("process command must not be empty")
+    else:
+        launch_command = command
     process = subprocess.Popen(
-        command,
+        launch_command,
         cwd=cwd,
         shell=shell,
         text=True,
