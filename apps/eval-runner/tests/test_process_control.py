@@ -1,3 +1,4 @@
+import os
 import sys
 import threading
 import time
@@ -5,6 +6,25 @@ from pathlib import Path
 
 from app.models import ProcessOutcome
 from app.process_control import run_bounded_process
+
+
+def test_bounded_process_accepts_an_explicit_environment(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["FORGE_EVAL_CHILD_SENTINEL"] = "isolated"
+
+    result = run_bounded_process(
+        [
+            sys.executable,
+            "-c",
+            "import os; print(os.environ['FORGE_EVAL_CHILD_SENTINEL'])",
+        ],
+        cwd=tmp_path,
+        timeout_seconds=2,
+        env=env,
+    )
+
+    assert result.returncode == 0
+    assert result.stdout.strip() == "isolated"
 
 
 def test_bounded_process_returns_completed_output(tmp_path: Path) -> None:

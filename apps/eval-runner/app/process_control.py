@@ -4,7 +4,7 @@ import os
 import signal
 import subprocess
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -36,6 +36,7 @@ def run_bounded_process(
     cancel_requested: CancelRequested = never_cancelled,
     input_text: str | None = None,
     shell: bool = False,
+    env: Mapping[str, str] | None = None,
 ) -> BoundedProcessResult:
     started = time.monotonic()
     process = subprocess.Popen(
@@ -47,6 +48,7 @@ def run_bounded_process(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
+        env=dict(env) if env is not None else None,
     )
     deadline = started + timeout_seconds
     pending_input = input_text
