@@ -316,6 +316,9 @@ class ForgeAgentRunner:
                     "HOME": str(runtime_home),
                     "USERPROFILE": str(runtime_home),
                     "FORGE_EVAL_RUNTIME_STATE": str(runtime_state),
+                    "XDG_CACHE_HOME": str(runtime_state / "cache"),
+                    "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
+                    "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
                 }
             )
             payload = {
@@ -485,6 +488,9 @@ class ForgeAgentRunner:
                     "PYTHONDONTWRITEBYTECODE": "1",
                     "PYTHONPYCACHEPREFIX": str(runtime_state / "python-cache"),
                     "PYTEST_ADDOPTS": "-p no:cacheprovider",
+                    "XDG_CACHE_HOME": str(runtime_state / "cache"),
+                    "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
+                    "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
                 }
             )
             setup_outputs = run_setup_commands(
@@ -662,6 +668,15 @@ class ForgeAgentRunner:
                                 "runtime_state": "runtime-state",
                                 "runtime_home": "runtime-state/home",
                                 "continuity_database": "runtime-state/continuity.db",
+                            },
+                            {
+                                "event_type": "eval_cache_isolation",
+                                "cache_roots": {
+                                    "xdg_cache_home": "runtime-state/cache",
+                                    "bun_install_cache_dir": "runtime-state/bun-cache",
+                                    "uv_cache_dir": "runtime-state/uv-cache",
+                                },
+                                "workspace_allowlist": [".bun-cache"],
                             },
                         ]
                     }

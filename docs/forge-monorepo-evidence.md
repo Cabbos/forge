@@ -59,6 +59,12 @@ development campaigns stop at fail-closed boundaries (unknown charge or patch
 replay/trust failure) without replay. Therefore there is no complete trusted
 30-attempt arm, no paired A/B winner, and no valid 20-case holdout claim yet.
 
+The latest offline hardening also isolates Bun/uv cache roots under each
+attempt's runtime state. Only the explicitly named `.bun-cache` disposable
+directory is filtered by both workspace observers; source files remain in the
+observed and replayed patch boundary. This closes the cache false-positive
+path without weakening fail-closed report/observation mismatch checks.
+
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned
 baseline was written by Forge, nor does a passing contract gate alone prove

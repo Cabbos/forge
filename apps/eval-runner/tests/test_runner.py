@@ -1303,6 +1303,9 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
         "assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'\n"
         "assert os.environ['PYTHONPYCACHEPREFIX'] == str(runtime_state/'python-cache')\n"
         "assert os.environ['PYTEST_ADDOPTS'] == '-p no:cacheprovider'\n"
+        "assert os.environ['XDG_CACHE_HOME'] == str(runtime_state/'cache')\n"
+        "assert os.environ['BUN_INSTALL_CACHE_DIR'] == str(runtime_state/'bun-cache')\n"
+        "assert os.environ['UV_CACHE_DIR'] == str(runtime_state/'uv-cache')\n"
         "(runtime_home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
         "(runtime_home/'.forge'/'sessions'/'eval.json').write_text('{}')\n"
         "sqlite3.connect(runtime_state/'registry.db').close()\n"
@@ -1344,6 +1347,15 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
         "runtime_state": "runtime-state",
         "runtime_home": "runtime-state/home",
         "continuity_database": "runtime-state/continuity.db",
+    } in trace.raw_events
+    assert {
+        "event_type": "eval_cache_isolation",
+        "cache_roots": {
+            "xdg_cache_home": "runtime-state/cache",
+            "bun_install_cache_dir": "runtime-state/bun-cache",
+            "uv_cache_dir": "runtime-state/uv-cache",
+        },
+        "workspace_allowlist": [".bun-cache"],
     } in trace.raw_events
 
 

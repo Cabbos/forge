@@ -85,6 +85,39 @@ def test_workspace_snapshot_is_ordered_and_excludes_git_metadata(tmp_path: Path)
     assert ".git/config" not in snapshot
 
 
+def test_workspace_snapshot_excludes_controller_owned_bun_cache(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    cache_file = workspace / ".bun-cache" / "uv" / "interpreter.msgpack"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"ephemeral cache")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == []
+    assert observation.mismatch_files == []
+
+
+def test_workspace_snapshot_still_observes_product_files_next_to_bun_cache(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    (workspace / ".bun-cache").mkdir()
+    (workspace / ".bun-cache" / "ignored.bin").write_bytes(b"cache")
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("changed\n", encoding="utf-8")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == ["src/app.py"]
+    assert observation.mismatch_files == ["src/app.py"]
+
+
 def test_workspace_observer_marks_snapshot_errors_unavailable(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

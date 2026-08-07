@@ -67,6 +67,19 @@ an independent trust failure before a paired arm existed. These artifacts are
 diagnostic evidence, not a comparison result; the controller did not retry the
 failed control attempt.
 
+## Cache-boundary hardening
+
+The `cf7e4d4d` control diagnostic exposed a real harness boundary: the model
+overrode the inherited Bun/uv cache variables and wrote `.bun-cache/` inside
+the observed workspace. That attempt was correctly stopped as untrusted
+(`patch_replay_failed`) rather than replayed. The follow-up harness change now
+routes `XDG_CACHE_HOME`, `BUN_INSTALL_CACHE_DIR`, and `UV_CACHE_DIR` into the
+isolated `runtime-state`, and the Python/Rust observers share a narrow,
+explicit `.bun-cache` disposable-directory allowlist. Product files beside
+that directory remain observed, and a model-reported cache path still creates
+a report/observation mismatch. This fix is offline-tested; the old paid
+artifact remains immutable diagnostic evidence and is not replayed.
+
 ## Next gate
 
 The offline H3 work should diagnose or improve the bulk-update execution path,

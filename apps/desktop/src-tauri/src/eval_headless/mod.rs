@@ -1079,6 +1079,44 @@ deleted file mode 100644\n\
     }
 
     #[test]
+    fn workspace_snapshot_diff_ignores_controller_owned_bun_cache() {
+        let before = std::collections::HashMap::from([
+            (
+                ".bun-cache/uv/old.msgpack".to_string(),
+                types::SnapshotFile {
+                    contents: b"old cache".to_vec(),
+                },
+            ),
+            (
+                "src/app.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"before\n".to_vec(),
+                },
+            ),
+        ]);
+        let after = std::collections::HashMap::from([
+            (
+                ".bun-cache/uv/new.msgpack".to_string(),
+                types::SnapshotFile {
+                    contents: b"new cache".to_vec(),
+                },
+            ),
+            (
+                "src/app.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"after\n".to_vec(),
+                },
+            ),
+        ]);
+
+        let (changed_files, file_diffs) = snapshot::diff_workspace_snapshots(&before, &after);
+
+        assert_eq!(changed_files, vec!["src/app.py"]);
+        assert_eq!(file_diffs.len(), 1);
+        assert_eq!(file_diffs[0].path, "src/app.py");
+    }
+
+    #[test]
     fn workspace_snapshot_diffs_replay_with_patch() {
         use std::io::Write;
         use std::process::{Command, Stdio};

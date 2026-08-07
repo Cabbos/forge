@@ -9,11 +9,14 @@
 **Tech Stack:** Rust/Tokio/Reqwest/Serde, Python 3.11/Pydantic/Pytest, canonical JSON/SHA-256, Forge headless eval protocol.
 
 **Current execution status (2026-08-08):** Tasks 1–6 are implemented and
-offline-verified. Task 7 is intentionally open: synchronized-source paid
-diagnostics have produced trusted route smokes but have also hit the controller's
-unknown-cost and patch-replay trust boundaries, so no complete 30-attempt arm or
-paired comparison is claimed. H4 holdout execution remains closed until a
-complete trusted development pair exists.
+offline-verified. A synchronized-source paid diagnostic also exposed and then
+closed a cache-boundary false positive: Bun/uv cache roots now live under
+isolated runtime state, while only the explicit `.bun-cache` disposable
+directory is excluded by both observers. Task 7 is intentionally open:
+paid diagnostics have produced trusted route smokes but have also hit the
+controller's unknown-cost and patch-replay trust boundaries, so no complete
+30-attempt arm or paired comparison is claimed. H4 holdout execution remains
+closed until a complete trusted development pair exists.
 
 ---
 
