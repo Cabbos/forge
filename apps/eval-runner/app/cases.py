@@ -40,6 +40,7 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
     for task in tasks:
         contract_only = bool(task.metadata.get("contract_only"))
         real_coding = task.metadata.get("real_coding") is True
+        expected_no_change = task.metadata.get("expected_no_change") is True
         has_verification = bool(task.verification_command or task.validation_commands)
 
         if not contract_only and not has_verification:
@@ -53,13 +54,22 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
                     ),
                 )
             )
-        if not contract_only and not task.expected_files_changed:
+        if not contract_only and not expected_no_change and not task.expected_files_changed:
             issues.append(
                 CaseQualityIssue(
                     task_id=task.id,
                     severity="warning",
                     code="missing_expected_files",
                     message="Executable eval case has no expected_files_changed assertions.",
+                )
+            )
+        if expected_no_change and task.expected_files_changed:
+            issues.append(
+                CaseQualityIssue(
+                    task_id=task.id,
+                    severity="error",
+                    code="expected_no_change_conflict",
+                    message="No-change eval case cannot declare expected_files_changed.",
                 )
             )
         if task.fixture_path and not Path(task.fixture_path).exists():

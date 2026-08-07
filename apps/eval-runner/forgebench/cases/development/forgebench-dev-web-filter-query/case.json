@@ -1,0 +1,26 @@
+{
+  "id": "forgebench-dev-web-filter-query",
+  "title": "Preserve quoted task filters",
+  "prompt": "Make the web task filter preserve quoted multi-word search text alongside a status filter.",
+  "fixture_id": "forgebench-monorepo",
+  "fixture_version": "1.0.0",
+  "fixture_path": "../../../forgebench-monorepo",
+  "scenario_path": "./scenario",
+  "dataset_split": "development",
+  "hidden_verifier_id": "dev-web-filter-query",
+  "full_verification_command": "python3 tools/release/verify.py",
+  "validation_commands": ["bun test tests/cases/web-filter-query.test.ts"],
+  "pass_to_pass_commands": ["bun test tests/baseline/config.test.ts"],
+  "fail_to_pass_commands": ["bun test tests/cases/web-filter-query.test.ts"],
+  "expected_files_changed": ["apps/web-console/src/task-list.tsx", "packages/domain/src/task-query.ts"],
+  "forbidden_files_changed": ["package.json", "pyproject.toml", "tools/release/verify.py", ".forge/**"],
+  "required_scores": ["functional_correctness", "scope_ok"],
+  "max_duration_seconds": 900,
+  "max_model_rounds": 40,
+  "tags": ["forgebench", "development", "typescript", "frontend"],
+  "metadata": {
+    "real_coding": true,
+    "holdout_unsealed": false,
+    "allowed_source_paths": ["apps/web-console/src/task-list.tsx", "packages/domain/src/task-query.ts"]
+  }
+}

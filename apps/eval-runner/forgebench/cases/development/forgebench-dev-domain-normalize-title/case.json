@@ -1,0 +1,26 @@
+{
+  "id": "forgebench-dev-domain-normalize-title",
+  "title": "Normalize task titles",
+  "prompt": "Normalize repeated Unicode whitespace in task titles to one plain space while preserving the existing public API.",
+  "fixture_id": "forgebench-monorepo",
+  "fixture_version": "1.0.0",
+  "fixture_path": "../../../forgebench-monorepo",
+  "scenario_path": "./scenario",
+  "dataset_split": "development",
+  "hidden_verifier_id": "dev-domain-normalize-title",
+  "full_verification_command": "python3 tools/release/verify.py",
+  "validation_commands": ["bun test tests/cases/domain-normalize-title.test.ts"],
+  "pass_to_pass_commands": ["bun test tests/baseline/ui.test.ts"],
+  "fail_to_pass_commands": ["bun test tests/cases/domain-normalize-title.test.ts"],
+  "expected_files_changed": ["packages/domain/src/task-title.ts"],
+  "forbidden_files_changed": ["package.json", "pyproject.toml", "tools/release/verify.py", ".forge/**"],
+  "required_scores": ["functional_correctness", "scope_ok"],
+  "max_duration_seconds": 900,
+  "max_model_rounds": 40,
+  "tags": ["forgebench", "development", "typescript", "bug-fix"],
+  "metadata": {
+    "real_coding": true,
+    "holdout_unsealed": false,
+    "allowed_source_paths": ["packages/domain/src/task-title.ts"]
+  }
+}
