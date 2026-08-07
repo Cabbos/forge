@@ -135,6 +135,7 @@ DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻
 
 DeepSeek H2 official transport A/B 只比较 DeepSeek V4 Flash 的两条官方路由：Anthropic Messages (`https://api.deepseek.com/anthropic`) 与 OpenAI-compatible Chat Completions (`https://api.deepseek.com`)。路由覆盖是 eval-only 的 isolated route override：controller 在子进程隔离 `HOME` 下写入无 secret 的临时 profile，并由 Rust 以 typed route identity 做 fail-closed attestation；桌面默认 DeepSeek 仍然是 Anthropic，用户设置和共享 session builder 不变。付费 campaign 在 route identity mismatch、provider schema drift、unknown usage/cost、untrusted workspace、patch replay failure 或 interrupted call 时立即停止且不重放 pending call。Forge 不声称支持 DeepSeek OpenAI Responses；H2 证明的是 development split 的协议与 harness 对照，不是 holdout 或 frontier 成绩。详见 [`docs/forgebench-h2-transport-ab.md`](docs/forgebench-h2-transport-ab.md)。
 H3 现在为每条 Forge trace 写入 bounded harness contract evidence：minimal context manifest、typed tool-result envelope 和双轮 no-progress 一次 redirect/再停止的 stagnation decision；大输出保留 digest 而不把无限内容塞入 trace。development A/B 的 winner 还必须通过 paired-bootstrap 的 success/verification/scope 非劣性门控，区间不确定时保持 `no_material_difference`。该 gate 只证明 harness 证据边界，不证明付费分数提升。详见 [`docs/forgebench-h3-harness-contracts.md`](docs/forgebench-h3-harness-contracts.md)。
+H4 的 frozen holdout release gate 已把 20 cases × 3 repetitions、80% trusted success、2% scope、12 轮数、100% 证据覆盖和 35 CNY budget 写成 canonical report verifier；离线 gate 只证明决策边界，未伪造付费 holdout 结果。详见 [`docs/forgebench-h4-holdout-gate.md`](docs/forgebench-h4-holdout-gate.md)。
 
 ## 开发
 

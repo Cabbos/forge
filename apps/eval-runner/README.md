@@ -12,6 +12,7 @@ The eval doctor precheck runs with a disposable home and never reads desktop ses
 ForgeBench is the canonical executable real-coding dataset: 10 development cases and 20 sealed holdout cases share one versioned product monorepo, run in independent copies with scenario overlays, and are frozen by content fingerprints for the fixture, case splits, and opaque hidden verifiers. This H0B state proves dataset integrity and polarity, not paid holdout success or a frontier KPI.
 
 The offline H3 contract evidence is documented in [`docs/forgebench-h3-harness-contracts.md`](../../docs/forgebench-h3-harness-contracts.md). It is a harness-readiness gate, not a paid model-quality claim.
+The H4 release decision boundary is implemented as a canonical 60-attempt holdout report and verifier in [`docs/forgebench-h4-holdout-gate.md`](../../docs/forgebench-h4-holdout-gate.md); the offline gate validates the contract but does not fabricate a holdout result.
 The repository-wide evidence index is [`docs/forge-monorepo-evidence.md`](../../docs/forge-monorepo-evidence.md); it links the desktop, eval-runner, website, acceptance matrix, provenance campaign, and the explicit H0–H4 claim boundaries.
 
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
