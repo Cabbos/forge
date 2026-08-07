@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 from decimal import Decimal
+from pathlib import PurePosixPath
 from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -164,6 +165,96 @@ class BaselineRunResult(EvalModel):
             raise ValueError("blocked baseline result requires blockers")
         if self.status != "blocked" and self.blockers:
             raise ValueError("non-blocked baseline result cannot contain blockers")
+        return self
+
+
+class BaselineArtifactIndexEntry(EvalModel):
+    path: str
+    sha256: Sha256
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: str) -> str:
+        path = PurePosixPath(value)
+        if (
+            not value
+            or path.is_absolute()
+            or ".." in path.parts
+            or path.parts[:1] != ("attempts",)
+            or path.suffix != ".json"
+        ):
+            raise ValueError("artifact index path must be a logical attempt path")
+        return value
+
+
+class BaselineArtifactIndex(EvalModel):
+    schema_version: Literal[1] = 1
+    campaign_id: str
+    artifacts: list[BaselineArtifactIndexEntry]
+
+    @model_validator(mode="after")
+    def validate_artifact_index(self) -> "BaselineArtifactIndex":
+        _validate_safe_ids(self.campaign_id)
+        paths = [artifact.path for artifact in self.artifacts]
+        if paths != sorted(paths) or len(paths) != len(set(paths)):
+            raise ValueError("artifact index paths must be sorted and unique")
+        return self
+
+
+class BaselineReport(EvalModel):
+    schema_version: Literal[1] = 1
+    campaign_id: str
+    status: Literal["complete", "incomplete", "blocked"]
+    source_commit: GitSha1
+    dirty_state_sha256: Sha256
+    dataset_fingerprint: Sha256
+    harness_fingerprint: Sha256
+    provider: Literal["deepseek"]
+    model: Literal["deepseek-v4-flash"]
+    transport: Literal["anthropic_messages"]
+    expected_attempts: Literal[30]
+    completed_attempts: int = Field(ge=0, le=30)
+    trusted_attempts: int = Field(ge=0, le=30)
+    trusted_success_rate: float = Field(ge=0, le=1)
+    verification_pass_rate: float = Field(ge=0, le=1)
+    scope_violation_rate: float = Field(ge=0, le=1)
+    median_model_rounds: float = Field(ge=0)
+    p95_model_rounds: float = Field(ge=0)
+    median_cost_cny: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    p95_cost_cny: Decimal | None = Field(default=None, ge=0, allow_inf_nan=False)
+    total_cost_cny: Decimal = Field(ge=0, allow_inf_nan=False)
+    unknown_cost_attempts: int = Field(ge=0, le=30)
+    failure_categories: dict[str, int]
+    per_task: dict[str, dict[str, int | float | bool]]
+    trust_blockers: dict[str, int]
+    attempt_artifact_index_sha256: Sha256
+
+    @model_validator(mode="after")
+    def validate_report(self) -> "BaselineReport":
+        _validate_safe_ids(self.campaign_id)
+        if self.trusted_attempts > self.completed_attempts:
+            raise ValueError("trusted attempts cannot exceed completed attempts")
+        if self.unknown_cost_attempts > self.completed_attempts:
+            raise ValueError("unknown-cost attempts cannot exceed completed attempts")
+        if (self.median_cost_cny is None) != (self.p95_cost_cny is None):
+            raise ValueError("cost percentiles must both be known or both be null")
+        if self.status == "complete" and (
+            self.completed_attempts != self.expected_attempts
+            or self.trusted_attempts != self.completed_attempts
+            or self.trust_blockers
+        ):
+            raise ValueError("complete report requires all attempts to be trusted")
+        if self.status == "incomplete" and (
+            self.completed_attempts >= self.expected_attempts or self.trust_blockers
+        ):
+            raise ValueError("incomplete report must be unblocked and unfinished")
+        if self.status == "blocked" and not self.trust_blockers:
+            raise ValueError("blocked report requires trust blockers")
+        if any(not key.strip() or value < 0 for key, value in self.failure_categories.items()):
+            raise ValueError("failure category counts must be nonnegative")
+        if any(not key.strip() or value < 1 for key, value in self.trust_blockers.items()):
+            raise ValueError("trust blocker counts must be positive")
+        _reject_secret_material(self.model_dump(mode="json"))
         return self
 
 

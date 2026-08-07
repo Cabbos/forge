@@ -5,20 +5,26 @@ import shutil
 import stat
 import subprocess
 import tempfile
+from collections import Counter, defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
+from math import ceil
 from pathlib import Path
+from statistics import median
 from typing import Any, TypeVar
 
 from pydantic import ValidationError
 
 from app.baseline_models import (
+    BaselineArtifactIndex,
+    BaselineArtifactIndexEntry,
     BaselineAttemptArtifact,
     BaselineBudgetEntry,
     BaselineCampaignMetadata,
     BaselinePendingAttempt,
+    BaselineReport,
     BaselineRunResult,
     BaselineVerification,
     baseline_artifact_digest,
@@ -34,6 +40,7 @@ from app.harness_profiles import (
     load_harness_profile,
 )
 from app.judge_calibration import score_can_gate_ci
+from app.metrics import trace_passed
 from app.models import (
     AgentTrace,
     DatasetSplit,
@@ -64,7 +71,18 @@ _ATTEMPTS_DIR = "attempts"
 _LOCKS_DIR = "locks"
 _PROFILE_LOCK = "profile.json"
 _DATASET_LOCK = "dataset-lock.json"
+_ARTIFACT_INDEX_FILE = "artifact-index.json"
+_REPORT_FILE = "baseline-report.json"
 _INTERRUPTED_BLOCKER = "interrupted_paid_attempt_unknown_cost"
+_REPORT_SEMANTIC_BLOCKERS = {
+    _INTERRUPTED_BLOCKER,
+    "agent_identity_mismatch",
+    "campaign_budget_exceeded",
+    "forge_contract_error",
+    "per_task_cost_cap_exceeded",
+    "provider_usage_unknown",
+    "trust_result_untrusted",
+}
 _ModelT = TypeVar("_ModelT", bound=EvalModel)
 
 
@@ -210,6 +228,7 @@ def run_baseline_campaign(
                         calls_started=calls_started,
                     )
 
+                _remove_report_outputs(campaign_root)
                 pending = BaselinePendingAttempt(
                     attempt_id=attempt_id,
                     task_id=task.id,
@@ -305,16 +324,9 @@ def recover_baseline_campaign(
                 dataset_lock_path=dataset_lock_path,
                 profile_path=profile_path,
             )
-            recoverable_preflight_blockers = {
-                _INTERRUPTED_BLOCKER,
-                "agent_identity_mismatch",
+            recoverable_preflight_blockers = _REPORT_SEMANTIC_BLOCKERS | {
                 "artifact_budget_entry_count_mismatch",
                 "artifact_budget_attempt_ids_mismatch",
-                "campaign_budget_exceeded",
-                "forge_contract_error",
-                "per_task_cost_cap_exceeded",
-                "provider_usage_unknown",
-                "trust_result_untrusted",
             }
             if set(preflight.blockers) - recoverable_preflight_blockers:
                 return _blocked_result(
@@ -326,6 +338,8 @@ def recover_baseline_campaign(
             entries = _load_budget_entries(campaign_root / _BUDGET_FILE)
             entry_ids = {entry.attempt_id for entry in entries}
             pending_paths = sorted((campaign_root / _PENDING_DIR).glob("*.json"))
+            if pending_paths:
+                _remove_report_outputs(campaign_root)
             for pending_path in pending_paths:
                 pending = _read_canonical_model(
                     pending_path,
@@ -431,6 +445,14 @@ def verify_baseline_campaign(
                 tasks_by_id,
             )
         )
+        blockers.extend(
+            _verify_report_outputs(
+                campaign_root,
+                artifacts,
+                entries,
+                metadata,
+            )
+        )
         if spent_cny > metadata.budget_cny:
             blockers.append("campaign_budget_exceeded")
     except CampaignStateError as exc:
@@ -446,6 +468,256 @@ def verify_baseline_campaign(
         spent_cny=spent_cny,
         blockers=blockers,
     )
+
+
+def generate_baseline_report(
+    campaign_root: Path,
+    *,
+    repository_root: Path,
+    cases_path: Path,
+    dataset_lock_path: Path,
+    profile_path: Path,
+) -> BaselineReport:
+    verification = verify_baseline_campaign(
+        campaign_root,
+        repository_root=repository_root,
+        cases_path=cases_path,
+        dataset_lock_path=dataset_lock_path,
+        profile_path=profile_path,
+    )
+    if verification.pending_count:
+        raise ValueError("baseline report requires recovery of pending paid attempts")
+    structural_blockers = set(verification.blockers) - _REPORT_SEMANTIC_BLOCKERS
+    if structural_blockers:
+        raise ValueError("baseline campaign verification failed")
+
+    metadata = _read_canonical_model(
+        campaign_root / _CAMPAIGN_FILE,
+        BaselineCampaignMetadata,
+        "campaign_metadata_invalid",
+    )
+    artifacts = _load_attempt_artifacts(campaign_root / _ATTEMPTS_DIR)
+    entries = _load_budget_entries(campaign_root / _BUDGET_FILE)
+    artifact_index = _build_artifact_index(campaign_root, metadata, artifacts)
+    index_bytes = canonical_json_bytes(artifact_index.model_dump(mode="json")) + b"\n"
+    report = _build_baseline_report(
+        metadata,
+        artifacts,
+        entries,
+        index_sha256=sha256_bytes(index_bytes),
+    )
+    _atomic_write_bytes(campaign_root / _ARTIFACT_INDEX_FILE, index_bytes)
+    _atomic_write_model(campaign_root / _REPORT_FILE, report)
+    return report
+
+
+def _build_artifact_index(
+    campaign_root: Path,
+    metadata: BaselineCampaignMetadata,
+    artifacts: dict[str, BaselineAttemptArtifact],
+) -> BaselineArtifactIndex:
+    ordered = sorted(
+        artifacts.values(),
+        key=lambda artifact: (artifact.repetition, artifact.task_id),
+    )
+    return BaselineArtifactIndex(
+        campaign_id=metadata.campaign_id,
+        artifacts=[
+            BaselineArtifactIndexEntry(
+                path=f"{_ATTEMPTS_DIR}/{artifact.attempt_id}.json",
+                sha256=sha256_bytes(
+                    (
+                        campaign_root
+                        / _ATTEMPTS_DIR
+                        / f"{artifact.attempt_id}.json"
+                    ).read_bytes()
+                ),
+            )
+            for artifact in ordered
+        ],
+    )
+
+
+def _build_baseline_report(
+    metadata: BaselineCampaignMetadata,
+    artifacts: dict[str, BaselineAttemptArtifact],
+    entries: list[BaselineBudgetEntry],
+    *,
+    index_sha256: str,
+) -> BaselineReport:
+    ordered = sorted(
+        artifacts.values(),
+        key=lambda artifact: (artifact.repetition, artifact.task_id),
+    )
+    completed = len(ordered)
+    attempt_blockers = {
+        artifact.attempt_id: _attempt_blockers(artifact) for artifact in ordered
+    }
+    trusted = [
+        artifact
+        for artifact in ordered
+        if not attempt_blockers[artifact.attempt_id]
+    ]
+    trusted_successes = sum(1 for artifact in trusted if trace_passed(artifact.trace))
+    verification_passes = sum(
+        1
+        for artifact in ordered
+        if artifact.trace.verification_result is not None
+        and artifact.trace.verification_result.passed
+    )
+    scope_violations = sum(1 for artifact in ordered if artifact.trace.scope_violations)
+    rounds = [artifact.trace.model_rounds for artifact in ordered]
+    known_costs = [
+        artifact.usage.cost_cny
+        for artifact in ordered
+        if artifact.usage.status == "known" and artifact.usage.cost_cny is not None
+    ]
+    unknown_cost_attempts = sum(
+        1
+        for artifact in ordered
+        if artifact.usage.status != "known" or artifact.usage.cost_cny is None
+    )
+
+    failure_categories = Counter(
+        artifact.primary_failure_category for artifact in ordered
+    )
+    trust_blocker_counts: Counter[str] = Counter()
+    for artifact in ordered:
+        blockers = set(attempt_blockers[artifact.attempt_id])
+        blockers.update(artifact.trust_result.blockers)
+        trust_blocker_counts.update(blockers)
+
+    by_task: dict[str, list[BaselineAttemptArtifact]] = defaultdict(list)
+    for artifact in ordered:
+        by_task[artifact.task_id].append(artifact)
+    per_task: dict[str, dict[str, int | float | bool]] = {}
+    for task_id in metadata.task_ids:
+        task_attempts = by_task[task_id]
+        task_successes = [
+            trace_passed(artifact.trace) for artifact in task_attempts
+        ]
+        task_trusted = [
+            artifact
+            for artifact in task_attempts
+            if not attempt_blockers[artifact.attempt_id]
+        ]
+        task_trusted_successes = sum(
+            1 for artifact in task_trusted if trace_passed(artifact.trace)
+        )
+        per_task[task_id] = {
+            "attempts": len(task_attempts),
+            "trusted_attempts": len(task_trusted),
+            "trusted_successes": task_trusted_successes,
+            "successes": sum(task_successes),
+            "trusted_success_rate": (
+                task_trusted_successes / len(task_attempts)
+                if task_attempts
+                else 0.0
+            ),
+            "verification_passes": sum(
+                1
+                for artifact in task_attempts
+                if artifact.trace.verification_result is not None
+                and artifact.trace.verification_result.passed
+            ),
+            "scope_violations": sum(
+                1 for artifact in task_attempts if artifact.trace.scope_violations
+            ),
+            "median_model_rounds": (
+                float(median(artifact.trace.model_rounds for artifact in task_attempts))
+                if task_attempts
+                else 0.0
+            ),
+            "flaky": bool(task_successes)
+            and any(task_successes)
+            and not all(task_successes),
+        }
+
+    if trust_blocker_counts:
+        status = "blocked"
+    elif completed == metadata.max_attempts:
+        status = "complete"
+    else:
+        status = "incomplete"
+    total_cost = entries[-1].cumulative_cost_cny if entries else Decimal(0)
+    return BaselineReport(
+        campaign_id=metadata.campaign_id,
+        status=status,
+        source_commit=metadata.source_commit,
+        dirty_state_sha256=metadata.dirty_state_sha256,
+        dataset_fingerprint=metadata.dataset_fingerprint,
+        harness_fingerprint=metadata.harness_fingerprint,
+        provider=metadata.profile.provider,
+        model=metadata.profile.model,
+        transport=metadata.profile.transport,
+        expected_attempts=metadata.max_attempts,
+        completed_attempts=completed,
+        trusted_attempts=len(trusted),
+        trusted_success_rate=trusted_successes / completed if completed else 0.0,
+        verification_pass_rate=verification_passes / completed if completed else 0.0,
+        scope_violation_rate=scope_violations / completed if completed else 0.0,
+        median_model_rounds=float(median(rounds)) if rounds else 0.0,
+        p95_model_rounds=float(_nearest_rank_int(rounds)) if rounds else 0.0,
+        median_cost_cny=median(known_costs) if known_costs else None,
+        p95_cost_cny=(
+            _nearest_rank_decimal(known_costs) if known_costs else None
+        ),
+        total_cost_cny=total_cost,
+        unknown_cost_attempts=unknown_cost_attempts,
+        failure_categories=dict(sorted(failure_categories.items())),
+        per_task=per_task,
+        trust_blockers=dict(sorted(trust_blocker_counts.items())),
+        attempt_artifact_index_sha256=index_sha256,
+    )
+
+
+def _verify_report_outputs(
+    campaign_root: Path,
+    artifacts: dict[str, BaselineAttemptArtifact],
+    entries: list[BaselineBudgetEntry],
+    metadata: BaselineCampaignMetadata,
+) -> list[str]:
+    index_path = campaign_root / _ARTIFACT_INDEX_FILE
+    report_path = campaign_root / _REPORT_FILE
+    if not index_path.exists() and not report_path.exists():
+        return []
+    if not index_path.exists() or not report_path.exists():
+        return ["baseline_report_outputs_incomplete"]
+    try:
+        actual_index = _read_canonical_model(
+            index_path,
+            BaselineArtifactIndex,
+            "baseline_artifact_index_invalid",
+        )
+        actual_report = _read_canonical_model(
+            report_path,
+            BaselineReport,
+            "baseline_report_invalid",
+        )
+        expected_index = _build_artifact_index(campaign_root, metadata, artifacts)
+        if actual_index != expected_index:
+            return ["baseline_artifact_index_mismatch"]
+        expected_report = _build_baseline_report(
+            metadata,
+            artifacts,
+            entries,
+            index_sha256=sha256_bytes(index_path.read_bytes()),
+        )
+        if actual_report != expected_report:
+            return ["baseline_report_mismatch"]
+    except CampaignStateError as exc:
+        return [exc.blocker]
+    return []
+
+
+def _nearest_rank_int(values: list[int]) -> int:
+    ordered = sorted(values)
+    return ordered[ceil(0.95 * len(ordered)) - 1]
+
+
+def _nearest_rank_decimal(values: list[Decimal]) -> Decimal:
+    ordered = sorted(values)
+    return ordered[ceil(Decimal("0.95") * len(ordered)) - 1]
 
 
 def _verify_campaign_inputs(
@@ -929,6 +1201,17 @@ def _create_empty_file(path: Path) -> None:
 def _remove_pending(path: Path) -> None:
     path.unlink()
     _fsync_directory(path.parent)
+
+
+def _remove_report_outputs(campaign_root: Path) -> None:
+    removed = False
+    for file_name in (_ARTIFACT_INDEX_FILE, _REPORT_FILE):
+        path = campaign_root / file_name
+        if path.exists():
+            path.unlink()
+            removed = True
+    if removed:
+        _fsync_directory(campaign_root)
 
 
 def _fsync_directory(path: Path) -> None:

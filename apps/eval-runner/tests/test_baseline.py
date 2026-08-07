@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.baseline import (
     BaselineCrashInjected,
+    generate_baseline_report,
     initialize_baseline_campaign,
     recover_baseline_campaign,
     run_baseline_campaign,
@@ -30,6 +31,7 @@ from app.models import (
     AgentTrace,
     EvalProvider,
     EvaluationTask,
+    FailureCategory,
     ForgeRunEvidence,
     LeakageCheck,
     TrustGateResult,
@@ -169,6 +171,32 @@ class FakeRunner:
             workspace_available=self.workspace_available,
             patch_replay_ok=self.patch_replay_ok,
         )
+
+
+class SequenceRunner(FakeRunner):
+    def run_task(self, task: EvaluationTask) -> AgentTrace:
+        sequence = len(self.calls) + 1
+        self.event = provider_event(
+            input_tokens=sequence * 1_000,
+            cache_read_tokens=0,
+            output_tokens=0,
+        )
+        trace = super().run_task(task)
+        update: dict[str, Any] = {"model_rounds": sequence}
+        if sequence == 11:
+            update.update(
+                {
+                    "verification_result": VerificationResult(
+                        command="python3 tools/release/verify.py",
+                        passed=False,
+                        exit_code=1,
+                    ),
+                    "error": "verification_failed",
+                    "failure_reason": "Sequence fixture failure.",
+                    "failure_category": FailureCategory.VERIFICATION_FAILED,
+                }
+            )
+        return trace.model_copy(update=update)
 
 
 def write_profile(
@@ -580,6 +608,148 @@ def test_recovery_accounts_complete_unknown_usage_artifact_then_stops(
     assert "provider_usage_unknown" in recovered.blockers
     assert recovered.spent_cny == Decimal("1")
     assert list((campaign / "pending").iterdir()) == []
+
+
+def test_report_has_deterministic_percentiles_and_flaky_per_task_results(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=SequenceRunner(campaign_root=campaign),
+        max_attempts=21,
+    )
+    assert result.status == "paused"
+
+    report = generate_baseline_report(**campaign_kwargs(campaign))
+    report_bytes = (campaign / "baseline-report.json").read_bytes()
+    index_bytes = (campaign / "artifact-index.json").read_bytes()
+    first_task = json.loads(DATASET_LOCK.read_text())["development"]["ids"][0]
+
+    assert report.status == "incomplete"
+    assert report.completed_attempts == 21
+    assert report.trusted_attempts == 21
+    assert report.trusted_success_rate == pytest.approx(20 / 21)
+    assert report.verification_pass_rate == pytest.approx(20 / 21)
+    assert report.scope_violation_rate == 0
+    assert report.median_model_rounds == 11
+    assert report.p95_model_rounds == 20
+    assert report.median_cost_cny == Decimal("0.011")
+    assert report.p95_cost_cny == Decimal("0.020")
+    assert report.total_cost_cny == Decimal("0.231")
+    assert report.unknown_cost_attempts == 0
+    assert report.failure_categories == {"none": 20, "verification_failed": 1}
+    assert report.per_task[first_task] == {
+        "attempts": 3,
+        "trusted_attempts": 3,
+        "trusted_successes": 2,
+        "successes": 2,
+        "trusted_success_rate": pytest.approx(2 / 3),
+        "verification_passes": 2,
+        "scope_violations": 0,
+        "median_model_rounds": 11.0,
+        "flaky": True,
+    }
+    assert report.trust_blockers == {}
+    assert report.attempt_artifact_index_sha256 == sha256_bytes(index_bytes)
+    assert json.loads(report_bytes)["attempt_artifact_index_sha256"] == sha256_bytes(
+        index_bytes
+    )
+
+    regenerated = generate_baseline_report(**campaign_kwargs(campaign))
+    assert regenerated == report
+    assert (campaign / "baseline-report.json").read_bytes() == report_bytes
+    assert (campaign / "artifact-index.json").read_bytes() == index_bytes
+
+
+def test_report_is_blocked_for_unknown_cost_and_counts_blockers(tmp_path: Path) -> None:
+    campaign = initialize(tmp_path)
+    run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(
+            campaign_root=campaign,
+            event=provider_event(
+                input_tokens=None,
+                cache_read_tokens=None,
+                output_tokens=None,
+                reason="provider_omitted",
+            ),
+        ),
+    )
+
+    report = generate_baseline_report(**campaign_kwargs(campaign))
+
+    assert report.status == "blocked"
+    assert report.completed_attempts == 1
+    assert report.trusted_attempts == 0
+    assert report.trusted_success_rate == 0
+    assert report.unknown_cost_attempts == 1
+    assert report.median_cost_cny is None
+    assert report.p95_cost_cny is None
+    assert report.total_cost_cny == Decimal("1")
+    assert report.trust_blockers["provider_usage_unknown"] == 1
+
+
+def test_report_is_complete_only_after_all_thirty_verified_attempts(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+    )
+    assert result.status == "complete"
+
+    report = generate_baseline_report(**campaign_kwargs(campaign))
+
+    assert report.status == "complete"
+    assert report.expected_attempts == 30
+    assert report.completed_attempts == 30
+    assert report.trusted_attempts == 30
+    assert report.trust_blockers == {}
+    assert verify_baseline_campaign(**campaign_kwargs(campaign)).ok is True
+
+
+def test_verify_detects_tampered_report_artifact_index(tmp_path: Path) -> None:
+    campaign = initialize(tmp_path)
+    run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+    generate_baseline_report(**campaign_kwargs(campaign))
+    index_path = campaign / "artifact-index.json"
+    index_path.write_bytes(index_path.read_bytes() + b" ")
+
+    verification = verify_baseline_campaign(**campaign_kwargs(campaign))
+
+    assert verification.ok is False
+    assert "baseline_artifact_index_invalid" in verification.blockers
+
+
+def test_resuming_after_incomplete_report_invalidates_stale_outputs(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+    generate_baseline_report(**campaign_kwargs(campaign))
+    assert (campaign / "baseline-report.json").exists()
+    assert (campaign / "artifact-index.json").exists()
+
+    resumed = run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+
+    assert resumed.status == "paused"
+    assert not (campaign / "baseline-report.json").exists()
+    assert not (campaign / "artifact-index.json").exists()
+    assert verify_baseline_campaign(**campaign_kwargs(campaign)).ok is True
 
 
 @pytest.mark.parametrize(
