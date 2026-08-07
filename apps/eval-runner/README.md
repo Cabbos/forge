@@ -61,6 +61,7 @@ forge-eval-runner/
     sandbox.py    Workspace cleanliness and future-state leakage checks
     patches.py    Patch replay and normalized patch helpers
     harness_checks.py  Golden harness self-checks
+    harness_contracts.py  Bounded context/tool/progress evidence contracts
     agent_adapter.py  Stable external-agent trace adapter contract
     trace_import.py  Production trace to eval case promotion
     main.py       FastAPI app and route handlers
