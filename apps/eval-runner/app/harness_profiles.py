@@ -69,6 +69,8 @@ class HarnessProfileV1(EvalModel):
     profile_id: Literal[
         "deepseek-v4-flash-anthropic-baseline-v1",
         "deepseek-v4-flash-openai-chat-control-v1",
+        "deepseek-v4-flash-anthropic-minimal-v1",
+        "deepseek-v4-flash-openai-chat-minimal-v1",
     ]
     provider: Literal["deepseek"]
     model: Literal["deepseek-v4-flash"]
@@ -112,17 +114,41 @@ class HarnessProfileV1(EvalModel):
     @model_validator(mode="after")
     def validate_route_identity(self) -> "HarnessProfileV1":
         expected = OFFICIAL_DEEPSEEK_ROUTES.get((self.transport, self.endpoint_family))
-        expected_profile = {
-            ("anthropic_messages", "anthropic"): "deepseek-v4-flash-anthropic-baseline-v1",
-            ("openai_chat_completions", "openai"): "deepseek-v4-flash-openai-chat-control-v1",
-        }.get((self.transport, self.endpoint_family))
+        expected_profiles = {
+            ("anthropic_messages", "anthropic", "current_product_v1"): (
+                "deepseek-v4-flash-anthropic-baseline-v1"
+            ),
+            ("openai_chat_completions", "openai", "current_product_v1"): (
+                "deepseek-v4-flash-openai-chat-control-v1"
+            ),
+            ("anthropic_messages", "anthropic", "minimal_v1"): (
+                "deepseek-v4-flash-anthropic-minimal-v1"
+            ),
+            ("openai_chat_completions", "openai", "minimal_v1"): (
+                "deepseek-v4-flash-openai-chat-minimal-v1"
+            ),
+        }
+        expected_profile = expected_profiles.get(
+            (self.transport, self.endpoint_family, self.prompt_mode)
+        )
+        minimal_policy = (
+            self.prompt_mode == "minimal_v1"
+            and self.context_policy == "task_local_v1"
+            and self.tool_result_policy == "bounded_structured_v1"
+            and self.stagnation_policy == "semantic_progress_v1"
+        )
+        current_policy = (
+            self.prompt_mode == "current_product_v1"
+            and self.context_policy == "current_product_v1"
+            and self.tool_result_policy == "current_product_v1"
+            and self.stagnation_policy == "current_loop_guard_v1"
+        )
         if (
             expected is None
             or self.profile_id != expected_profile
-            or (
-                self.profile_id == "deepseek-v4-flash-openai-chat-control-v1"
-                and self.base_url is None
-            )
+            or (self.prompt_mode == "minimal_v1" and not minimal_policy)
+            or (self.prompt_mode == "current_product_v1" and not current_policy)
+            or (self.endpoint_family == "openai" and self.base_url is None)
             or (self.base_url is not None and self.base_url != expected)
         ):
             raise ValueError("profile identity must match an approved route")

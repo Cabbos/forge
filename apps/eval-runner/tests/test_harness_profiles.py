@@ -27,6 +27,16 @@ CONTROL_PROFILE_PATH = (
     / "profiles"
     / "deepseek-v4-flash-openai-chat-control-v1.json"
 )
+MINIMAL_PROFILE_PATHS = (
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-anthropic-minimal-v1.json",
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-openai-chat-minimal-v1.json",
+)
 
 
 def valid_profile_payload() -> dict[str, object]:
@@ -77,6 +87,24 @@ def valid_control_profile_payload() -> dict[str, object]:
     }
 
 
+def valid_minimal_profile_payload(*, openai: bool = False) -> dict[str, object]:
+    payload = valid_control_profile_payload() if openai else valid_profile_payload()
+    payload.update(
+        {
+            "profile_id": (
+                "deepseek-v4-flash-openai-chat-minimal-v1"
+                if openai
+                else "deepseek-v4-flash-anthropic-minimal-v1"
+            ),
+            "prompt_mode": "minimal_v1",
+            "context_policy": "task_local_v1",
+            "tool_result_policy": "bounded_structured_v1",
+            "stagnation_policy": "semantic_progress_v1",
+        }
+    )
+    return payload
+
+
 def test_h2_committed_profiles_are_canonical_distinct_and_route_only() -> None:
     baseline = load_harness_profile(PROFILE_PATH)
     control = load_harness_profile(CONTROL_PROFILE_PATH)
@@ -91,6 +119,20 @@ def test_h2_committed_profiles_are_canonical_distinct_and_route_only() -> None:
     baseline_dimensions = baseline.model_dump(exclude=route_fields)
     control_dimensions = control.model_dump(exclude=route_fields)
     assert control_dimensions == baseline_dimensions
+
+
+def test_h3_committed_minimal_profiles_are_canonical_and_policy_bound() -> None:
+    profiles = [load_harness_profile(path) for path in MINIMAL_PROFILE_PATHS]
+
+    assert all(
+        path.read_bytes() == harness_profile_bytes(profile) + b"\n"
+        for path, profile in zip(MINIMAL_PROFILE_PATHS, profiles, strict=True)
+    )
+    assert all(profile.prompt_mode == "minimal_v1" for profile in profiles)
+    assert all(profile.context_policy == "task_local_v1" for profile in profiles)
+    assert all(profile.tool_result_policy == "bounded_structured_v1" for profile in profiles)
+    assert all(profile.stagnation_policy == "semantic_progress_v1" for profile in profiles)
+    assert len({harness_profile_fingerprint(profile) for profile in profiles}) == 2
 
 
 def test_h2_preserves_legacy_h1_profile_bytes_and_fingerprint(tmp_path: Path) -> None:
@@ -112,6 +154,7 @@ def test_h2_preserves_legacy_h1_profile_bytes_and_fingerprint(tmp_path: Path) ->
         harness_profile_fingerprint(profile)
         == "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66"
     )
+    assert PROFILE_PATH.read_bytes() == harness_profile_bytes(profile) + b"\n"
 
 
 @pytest.mark.parametrize(
@@ -246,6 +289,32 @@ def test_h1_profile_is_strict_canonical_and_development_only() -> None:
         == "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66"
     )
     assert PROFILE_PATH.read_bytes() == harness_profile_bytes(profile) + b"\n"
+
+
+@pytest.mark.parametrize("openai", [False, True])
+def test_h3_minimal_profiles_bind_policy_identity(openai: bool) -> None:
+    profile = HarnessProfileV1.model_validate(valid_minimal_profile_payload(openai=openai))
+
+    assert profile.prompt_mode == "minimal_v1"
+    assert profile.context_policy == "task_local_v1"
+    assert profile.tool_result_policy == "bounded_structured_v1"
+    assert profile.stagnation_policy == "semantic_progress_v1"
+
+
+def test_h3_minimal_profile_rejects_mixed_policy_fields() -> None:
+    payload = valid_minimal_profile_payload()
+    payload["context_policy"] = "current_product_v1"
+
+    with pytest.raises(ValidationError):
+        HarnessProfileV1.model_validate(payload)
+
+
+def test_h3_openai_minimal_profile_requires_explicit_base_url() -> None:
+    payload = valid_minimal_profile_payload(openai=True)
+    payload.pop("base_url")
+
+    with pytest.raises(ValidationError):
+        HarnessProfileV1.model_validate(payload)
 
 
 def test_h1_price_table_matches_official_cny_snapshot() -> None:

@@ -109,7 +109,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "frontier harness contract evidence",
       command:
-        'cd apps/eval-runner && uv run pytest tests/test_harness_contracts.py tests/test_harness_telemetry.py tests/test_baseline_comparison.py tests/test_runner.py -k "harness_contract or failure_taxonomy or harness_telemetry or compare or repair_overrun or minimal_policy"',
+        'cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_harness_contracts.py tests/test_harness_telemetry.py tests/test_baseline_comparison.py tests/test_runner.py -k "h3_minimal or harness_contract or failure_taxonomy or harness_telemetry or compare or repair_overrun or minimal_policy"',
     },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {

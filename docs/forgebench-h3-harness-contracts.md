@@ -10,6 +10,11 @@ needed for frontier tuning explicit and bounded before another paid campaign.
   `task_local_v1` context mode. It caps the selected context list, renders a
   compact inspect/edit/verify/one-repair contract, and fingerprints the policy
   separately from provider credentials.
+- The committed minimal profiles are
+  `deepseek-v4-flash-anthropic-minimal-v1` and
+  `deepseek-v4-flash-openai-chat-minimal-v1`. They are route-bound canonical
+  artifacts; H1 keeps its legacy omitted `base_url`, while H2 records the
+  explicit OpenAI-compatible URL.
 - `ContextManifest` records only selected context paths, tier, origin, priority,
   byte/token estimates, content hashes, duplicate groups, and same-name
   conflicts. Source content is never copied into the manifest.
@@ -51,7 +56,8 @@ Run the offline gate:
 scripts/acceptance.sh --only "frontier harness contract evidence"
 ```
 
-The gate covers the pure contract tests and a Forge runner integration test.
+The gate covers the canonical minimal profiles, pure contract tests, and a Forge
+runner integration test.
 This is development-split harness evidence only. H4 holdout execution remains
 closed until a complete, trusted development A/B comparison exists and all
 paid interruptions have a known charge or an explicit unknown-cost blocker.
