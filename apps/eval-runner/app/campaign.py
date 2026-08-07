@@ -16,6 +16,16 @@ from typing import Any, Literal
 from pydantic import Field, model_validator
 
 from app.artifact_hashing import IGNORED_TREE_PARTS, canonical_tree_digest
+from app.campaign_verify import (
+    ARTIFACT_INDEX_NAME,
+    BUILD_MANIFEST_NAME,
+    FINALIZE_COMMIT_SUBJECT,
+    build_artifact_index,
+    expected_artifact_paths,
+    final_tree_digest,
+    tree_digest_at_commit,
+    verify_accepted_commit_chain,
+)
 from app.cases import load_cases
 from app.forgebench import verify_catalog
 from app.hidden_verifiers import run_hidden_verifier
@@ -40,9 +50,13 @@ from app.provenance import (
 from app.provenance_models import (
     SAFE_ID_PATTERN,
     SECRET_PATTERN,
+    ArtifactDigest,
+    ControllerIntervention,
+    ForgeBuildManifest,
     ForgeProvenanceEntry,
     GitSha1,
     Sha256,
+    VerificationDigest,
 )
 from app.runner import run_shell_commands
 
@@ -452,6 +466,179 @@ def _recover_pending_accept_locked(campaign_root: Path) -> dict[str, str]:
     }
 
 
+def finalize_campaign(campaign_root: Path) -> dict[str, str]:
+    with _campaign_lock(campaign_root):
+        return _finalize_campaign_locked(campaign_root)
+
+
+def _finalize_campaign_locked(campaign_root: Path) -> dict[str, str]:
+    state = _load_campaign_state(campaign_root, refuse_pending=True)
+    entries: list[ForgeProvenanceEntry] = state["entries"]
+    if not entries:
+        raise ValueError("campaign cannot finalize without accepted Forge tasks")
+    worktree: Path = state["worktree"]
+    if _git(worktree, "status", "--porcelain"):
+        raise ValueError("campaign worktree must be clean before finalization")
+    product_commit = _git(worktree, "rev-parse", "HEAD")
+    if product_commit != state["expected_input_commit"]:
+        raise ValueError("campaign contains untracked controller commit state")
+    if (worktree / BUILD_MANIFEST_NAME).exists():
+        raise ValueError("campaign build manifest already exists")
+    artifact_index_path = campaign_root / ARTIFACT_INDEX_NAME
+    if artifact_index_path.exists():
+        raise ValueError("campaign artifact index already exists")
+
+    chain_blockers = verify_accepted_commit_chain(
+        worktree,
+        state["artifacts"],
+        entries,
+    )
+    if chain_blockers:
+        raise ValueError("accepted Forge commit chain is invalid: " + ", ".join(chain_blockers))
+    fixture_lock_payload = json.loads(
+        (campaign_root / "locks/fixture-lock.json").read_text(encoding="utf-8")
+    )
+    if tree_digest_at_commit(
+        worktree,
+        state["metadata"]["baseline_commit"],
+    ) != fixture_lock_payload.get("canonical_tree_sha256"):
+        raise ValueError("campaign baseline commit does not match locked fixture tree")
+    verification = _run_final_verification(
+        state["metadata"]["verification_command"],
+        worktree,
+    )
+    if verification.exit_code != 0:
+        raise ValueError("campaign full verification failed")
+
+    artifact_index = build_artifact_index(campaign_root)
+    if {item.path for item in artifact_index.artifacts} != expected_artifact_paths(entries):
+        raise ValueError("campaign contains unreferenced or missing immutable artifacts")
+
+    metadata = state["metadata"]
+    fixture_lock_path = campaign_root / "locks/fixture-lock.json"
+    dataset_lock_path = campaign_root / "locks/dataset-lock.json"
+    harness_lock_path = campaign_root / "locks/harness-profile.json"
+    ledger_path = campaign_root / "ledger.jsonl"
+    manifest_path = worktree / BUILD_MANIFEST_NAME
+    tree_sha256 = final_tree_digest(worktree)
+    finalize_intervention = ControllerIntervention(
+        sequence=len(metadata["controller_interventions"]),
+        kind="manifest_finalize",
+        reason="Finalize the independently verified Forge build manifest.",
+        invalidates_campaign=False,
+    )
+    interventions = [
+        ControllerIntervention.model_validate(item) for item in metadata["controller_interventions"]
+    ] + [finalize_intervention]
+
+    try:
+        _atomic_write_json(
+            artifact_index_path,
+            artifact_index.model_dump(mode="json"),
+        )
+        manifest = ForgeBuildManifest(
+            campaign_id=metadata["campaign_id"],
+            status="complete",
+            baseline_commit=metadata["baseline_commit"],
+            final_commit=product_commit,
+            fixture=ArtifactDigest(
+                id=f"{metadata['fixture_id']}@{metadata['fixture_version']}",
+                path="locks/fixture-lock.json",
+                sha256=sha256_bytes(fixture_lock_path.read_bytes()),
+            ),
+            development_dataset=ArtifactDigest(
+                id="forgebench-development",
+                path="locks/dataset-lock.json",
+                sha256=sha256_bytes(dataset_lock_path.read_bytes()),
+            ),
+            holdout_dataset=ArtifactDigest(
+                id="forgebench-holdout",
+                path="locks/dataset-lock.json",
+                sha256=sha256_bytes(dataset_lock_path.read_bytes()),
+            ),
+            harness_profile=ArtifactDigest(
+                id=str(metadata["harness_profile_id"]),
+                path="locks/harness-profile.json",
+                sha256=sha256_bytes(harness_lock_path.read_bytes()),
+            ),
+            provenance_ledger=ArtifactDigest(
+                id="forge-provenance-ledger",
+                path="ledger.jsonl",
+                sha256=sha256_bytes(ledger_path.read_bytes()),
+            ),
+            artifact_index=ArtifactDigest(
+                id="forge-artifact-index",
+                path=ARTIFACT_INDEX_NAME,
+                sha256=sha256_bytes(artifact_index_path.read_bytes()),
+            ),
+            final_tree=ArtifactDigest(
+                id="forge-final-product-tree",
+                path="worktree",
+                sha256=tree_sha256,
+            ),
+            tree_digest_profile="forgebench-v1",
+            final_verification=VerificationDigest(
+                command=verification.command,
+                exit_code=verification.exit_code,
+                stdout_sha256=sha256_bytes(verification.stdout.encode()),
+                stderr_sha256=sha256_bytes(verification.stderr.encode()),
+                verified_commit=product_commit,
+                passed=True,
+            ),
+            ledger_verified=True,
+            accepted_tasks=[entry.task_id for entry in entries],
+            controller_interventions=interventions,
+        )
+        _atomic_write_json(manifest_path, manifest.model_dump(mode="json"))
+        _git(worktree, "add", "--", BUILD_MANIFEST_NAME)
+        if _staged_changed_files(worktree) != [BUILD_MANIFEST_NAME]:
+            raise ValueError("manifest finalization staged unexpected files")
+        _git(
+            worktree,
+            "commit",
+            "--no-gpg-sign",
+            "-m",
+            FINALIZE_COMMIT_SUBJECT,
+        )
+        manifest_commit = _git(worktree, "rev-parse", "HEAD")
+        if _git(worktree, "rev-parse", "HEAD^") != product_commit:
+            raise ValueError("manifest commit does not descend from final product commit")
+        if _git(worktree, "status", "--porcelain"):
+            raise ValueError("manifest finalization left a dirty worktree")
+
+        completed_metadata = {
+            **metadata,
+            "status": "complete",
+            "final_commit": product_commit,
+            "manifest_commit": manifest_commit,
+            "manifest_sha256": sha256_bytes(manifest_path.read_bytes()),
+            "artifact_index_sha256": sha256_bytes(artifact_index_path.read_bytes()),
+            "finalized_at": datetime.now(UTC).isoformat(),
+            "controller_interventions": [item.model_dump(mode="json") for item in interventions],
+        }
+        _atomic_write_json(campaign_root / "campaign.json", completed_metadata)
+        return {
+            "status": "complete",
+            "final_commit": product_commit,
+            "manifest_commit": manifest_commit,
+            "manifest_sha256": completed_metadata["manifest_sha256"],
+            "artifact_index_sha256": completed_metadata["artifact_index_sha256"],
+        }
+    except BaseException:
+        if _git(worktree, "rev-parse", "HEAD") == product_commit:
+            if BUILD_MANIFEST_NAME in _staged_changed_files(worktree):
+                _git(
+                    worktree,
+                    "restore",
+                    "--staged",
+                    "--",
+                    BUILD_MANIFEST_NAME,
+                )
+            manifest_path.unlink(missing_ok=True)
+            artifact_index_path.unlink(missing_ok=True)
+        raise
+
+
 @contextmanager
 def _campaign_lock(campaign_root: Path) -> Iterator[None]:
     if not campaign_root.is_dir():
@@ -785,6 +972,24 @@ def _run_accept_verification(
             "passed": _outputs_passed(full_outputs, 1),
             "checks": checks,
         }
+
+
+def _run_final_verification(command: str, worktree: Path) -> ShellOutput:
+    with tempfile.TemporaryDirectory(prefix="forge-finalize-verify-") as temporary:
+        clean_worktree = Path(temporary) / "worktree"
+        shutil.copytree(
+            worktree,
+            clean_worktree,
+            ignore=shutil.ignore_patterns(".git", *IGNORED_TREE_PARTS),
+        )
+        outputs = run_shell_commands(
+            [command],
+            clean_worktree,
+            timeout_seconds=900,
+        )
+        if len(outputs) != 1:
+            raise ValueError("campaign final verification produced no result")
+        return outputs[0]
 
 
 def _overlay_verification_scenario(
@@ -1423,6 +1628,7 @@ def _atomic_write_json(path: Path, payload: dict[str, Any]) -> None:
             os.fsync(temporary.fileno())
         os.chmod(temporary_name, 0o600)
         os.replace(temporary_name, path)
+        _fsync_directory(path.parent)
     except BaseException:
         Path(temporary_name).unlink(missing_ok=True)
         raise

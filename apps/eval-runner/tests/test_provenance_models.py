@@ -57,6 +57,7 @@ def make_manifest(**updates) -> ForgeBuildManifest:
         "provenance_ledger": artifact("ledger", "ledger.jsonl"),
         "artifact_index": artifact("artifact-index", "artifact-index.json"),
         "final_tree": artifact("final-tree", "worktree"),
+        "tree_digest_profile": "forgebench-v1",
         "final_verification": VerificationDigest(
             command="python3 tools/release/verify.py",
             exit_code=0,
@@ -122,6 +123,7 @@ def test_manifest_references_every_required_artifact_and_ordered_task() -> None:
     assert manifest.harness_profile.id == "harness"
     assert manifest.provenance_ledger.id == "ledger"
     assert manifest.artifact_index.id == "artifact-index"
+    assert manifest.tree_digest_profile == "forgebench-v1"
     assert manifest.final_tree.id == "final-tree"
     assert manifest.final_verification.verified_commit == manifest.final_commit
 

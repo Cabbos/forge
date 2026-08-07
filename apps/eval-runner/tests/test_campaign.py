@@ -13,6 +13,7 @@ from app.artifact_hashing import canonical_tree_digest
 from app.campaign import (
     CampaignCrashInjected,
     accept_campaign_patch,
+    finalize_campaign,
     initialize_campaign,
     recover_pending_accept,
 )
@@ -22,6 +23,7 @@ from app.models import (
     EvalProvider,
     FileDiff,
     LeakageCheck,
+    ShellOutput,
     TrustGateResult,
     TrustStatus,
     VerificationResult,
@@ -62,6 +64,7 @@ def initialize(
     dataset_lock: Path = DATASET_LOCK,
     harness_profile: Path | None = None,
 ) -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     campaign = tmp_path / "campaign"
     profile = harness_profile or tmp_path / "harness-profile.json"
     if harness_profile is None:
@@ -754,3 +757,103 @@ def test_recover_resumes_after_partial_artifact_publication(
     assert recovered["status"] == "completed"
     assert verify_ledger(campaign / "ledger.jsonl", campaign / "artifacts").entry_count == 1
     assert not (campaign / "pending-accept.json").exists()
+
+
+def test_finalize_campaign_commits_only_a_complete_build_manifest(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    campaign = initialize(tmp_path)
+    trace_path, report_path, patch_path, _trace, _report = write_acceptance_artifacts(
+        campaign, tmp_path / "inputs"
+    )
+    monkeypatch.setattr(
+        "app.campaign._run_accept_verification",
+        lambda *_args, **_kwargs: {"passed": True, "checks": []},
+    )
+    accept(campaign, trace_path, report_path, patch_path)
+    product_commit = git(campaign / "worktree", "rev-parse", "HEAD")
+    monkeypatch.setattr(
+        "app.campaign._run_final_verification",
+        lambda *_args, **_kwargs: ShellOutput(
+            command="python3 tools/release/verify.py",
+            stdout="all good\n",
+            stderr="",
+            exit_code=0,
+            duration_ms=20,
+        ),
+    )
+
+    result = finalize_campaign(campaign)
+
+    worktree = campaign / "worktree"
+    manifest_path = worktree / "FORGE-BUILD-MANIFEST.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    artifact_index = json.loads((campaign / "artifact-index.json").read_text(encoding="utf-8"))
+    assert result["status"] == "complete"
+    assert result["final_commit"] == product_commit
+    assert result["manifest_commit"] == git(worktree, "rev-parse", "HEAD")
+    assert git(worktree, "rev-parse", "HEAD^") == product_commit
+    assert (
+        git(
+            worktree,
+            "diff-tree",
+            "--no-commit-id",
+            "--name-only",
+            "-r",
+            "HEAD",
+        )
+        == "FORGE-BUILD-MANIFEST.json"
+    )
+    assert manifest["status"] == "complete"
+    assert manifest["final_commit"] == product_commit
+    assert manifest["tree_digest_profile"] == "forgebench-v1"
+    assert manifest["accepted_tasks"] == [acceptance_task().id]
+    assert manifest["controller_interventions"][-1]["kind"] == "manifest_finalize"
+    assert len(artifact_index["artifacts"]) == 4
+    assert (
+        json.loads((campaign / "campaign.json").read_text(encoding="utf-8"))["status"] == "complete"
+    )
+    assert git(worktree, "status", "--porcelain") == ""
+    with pytest.raises(ValueError):
+        finalize_campaign(campaign)
+
+
+def test_finalize_rejects_empty_dirty_or_untracked_controller_state(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    empty_campaign = initialize(tmp_path / "empty")
+    with pytest.raises(ValueError, match="accepted"):
+        finalize_campaign(empty_campaign)
+
+    campaign = initialize(tmp_path / "dirty")
+    trace_path, report_path, patch_path, _trace, _report = write_acceptance_artifacts(
+        campaign, tmp_path / "inputs"
+    )
+    monkeypatch.setattr(
+        "app.campaign._run_accept_verification",
+        lambda *_args, **_kwargs: {"passed": True, "checks": []},
+    )
+    accept(campaign, trace_path, report_path, patch_path)
+    worktree = campaign / "worktree"
+    readme = worktree / "README.md"
+    original = readme.read_text(encoding="utf-8")
+    readme.write_text(
+        original + "\ncontroller edit\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="clean"):
+        finalize_campaign(campaign)
+    readme.write_text(original, encoding="utf-8")
+    readme.write_text(original + "\ncommitted controller edit\n", encoding="utf-8")
+    git(worktree, "add", "--", "README.md")
+    git(
+        worktree,
+        "commit",
+        "--no-gpg-sign",
+        "-m",
+        "chore: controller product edit",
+    )
+    with pytest.raises(ValueError, match="controller commit"):
+        finalize_campaign(campaign)

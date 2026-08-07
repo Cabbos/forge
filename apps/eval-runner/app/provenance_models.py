@@ -129,6 +129,7 @@ class ForgeBuildManifest(EvalModel):
     provenance_ledger: ArtifactDigest
     artifact_index: ArtifactDigest
     final_tree: ArtifactDigest
+    tree_digest_profile: Literal["forgebench-v1"]
     final_verification: VerificationDigest
     ledger_verified: bool
     accepted_tasks: list[str]
