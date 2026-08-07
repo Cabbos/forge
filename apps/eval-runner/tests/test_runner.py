@@ -171,6 +171,127 @@ def test_prepare_workspace_rejects_scenario_symlinks(tmp_path: Path) -> None:
         prepare_workspace(task, tmp_path / "attempt")
 
 
+def test_forge_runner_keeps_hidden_controller_fields_out_of_agent_payload(
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "forgebench" / "forgebench-monorepo"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "task = payload['task']\n"
+            "assert 'hidden_verifier_id' not in task\n"
+            "assert 'full_verification_command' not in task\n"
+            "assert 'scenario_path' not in task\n"
+            "result = {'final_answer': 'done', 'changed_files': [], 'file_diffs': []}\n"
+            "json.dump(result, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="controller-owned-verification",
+        title="Controller-owned verification",
+        prompt="Confirm the baseline behavior.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 tools/release/verify.py",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+    commands = [output.command for output in trace.shell_outputs]
+    hidden_index = next(
+        index for index, command in enumerate(commands) if command.startswith("hidden-verifier:")
+    )
+    assert commands[hidden_index + 1] == "python3 tools/release/verify.py"
+
+
+def test_forge_runner_hidden_verifier_failure_blocks_success(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="hidden-verifier-fails",
+        title="Hidden verifier fails",
+        prompt="Return without changing files.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 -c \"print('full ran')\"",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error == "verification_failed"
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    hidden_index = next(
+        index
+        for index, output in enumerate(trace.shell_outputs)
+        if output.command.startswith("hidden-verifier:")
+    )
+    assert trace.shell_outputs[hidden_index].exit_code != 0
+    assert trace.shell_outputs[hidden_index + 1].stdout == "full ran\n"
+
+
+def test_forge_runner_full_verification_failure_blocks_success(tmp_path: Path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "forgebench" / "forgebench-monorepo"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="full-verification-fails",
+        title="Full verification fails",
+        prompt="Return without changing files.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 -c 'raise SystemExit(4)'",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error == "verification_failed"
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == "python3 -c 'raise SystemExit(4)'"
+    assert trace.verification_result.exit_code == 4
+
+
+def test_forge_runner_rejects_unknown_hidden_verifier_before_agent_runs(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    marker = tmp_path / "agent-ran"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        (
+            "import json, pathlib, sys\n"
+            "pathlib.Path(sys.argv[1]).touch()\n"
+            "json.dump({'final_answer': 'done'}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="unknown-hidden-verifier",
+        title="Unknown hidden verifier",
+        prompt="Do not run.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="not-registered",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent), str(marker)]).run_task(task)
+
+    assert trace.error == "hidden_verifier_invalid"
+    assert trace.failure_category == FailureCategory.RUNNER_ERROR
+    assert not marker.exists()
+
+
 def test_scope_treats_workspace_runtime_files_as_unexpected_changes() -> None:
     task = EvaluationTask(
         id="continuity-runtime-artifact",

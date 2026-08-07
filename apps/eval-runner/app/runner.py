@@ -11,6 +11,7 @@ from typing import Any, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.hidden_verifiers import run_hidden_verifier, verifier_command
 from app.models import (
     AgentTrace,
     EvalProvider,
@@ -285,6 +286,17 @@ class ForgeAgentRunner:
         with tempfile.TemporaryDirectory(prefix=f"forge-eval-{task.id}-") as temp_dir:
             temp_root = Path(temp_dir)
             workspace = prepare_workspace(task, temp_root)
+            if task.hidden_verifier_id is not None:
+                try:
+                    verifier_command(task.hidden_verifier_id, workspace)
+                except ValueError as exc:
+                    return self._error_trace(
+                        task=task,
+                        started_at=started_at,
+                        error="hidden_verifier_invalid",
+                        failure_reason=str(exc),
+                        failure_category=FailureCategory.RUNNER_ERROR,
+                    )
             runtime_state = temp_root / "runtime-state"
             runtime_home = runtime_state / "home"
             runtime_home.mkdir(parents=True, exist_ok=True)
@@ -363,6 +375,12 @@ class ForgeAgentRunner:
                 )
 
             task_dict = task.model_dump(mode="json")
+            for controller_owned_field in (
+                "hidden_verifier_id",
+                "full_verification_command",
+                "scenario_path",
+            ):
+                task_dict.pop(controller_owned_field, None)
             # Map runner field names to Forge headless field names
             if task_dict.get("max_duration_seconds") is not None:
                 task_dict["timeout_secs"] = task_dict.pop("max_duration_seconds")
@@ -526,11 +544,35 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
         )
+        hidden_verifier_outputs = (
+            [
+                run_hidden_verifier(
+                    task.hidden_verifier_id,
+                    workspace,
+                    timeout_seconds=self.validation_timeout_seconds,
+                    cancel_requested=cancel_requested,
+                )
+            ]
+            if task.hidden_verifier_id is not None
+            else []
+        )
+        full_verification_outputs = run_shell_commands(
+            (
+                [task.full_verification_command]
+                if task.full_verification_command is not None
+                else []
+            ),
+            workspace,
+            timeout_seconds=self.validation_timeout_seconds,
+            cancel_requested=cancel_requested,
+        )
         all_validation_outputs = [
             *validation_outputs,
             *regression_outputs,
             *fix_outputs,
             *post_validation_outputs,
+            *hidden_verifier_outputs,
+            *full_verification_outputs,
         ]
         shell_outputs = TypeAdapter(list[ShellOutput]).validate_python(
             [*setup_outputs, *payload.get("shell_outputs", []), *all_validation_outputs]
