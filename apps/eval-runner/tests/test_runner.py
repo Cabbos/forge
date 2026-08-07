@@ -94,7 +94,7 @@ def test_task_supports_regression_and_fix_validation_commands() -> None:
     assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
 
 
-def test_scope_allows_forge_managed_continuity_database_unless_forbidden() -> None:
+def test_scope_treats_workspace_runtime_files_as_unexpected_changes() -> None:
     task = EvaluationTask(
         id="continuity-runtime-artifact",
         title="Continuity runtime artifact",
@@ -102,13 +102,9 @@ def test_scope_allows_forge_managed_continuity_database_unless_forbidden() -> No
         expected_files_changed=["src/app.py"],
     )
 
-    assert (
-        scope_violations_for(
-            task,
-            ["src/app.py", ".forge/continuity.db"],
-        )
-        == []
-    )
+    assert scope_violations_for(task, ["src/app.py", ".forge/continuity.db"]) == [
+        "unexpected_change:.forge/continuity.db"
+    ]
 
     forbidden_task = task.model_copy(update={"forbidden_files_changed": [".forge/continuity.db"]})
     assert scope_violations_for(forbidden_task, [".forge/continuity.db"]) == [
@@ -770,23 +766,34 @@ def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
     assert trace.changed_files == []
 
 
-def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
+def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    original_home = Path.home()
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
     fixture = tmp_path / "fixture"
     (fixture / "src").mkdir(parents=True)
     (fixture / "src" / "app.py").write_text("before\n", encoding="utf-8")
     script = tmp_path / "isolated_runtime_agent.py"
     script.write_text(
-        "import json,pathlib,sqlite3,sys\n"
+        "import json,os,pathlib,sqlite3,sys\n"
         "payload=json.loads(sys.stdin.read())\n"
         "workspace=pathlib.Path(payload['workspace_path'])\n"
         "runtime_state=pathlib.Path(payload['runtime_state_path'])\n"
         "continuity_db=pathlib.Path(payload['continuity_database_path'])\n"
+        "runtime_home=pathlib.Path(os.environ['HOME'])\n"
+        "assert os.environ['USERPROFILE'] == str(runtime_home)\n"
         "assert runtime_state.parent == workspace.parent\n"
         "assert runtime_state != workspace and workspace not in runtime_state.parents\n"
         "assert continuity_db == runtime_state/'continuity.db'\n"
-        "runtime_state.mkdir(parents=True,exist_ok=True)\n"
+        "assert runtime_home == runtime_state/'home'\n"
+        "assert runtime_home != pathlib.Path(sys.argv[1])\n"
+        "assert os.environ['CARGO_HOME'] == sys.argv[2]\n"
+        "assert os.environ['RUSTUP_HOME'] == sys.argv[3]\n"
+        "(runtime_home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
+        "(runtime_home/'.forge'/'sessions'/'eval.json').write_text('{}')\n"
         "sqlite3.connect(runtime_state/'registry.db').close()\n"
         "sqlite3.connect(continuity_db).close()\n"
         "(workspace/'src'/'app.py').write_text('after\\n')\n"
@@ -802,22 +809,62 @@ def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
         prompt="Change src/app.py only.",
         fixture_path=str(fixture),
         expected_files_changed=["src/app.py"],
-        forbidden_files_changed=[
-            ".forge/continuity.db",
-            ".forge/registry.db",
-        ],
+        forbidden_files_changed=[".forge/registry.db"],
     )
 
     trace = ForgeAgentRunner(
         provider=EvalProvider.FORGE,
         model="local-forge",
-        command=[sys.executable, str(script)],
+        command=[
+            sys.executable,
+            str(script),
+            str(original_home),
+            str(original_home / ".cargo"),
+            str(original_home / ".rustup"),
+        ],
     ).run_task(task)
 
     assert trace.changed_files == ["src/app.py"]
     assert trace.scope_violations == []
     assert trace.patch_replay is not None
     assert trace.patch_replay.ok is True
+    assert {
+        "event_type": "eval_runtime_isolation",
+        "runtime_state": "runtime-state",
+        "runtime_home": "runtime-state/home",
+        "continuity_database": "runtime-state/continuity.db",
+    } in trace.raw_events
+
+
+def test_forge_runner_runtime_files_never_become_changed_files(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    script = tmp_path / "runtime_only_agent.py"
+    script.write_text(
+        "import json,os,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "runtime_state=pathlib.Path(payload['runtime_state_path'])\n"
+        "home=pathlib.Path(os.environ['HOME'])\n"
+        "assert home == runtime_state/'home'\n"
+        "(home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
+        "(home/'.forge'/'sessions'/'one.json').write_text('{}')\n"
+        "json.dump({'final_answer':'no source change','changed_files':[]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="runtime-only",
+        title="Runtime only",
+        prompt="Inspect only.",
+        fixture_path=str(fixture),
+        validation_commands=[f'{sys.executable} -c "print(1)"'],
+        expected_files_changed=[],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error is None
+    assert trace.changed_files == []
+    assert trace.scope_violations == []
 
 
 def test_forge_runner_times_out_setup_command(tmp_path: Path) -> None:
@@ -1056,8 +1103,8 @@ import sys
 
 payload = json.loads(sys.stdin.read())
 workspace = pathlib.Path(payload["workspace_path"])
-(workspace / ".forge").mkdir(exist_ok=True)
-db_path = workspace / ".forge" / "continuity.db"
+db_path = pathlib.Path(payload["continuity_database_path"])
+db_path.parent.mkdir(parents=True, exist_ok=True)
 conn = sqlite3.connect(db_path)
 conn.execute("CREATE TABLE continuity_events (event_type TEXT NOT NULL, event_json TEXT NOT NULL)")
 conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY, status TEXT, kind TEXT)")
@@ -1109,7 +1156,7 @@ json.dump(
     )
     post_command = (
         f'{sys.executable} -c "from pathlib import Path; '
-        "assert Path('.forge/continuity.db').exists(); print('continuity ok')\""
+        "assert Path('src/app.py').exists(); print('post validation ok')\""
     )
     task = EvaluationTask(
         id="continuity-post-validation",
@@ -1134,7 +1181,7 @@ json.dump(
         task.validation_commands[0],
         post_command,
     ]
-    assert trace.shell_outputs[-1].stdout == "continuity ok\n"
+    assert trace.shell_outputs[-1].stdout == "post validation ok\n"
     headless_diagnostic = next(
         event
         for event in trace.raw_events

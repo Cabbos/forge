@@ -1,4 +1,5 @@
 import json
+import os
 import shlex
 import shutil
 import sqlite3
@@ -33,7 +34,6 @@ from app.workspace_observer import observe_workspace_changes, snapshot_workspace
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
 DEFAULT_SETUP_TIMEOUT_SECONDS = 300
 DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
-FORGE_MANAGED_RUNTIME_PATHS = frozenset({".forge/continuity.db"})
 
 
 class EvalRunner(Protocol):
@@ -286,11 +286,20 @@ class ForgeAgentRunner:
             temp_root = Path(temp_dir)
             workspace = prepare_workspace(task, temp_root)
             runtime_state = temp_root / "runtime-state"
-            runtime_state.mkdir(parents=True, exist_ok=True)
-            continuity_database_path = (
-                runtime_state / "continuity.db"
-                if ".forge/continuity.db" in task.forbidden_files_changed
-                else None
+            runtime_home = runtime_state / "home"
+            runtime_home.mkdir(parents=True, exist_ok=True)
+            continuity_database_path = runtime_state / "continuity.db"
+            child_env = os.environ.copy()
+            original_home = child_env.get("HOME") or child_env.get("USERPROFILE")
+            if original_home:
+                child_env.setdefault("CARGO_HOME", str(Path(original_home) / ".cargo"))
+                child_env.setdefault("RUSTUP_HOME", str(Path(original_home) / ".rustup"))
+            child_env.update(
+                {
+                    "HOME": str(runtime_home),
+                    "USERPROFILE": str(runtime_home),
+                    "FORGE_EVAL_RUNTIME_STATE": str(runtime_state),
+                }
             )
             setup_outputs = run_setup_commands(
                 task,
@@ -364,15 +373,15 @@ class ForgeAgentRunner:
                 "model": self.model,
                 "workspace_path": str(workspace),
                 "runtime_state_path": str(runtime_state),
+                "continuity_database_path": str(continuity_database_path),
             }
-            if continuity_database_path is not None:
-                payload["continuity_database_path"] = str(continuity_database_path)
             completed = run_bounded_process(
                 self.command,
                 input_text=json.dumps(payload),
                 cwd=workspace,
                 timeout_seconds=timeout,
                 cancel_requested=cancel_requested,
+                env=child_env,
             )
             command_output = ShellOutput(
                 command=command_label(self.command),
@@ -431,6 +440,19 @@ class ForgeAgentRunner:
                     sandbox_scrub,
                     continuity_database_path,
                     cancel_requested,
+                )
+                trace = trace.model_copy(
+                    update={
+                        "raw_events": [
+                            *trace.raw_events,
+                            {
+                                "event_type": "eval_runtime_isolation",
+                                "runtime_state": "runtime-state",
+                                "runtime_home": "runtime-state/home",
+                                "continuity_database": "runtime-state/continuity.db",
+                            },
+                        ]
+                    }
                 )
             except (json.JSONDecodeError, ValidationError, TypeError, ValueError) as exc:
                 return self._error_trace(
@@ -1230,7 +1252,6 @@ def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> 
     for path in changed_files:
         if path in forbidden:
             violations.append(f"forbidden_change:{path}")
-        is_managed_runtime_change = path in FORGE_MANAGED_RUNTIME_PATHS and path not in forbidden
-        if expected and path not in expected and not is_managed_runtime_change:
+        if expected and path not in expected:
             violations.append(f"unexpected_change:{path}")
     return violations
