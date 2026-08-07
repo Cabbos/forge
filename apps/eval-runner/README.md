@@ -3,7 +3,9 @@
 CLI runs share the fail-closed trust orchestrator. Exit code `0` requires trusted evidence and passing thresholds, `1` indicates trust/threshold failure, and argparse/input errors use `2`; `--report-only` preserves report generation while ignoring trust blockers.
 Reports include `score_coverage` entries with `observed`, `expected`, and `coverage` for every universal, emitted, or case-required score; unknown required score names fail case-quality validation.
 Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup and validation are outside the observation window; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
-The eval doctor precheck runs with a disposable home and never reads desktop session snapshots. Every real Forge attempt owns sibling `workspace` and `runtime-state` roots: `HOME`, `USERPROFILE`, registry, Continuity, logs, profiles, and snapshots are routed outside the observed product workspace, while `CARGO_HOME` and `RUSTUP_HOME` continue to resolve the installed toolchains. A golden harness is trusted only after a real observer change and clean-fixture patch replay both succeed. This is H0 harness evidence, not a claim that the 20-case holdout or frontier KPI has passed.
+The eval doctor precheck runs with a disposable home and never reads desktop session snapshots. Every real Forge attempt owns sibling `workspace` and `runtime-state` roots: `HOME`, `USERPROFILE`, registry, Continuity, logs, profiles, and snapshots are routed outside the observed product workspace, while `CARGO_HOME` and `RUSTUP_HOME` continue to resolve the installed toolchains. A golden harness is trusted only after a real observer change and clean-fixture patch replay both succeed.
+
+ForgeBench is the canonical executable real-coding dataset: 10 development cases and 20 sealed holdout cases share one versioned product monorepo, run in independent copies with scenario overlays, and are frozen by content fingerprints for the fixture, case splits, and opaque hidden verifiers. This H0B state proves dataset integrity and polarity, not paid holdout success or a frontier KPI.
 
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
 
@@ -67,7 +69,13 @@ forge-eval-runner/
     storage.py    Memory and SQLite task/run/artifact storage boundary
     config.py     Environment-driven settings
   eval_cases/
-    */case.json   Portable eval case definitions plus disposable fixtures
+    */case.json   Runtime, scorer, red-team, and adapter contract cases
+  forgebench/
+    forgebench-monorepo/  Canonical TypeScript/Python product fixture
+    cases/development/    10 visible real-coding development cases
+    cases/holdout/        20 sealed real-coding holdout cases
+    verifiers/            Controller-owned opaque hidden checks
+    dataset-lock.json     Content-addressed split and verifier lock
   tasks/
     sample_tasks.json
   tests/
@@ -208,11 +216,30 @@ the first check for stuck workers or stale leases.
 
 ## Run Eval Cases With CLI
 
-The repository includes five portable cases under `eval_cases/`. The default mock provider runs fully offline and is intended to validate case loading, trace shaping, scope checks, and report aggregation:
+`eval_cases/` remains the portable Forge runtime and contract regression pack. The default mock provider runs fully offline and is intended to validate case loading, trace shaping, scope checks, and report aggregation:
 
 ```bash
 uv run python -m app.cli --cases eval_cases --provider mock
 ```
+
+### ForgeBench Canonical Real-Coding Catalog
+
+All executable real-coding benchmark tasks target the single
+`forgebench/forgebench-monorepo` product fixture. Each scoring attempt receives
+an independent copy plus its declared scenario overlay. The 10-case development
+split and 20-case holdout split are content-fingerprinted; holdout inspection
+prints only IDs, counts, and hashes:
+
+```bash
+uv run python -m app.cli forgebench verify-catalog
+uv run python -m app.cli forgebench show-lock --split development
+uv run python -m app.cli forgebench show-lock --split holdout
+```
+
+The older `eval_cases/_fixtures/continuity-ts-tooling` tree and standalone
+micro-fixtures are retained while their runtime-contract assertions migrate.
+They are excluded from frontier scoring and cannot satisfy
+`metadata.real_coding=true`.
 
 The CLI prints a JSON backtest report:
 

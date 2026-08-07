@@ -1,5 +1,4 @@
 import pytest
-
 from task_api.app import TaskApi
 from task_api.models import TaskRecord
 from task_api.repository import TaskRepository

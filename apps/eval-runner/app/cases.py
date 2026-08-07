@@ -113,6 +113,22 @@ def validate_case_quality(tasks: list[EvaluationTask]) -> list[CaseQualityIssue]
                             message=f"Real coding eval case requires {field_name}.",
                         )
                     )
+            if (
+                task.fixture_id is not None
+                and task.fixture_version is not None
+                and (task.fixture_id, task.fixture_version) != ("forgebench-monorepo", "1.0.0")
+            ):
+                issues.append(
+                    CaseQualityIssue(
+                        task_id=task.id,
+                        severity="error",
+                        code="non_canonical_real_coding_fixture",
+                        message=(
+                            "Real coding eval cases must use "
+                            "forgebench-monorepo fixture version 1.0.0."
+                        ),
+                    )
+                )
         if (
             task.dataset_split == DatasetSplit.HOLDOUT
             and task.metadata.get("holdout_unsealed") is True

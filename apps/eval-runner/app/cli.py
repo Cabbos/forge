@@ -7,6 +7,7 @@ from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.execution import EvaluationExecution, ExecutionOptions, execute_evaluation
 from app.experiments import experiment_artifact_metadata
+from app.forgebench import main as forgebench_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
 from app.red_team import is_red_team_task
 from app.trace_import import promote_failed_traces
@@ -205,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
     raw_argv = list(argv) if argv is not None else sys.argv[1:]
     if raw_argv[:1] == ["promote-trace"]:
         return promote_trace_main(raw_argv[1:])
+    if raw_argv[:1] == ["forgebench"]:
+        return forgebench_main(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(

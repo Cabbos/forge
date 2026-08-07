@@ -292,6 +292,7 @@ add_gate 'desktop frontend architecture' 'npm --prefix apps/desktop run check:fr
 add_gate 'desktop protocol sync' 'npm --prefix apps/desktop run check:protocol'
 set_domain 'eval'
 add_gate 'eval runtime isolation and golden truth' 'node --test scripts/eval-doctor-precheck.test.mjs && cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_runner.py tests/test_workspace_observer.py tests/test_execution.py'
+add_gate 'ForgeBench canonical monorepo and frozen dataset' 'cd apps/eval-runner && uv run pytest tests/test_artifact_hashing.py tests/test_forgebench_fixture.py tests/test_forgebench_catalog.py tests/test_hidden_verifiers.py && uv run python -m app.cli forgebench verify-catalog'
 add_gate 'eval runner test suite' 'npm run test:eval'
 add_gate 'eval quality suite' 'cd apps/eval-runner && uv sync --frozen --dev && uv run pytest -q && uv run ruff check . && uv run ruff format --check . && uv run mypy app'
 add_gate 'eval execution identity baseline' 'cd apps/eval-runner && uv run pytest tests/test_storage.py tests/test_runner.py tests/test_api.py -k "execution_identity or unknown_provider or queued_sqlite_forge" -q'

@@ -6,6 +6,56 @@ from pathlib import Path
 import pytest
 
 
+def test_cli_verifies_frozen_forgebench_catalog_without_leaking_holdout() -> None:
+    completed = subprocess.run(
+        [sys.executable, "-m", "app.cli", "forgebench", "verify-catalog"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    payload = json.loads(completed.stdout)
+    assert payload["development_count"] == 10
+    assert payload["holdout_count"] == 20
+    assert len(payload["combined_fingerprint"]) == 64
+    assert "prompt" not in completed.stdout.lower()
+
+
+def test_cli_shows_sealed_forgebench_split_metadata_only() -> None:
+    outputs = {}
+    for split, expected_count in (("development", 10), ("holdout", 20)):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "app.cli",
+                "forgebench",
+                "show-lock",
+                "--split",
+                split,
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        payload = json.loads(completed.stdout)
+        assert set(payload) == {"split", "count", "ids", "fingerprint"}
+        assert payload["split"] == split
+        assert payload["count"] == expected_count
+        assert len(payload["ids"]) == expected_count
+        assert all(
+            task_id.startswith(f"forgebench-{'dev' if split == 'development' else 'holdout'}-")
+            for task_id in payload["ids"]
+        )
+        outputs[split] = completed.stdout
+
+    assert "prompt" not in outputs["holdout"].lower()
+    assert "verifier" not in outputs["holdout"].lower()
+
+
 def test_cli_exits_nonzero_when_trust_is_unknown(tmp_path: Path, capsys) -> None:
     from app.cli import main
 

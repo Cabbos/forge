@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 79 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 80 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 79 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 80 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -125,7 +125,9 @@ npm run eval:report:latest         # 查看最近一次报告
 
 看点：Forge 跑次导出 ForgeRunEvidence 后，eval-runner 按确认正确性、上下文重复、验证存在性、改动文件范围、恢复证据、用量一致性等 30+ 维度打分；trust gate 区分 UNTRUSTED（明确失败）与 UNKNOWN（缺证据），changed-file 以独立文件系统快照为权威而不信任 agent 自报，emitted diff 在全新 fixture 里 replay 验证。
 
-真实 Forge eval 的 controller 与 agent runtime 分域：doctor precheck 使用一次性 home，不读取用户桌面的 session snapshot；每次 attempt 都创建同级 `workspace` 与 `runtime-state`，把 `HOME`、`USERPROFILE`、registry、Continuity、日志、profile 和 snapshot 路由到观测工作区之外。`CARGO_HOME` / `RUSTUP_HOME` 只保留现有工具链解析，不作为 Forge 运行时状态。golden harness 只有在真实 observer 捕获文件变化、且生成的 patch 能在干净 fixture 中 replay 后才可信；这证明 H0 harness 证据链，不代表 20-case holdout 或 frontier KPI 已通过。
+真实 Forge eval 的 controller 与 agent runtime 分域：doctor precheck 使用一次性 home，不读取用户桌面的 session snapshot；每次 attempt 都创建同级 `workspace` 与 `runtime-state`，把 `HOME`、`USERPROFILE`、registry、Continuity、日志、profile 和 snapshot 路由到观测工作区之外。`CARGO_HOME` / `RUSTUP_HOME` 只保留现有工具链解析，不作为 Forge 运行时状态。golden harness 只有在真实 observer 捕获文件变化、且生成的 patch 能在干净 fixture 中 replay 后才可信。
+
+可执行真实编码基准统一进入 `apps/eval-runner/forgebench/forgebench-monorepo`：10 个 development case 与 20 个 sealed holdout case 从同一产品基线创建独立副本并应用小型 scenario overlay，题面、场景、隐藏验证器和 fixture 都由内容指纹锁定。`eval_cases/` 继续承载 Forge runtime / scorer / contract 回归；旧 `continuity-ts-tooling` 与独立微型 fixture 不计入 frontier scoring。H0B 证明的是基准与证据链已冻结，不代表付费 holdout 已运行或 frontier KPI 已通过。
 
 ## 开发
 
@@ -163,7 +165,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：79 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：80 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |
@@ -201,7 +203,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 
 - Forge 处于 internal beta；CHANGELOG 尚未切正式版本号。
 - 桌面 e2e 是 mock IPC 的产品契约冒烟，不是真实模型端到端；真实模型路径走 eval smoke（`eval:forge:smoke:real`）。
-- eval 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性，不是大规模模型排行榜；red-team 检查是启发式规则。
+- `eval_cases/` 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性；frontier scoring 只使用冻结的 ForgeBench real-coding split。20-case holdout 尚未执行付费 campaign，red-team 检查仍是启发式规则。
 - gateway 默认 local ownership：`gateway_can_resume` 保持 false，只读 owner 切片需要显式人工批准或 dev-only flag；commit / merge / push 始终人工把关。
 - 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、billing 级用量核算（provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
 

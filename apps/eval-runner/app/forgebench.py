@@ -50,6 +50,21 @@ def verify_catalog(cases: Path, lock: Path) -> dict[str, Any]:
     return _catalog_summary(expected)
 
 
+def show_lock(lock: Path, split: DatasetSplit) -> dict[str, Any]:
+    payload = json.loads(lock.read_text(encoding="utf-8"))
+    if payload.get("schema_version") != 1:
+        raise ValueError("unsupported ForgeBench dataset lock schema")
+    split_payload = payload.get(split.value)
+    if not isinstance(split_payload, dict):
+        raise ValueError(f"dataset lock is missing {split.value} split")
+    return {
+        "split": split.value,
+        "count": split_payload["count"],
+        "ids": split_payload["ids"],
+        "fingerprint": split_payload["fingerprint"],
+    }
+
+
 def _load_valid_catalog(cases: Path) -> list[EvaluationTask]:
     tasks = load_cases(cases)
     issues = validate_case_quality(tasks)
@@ -196,6 +211,9 @@ def build_parser() -> argparse.ArgumentParser:
     verify = subcommands.add_parser("verify-catalog")
     verify.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     verify.add_argument("--lock", type=Path, default=DEFAULT_DATASET_LOCK)
+    show = subcommands.add_parser("show-lock")
+    show.add_argument("--lock", type=Path, default=DEFAULT_DATASET_LOCK)
+    show.add_argument("--split", type=DatasetSplit, choices=list(DatasetSplit), required=True)
     return parser
 
 
@@ -220,6 +238,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "verify-catalog":
         print(json.dumps(verify_catalog(args.cases, args.lock), sort_keys=True))
+        return 0
+    if args.command == "show-lock":
+        print(json.dumps(show_lock(args.lock, args.split), sort_keys=True))
         return 0
     raise AssertionError(f"unhandled ForgeBench command: {args.command}")
 

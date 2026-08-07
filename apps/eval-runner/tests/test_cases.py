@@ -707,6 +707,37 @@ def test_case_quality_requires_canonical_descriptor_for_real_coding_cases(
     assert [(issue.severity, issue.code) for issue in issues] == [("error", expected_code)]
 
 
+def test_case_quality_rejects_non_forgebench_real_coding_fixture(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "legacy-micro-fixture",
+                "title": "Legacy micro fixture",
+                "prompt": "Repair the product behavior.",
+                "fixture_id": "continuity-ts-tooling",
+                "fixture_version": "1.0.0",
+                "fixture_path": "fixture",
+                "dataset_split": "development",
+                "hidden_verifier_id": "opaque-check",
+                "full_verification_command": "python3 tools/release/verify.py",
+                "validation_commands": ["pytest"],
+                "expected_files_changed": ["src/app.py"],
+                "metadata": {"real_coding": True, "holdout_unsealed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [(issue.severity, issue.code) for issue in issues] == [
+        ("error", "non_canonical_real_coding_fixture")
+    ]
+
+
 def test_case_quality_rejects_missing_scenario_path_when_declared(tmp_path: Path) -> None:
     fixture = tmp_path / "fixture"
     fixture.mkdir()
