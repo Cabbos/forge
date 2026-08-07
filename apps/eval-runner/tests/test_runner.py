@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.harness_contracts import HarnessPolicyV1
 from app.models import (
     AgentTrace,
     EvalProvider,
@@ -249,11 +250,58 @@ def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) 
         for event in trace.raw_events
         if event.get("event_type") == "harness_contract_evidence"
     )
-    assert event["context_manifest"]["mode"] == "minimal"
+    assert event["context_manifest"]["mode"] == "current_product_v1"
     assert event["tool_results"]["source"] == "agent_payload"
     assert event["tool_results"]["envelopes"][0]["content"] == "ok"
     assert event["progress"]["stagnation"]["action"] == "redirect"
     assert event["failure_taxonomy"]["primary"] == "passed"
+    convergence = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "eval_verification_convergence"
+    )
+    assert convergence["repair_attempts_used"] == 0
+    assert convergence["fresh_controller_verifier"] is False
+
+
+def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path) -> None:
+    agent = tmp_path / "minimal_policy_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['harness_policy']['prompt_mode'] == 'minimal_v1'\n"
+            "assert payload['harness_policy']['context_policy'] == 'task_local_v1'\n"
+            "assert payload['prompt'].startswith('Outcome: Fix the bug.')\n"
+            "assert len(payload['task']['context_files']) == 16\n"
+            "json.dump({'final_answer': 'done', 'verification_result': {"
+            "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
+            "'exit_code': 0, 'duration_ms': 1}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="minimal-policy",
+        title="Minimal policy",
+        prompt="Fix the bug.",
+        context_files=[f"src/file-{index}.py" for index in range(20)],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        harness_policy=HarnessPolicyV1(
+            prompt_mode="minimal_v1",
+            context_policy="task_local_v1",
+            tool_result_policy="bounded_structured_v1",
+            stagnation_policy="semantic_progress_v1",
+        ),
+    ).run_task(task)
+
+    policy_event = next(
+        event for event in trace.raw_events if event.get("event_type") == "eval_harness_policy"
+    )
+    assert policy_event["policy"]["prompt_mode"] == "minimal_v1"
+    assert len(policy_event["prepared_context_files"]) == 16
 
 
 def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
@@ -1937,6 +1985,31 @@ json.dump(
     assert trace.model_rounds == 10
     assert trace.repair_attempts_used == 1
     assert trace.validation_attempts == 2
+
+
+def test_forge_runner_rejects_repair_attempts_above_controller_limit(tmp_path: Path) -> None:
+    script = tmp_path / "fake_repair_overrun.py"
+    script.write_text(
+        "import json, sys\n"
+        "json.dump({'final_answer': 'done', 'repair_attempts_used': 2}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="repair-overrun",
+        title="Repair overrun",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+        max_repair_attempts=1,
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "repair_attempt_limit_exceeded" in (trace.failure_reason or "")
 
 
 def test_forge_runner_maps_timeout_field_from_max_duration_seconds(tmp_path: Path) -> None:

@@ -26,6 +26,8 @@ def summarize_harness_telemetry(traces: Sequence[AgentTrace]) -> HarnessTelemetr
     tier_items: Counter[str] = Counter()
     redirects = 0
     stops = 0
+    fresh_verifiers = 0
+    convergence_events = 0
     attempts_with_contract = 0
     repairs_within_bound = 0
 
@@ -71,6 +73,10 @@ def summarize_harness_telemetry(traces: Sequence[AgentTrace]) -> HarnessTelemetr
         stagnation = _mapping(progress.get("stagnation"))
         redirects += int(stagnation.get("action") == "redirect")
         stops += int(stagnation.get("action") == "stop")
+        convergence = _last_event(trace, "eval_verification_convergence")
+        if convergence is not None:
+            convergence_events += 1
+            fresh_verifiers += int(convergence.get("fresh_controller_verifier") is True)
 
     attempt_count = len(traces)
     return HarnessTelemetrySummary(
@@ -90,6 +96,7 @@ def summarize_harness_telemetry(traces: Sequence[AgentTrace]) -> HarnessTelemetr
         context_items_by_tier=dict(sorted(tier_items.items())),
         stagnation_redirects=redirects,
         stagnation_stops=stops,
+        fresh_verifier_rate=(fresh_verifiers / convergence_events if convergence_events else 0.0),
         single_repair_compliance_rate=(
             repairs_within_bound / attempt_count if attempt_count else 0.0
         ),
@@ -97,8 +104,12 @@ def summarize_harness_telemetry(traces: Sequence[AgentTrace]) -> HarnessTelemetr
 
 
 def _contract_event(trace: AgentTrace) -> dict[str, Any] | None:
+    return _last_event(trace, "harness_contract_evidence")
+
+
+def _last_event(trace: AgentTrace, event_type: str) -> dict[str, Any] | None:
     for event in reversed(trace.raw_events):
-        if isinstance(event, dict) and event.get("event_type") == "harness_contract_evidence":
+        if isinstance(event, dict) and event.get("event_type") == event_type:
             return event
     return None
 

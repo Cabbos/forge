@@ -6,6 +6,7 @@ from pydantic import ValidationError
 from app.harness_contracts import (
     MAX_TOOL_CONTENT_CHARS,
     ContextTier,
+    HarnessPolicyV1,
     ProgressKind,
     ProgressSignal,
     StagnationAction,
@@ -29,6 +30,25 @@ def test_tool_result_contract_bounds_large_output_and_keeps_digest() -> None:
     assert len(envelope.content) == MAX_TOOL_CONTENT_CHARS
     assert len(envelope.artifact_digest or "") == 64
     assert envelope.next_evidence == ["retrieve the full shell artifact by digest"]
+
+
+def test_minimal_harness_policy_is_bounded_and_fingerprintable() -> None:
+    policy = HarnessPolicyV1(
+        prompt_mode="minimal_v1",
+        context_policy="task_local_v1",
+        tool_result_policy="bounded_structured_v1",
+        stagnation_policy="semantic_progress_v1",
+    )
+    context = [f"src/file-{index}.py" for index in range(20)]
+
+    selected = policy.selected_context_files(context)
+    rendered = policy.render_prompt("Fix the bug.", selected)
+
+    assert len(selected) == 16
+    assert rendered.startswith("Outcome: Fix the bug.")
+    assert "Execution contract:" in rendered
+    assert len(rendered) <= 3_600
+    assert len(policy.fingerprint()) == 64
 
 
 def test_truncated_tool_result_without_artifact_digest_is_rejected() -> None:

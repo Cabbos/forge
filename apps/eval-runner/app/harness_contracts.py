@@ -8,11 +8,12 @@ desktop agent's tool or prompt semantics.
 from __future__ import annotations
 
 import hashlib
+import json
 from collections import defaultdict
 from collections.abc import Iterable
 from enum import StrEnum
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -21,10 +22,61 @@ MAX_TOOL_FACT_CHARS = 300
 MAX_TOOL_CONTENT_CHARS = 2_000
 MAX_NEXT_EVIDENCE_CHARS = 240
 MAX_CONTEXT_ITEMS = 64
+MAX_MINIMAL_PROMPT_CHARS = 3_600
 
 
 class HarnessContractModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class HarnessPolicyV1(HarnessContractModel):
+    """Eval-only policy identity for measured prompt/context experiments."""
+
+    schema_version: Literal[1] = 1
+    prompt_mode: Literal["current_product_v1", "minimal_v1"] = "current_product_v1"
+    context_policy: Literal["current_product_v1", "task_local_v1"] = "current_product_v1"
+    tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"] = (
+        "current_product_v1"
+    )
+    stagnation_policy: Literal["current_loop_guard_v1", "semantic_progress_v1"] = (
+        "current_loop_guard_v1"
+    )
+    verification_policy: Literal["required_targeted_then_full_v1"] = (
+        "required_targeted_then_full_v1"
+    )
+    repair_attempt_limit: int = Field(default=1, ge=0, le=1)
+    parallel_read_tools: Literal[True] = True
+
+    def selected_context_files(self, paths: Iterable[str]) -> list[str]:
+        values = list(dict.fromkeys(str(path) for path in paths))
+        if self.context_policy == "task_local_v1":
+            return values[:16]
+        return values
+
+    def render_prompt(self, prompt: str, context_files: Iterable[str]) -> str:
+        if self.prompt_mode == "current_product_v1":
+            return prompt
+        selected = self.selected_context_files(context_files)
+        context_line = ", ".join(selected) if selected else "(none declared)"
+        rendered = (
+            "Outcome: " + prompt.strip() + "\n\n"
+            "Scope: inspect the declared task-local context before editing; change only "
+            "files required for the outcome.\n"
+            f"Task-local context: {context_line}\n"
+            "Execution contract: make the smallest actionable change, run the targeted "
+            "verification, and use at most one evidence-driven repair before reporting "
+            "changed files and verification."
+        )
+        return rendered[:MAX_MINIMAL_PROMPT_CHARS]
+
+    def fingerprint(self) -> str:
+        payload = json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
+        return hashlib.sha256(payload).hexdigest()
 
 
 class ToolResultStatus(StrEnum):

@@ -6,6 +6,10 @@ needed for frontier tuning explicit and bounded before another paid campaign.
 
 ## Contracts
 
+- `HarnessPolicyV1` gives measured eval runs an explicit `minimal_v1` prompt and
+  `task_local_v1` context mode. It caps the selected context list, renders a
+  compact inspect/edit/verify/one-repair contract, and fingerprints the policy
+  separately from provider credentials.
 - `ContextManifest` records only selected context paths, tier, origin, priority,
   byte/token estimates, content hashes, duplicate groups, and same-name
   conflicts. Source content is never copied into the manifest.
@@ -29,8 +33,10 @@ progress.
 Baseline reports aggregate the event into `harness_telemetry`: contract
 coverage, tool-call histogram and repeated-call rate, context byte/token
 percentiles and tier totals, duplicate/conflict rates, stagnation redirects and
-stops, and single-repair compliance. Missing contract events remain visible as
-reduced coverage instead of being silently backfilled.
+stops, fresh-controller-verifier rate, and single-repair compliance. The
+controller rejects a trace that reports more repairs than the configured limit.
+Missing contract events remain visible as reduced coverage instead of being
+silently backfilled.
 
 Paired comparison artifacts also publish deterministic 2,000-resample bootstrap
 intervals for success, verification, scope, rounds, and duration deltas. The

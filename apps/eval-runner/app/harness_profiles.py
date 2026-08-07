@@ -83,12 +83,12 @@ class HarnessProfileV1(EvalModel):
     ) = Field(default=None, exclude_if=lambda value: value is None)
     reasoning_effort: Literal["provider_default"]
     thinking_mode: Literal["enabled_default"]
-    prompt_mode: Literal["current_product_v1"]
-    context_policy: Literal["current_product_v1"]
-    tool_result_policy: Literal["current_product_v1"]
+    prompt_mode: Literal["current_product_v1", "minimal_v1"]
+    context_policy: Literal["current_product_v1", "task_local_v1"]
+    tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"]
     parallel_read_tools: Literal[True]
     max_model_rounds: int = Field(ge=1, le=80)
-    stagnation_policy: Literal["current_loop_guard_v1"]
+    stagnation_policy: Literal["current_loop_guard_v1", "semantic_progress_v1"]
     verification_policy: Literal["required_targeted_then_full_v1"]
     repair_attempt_limit: int = Field(ge=0, le=1)
     dataset_split: Literal[DatasetSplit.DEVELOPMENT]

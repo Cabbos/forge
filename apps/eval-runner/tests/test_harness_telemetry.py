@@ -74,6 +74,7 @@ def test_harness_telemetry_aggregates_tools_context_and_recovery() -> None:
     assert summary.median_context_bytes == 120
     assert summary.context_bytes_by_tier == {"task_local": 240}
     assert summary.stagnation_redirects == 2
+    assert summary.fresh_verifier_rate == 0
     assert summary.single_repair_compliance_rate == 1.0
 
 

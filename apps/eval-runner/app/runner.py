@@ -11,7 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
-from app.harness_contracts import harness_contract_evidence
+from app.harness_contracts import HarnessPolicyV1, harness_contract_evidence
 from app.hidden_verifiers import run_hidden_verifier, verifier_command
 from app.models import (
     AgentTrace,
@@ -270,6 +270,7 @@ class ForgeAgentRunner:
         harness_fingerprint: str | None = None,
         max_model_rounds: int | None = None,
         max_repair_attempts: int | None = None,
+        harness_policy: HarnessPolicyV1 | None = None,
         use_provider_credential_store: bool = False,
     ) -> None:
         self.provider = EvalProvider(provider)
@@ -286,6 +287,7 @@ class ForgeAgentRunner:
         self.harness_fingerprint = harness_fingerprint
         self.max_model_rounds = max_model_rounds
         self.max_repair_attempts = max_repair_attempts
+        self.harness_policy = harness_policy or HarnessPolicyV1()
         self.use_provider_credential_store = use_provider_credential_store
 
     def credential_preflight(self) -> ForgeCredentialPreflight:
@@ -320,6 +322,8 @@ class ForgeAgentRunner:
                 "mode": "credential_preflight",
                 "provider": self.agent_provider,
                 "model": self.agent_model,
+                "harness_policy": self.harness_policy.model_dump(mode="json"),
+                "harness_policy_fingerprint": self.harness_policy.fingerprint(),
                 "use_provider_credential_store": self.use_provider_credential_store,
                 "workspace_path": str(workspace),
                 "runtime_state_path": str(runtime_state),
@@ -563,9 +567,16 @@ class ForgeAgentRunner:
                 )
             if self.max_repair_attempts is not None:
                 task_dict["max_repair_attempts"] = self.max_repair_attempts
+            elif self.harness_policy.prompt_mode == "minimal_v1":
+                task_dict["max_repair_attempts"] = self.harness_policy.repair_attempt_limit
+            prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+            task_dict["context_files"] = prepared_context_files
             payload = {
                 "task": task_dict,
-                "prompt": task.prompt,
+                "prompt": self.harness_policy.render_prompt(task.prompt, prepared_context_files),
+                "harness_policy": self.harness_policy.model_dump(mode="json"),
+                "harness_policy_fingerprint": self.harness_policy.fingerprint(),
+                "context_mode": self.harness_policy.context_policy,
                 "provider": self.agent_provider,
                 "model": self.agent_model,
                 "use_provider_credential_store": self.use_provider_credential_store,
@@ -901,15 +912,47 @@ class ForgeAgentRunner:
             failure_reason = "Changed files violated eval scope: " + ", ".join(scope_violations)
             failure_category = FailureCategory.SCOPE_VIOLATION
 
+        try:
+            repair_attempts_used = int(payload.get("repair_attempts_used", 0))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("repair_attempts_used must be an integer") from exc
+        if repair_attempts_used < 0:
+            raise ValueError("repair_attempts_used must be nonnegative")
+        if self.max_repair_attempts is not None and repair_attempts_used > self.max_repair_attempts:
+            raise ValueError("repair_attempt_limit_exceeded")
+        raw_events.append(
+            {
+                "event_type": "eval_verification_convergence",
+                "repair_attempts_used": repair_attempts_used,
+                "repair_attempt_limit": self.max_repair_attempts,
+                "controller_verification_runs": len(all_validation_outputs),
+                "fresh_controller_verifier": bool(all_validation_outputs),
+                "single_repair_within_limit": (
+                    self.max_repair_attempts is None
+                    or repair_attempts_used <= self.max_repair_attempts
+                ),
+            }
+        )
+        raw_events.append(
+            {
+                "event_type": "eval_harness_policy",
+                "policy": self.harness_policy.model_dump(mode="json"),
+                "policy_fingerprint": self.harness_policy.fingerprint(),
+                "prepared_context_files": self.harness_policy.selected_context_files(
+                    task.context_files
+                ),
+            }
+        )
+
         harness_evidence = harness_contract_evidence(
-            task_context_files=task.context_files,
+            task_context_files=self.harness_policy.selected_context_files(task.context_files),
             workspace=workspace,
             tool_calls=(
                 (call.command, call.stdout, call.stderr, call.exit_code) for call in tool_calls
             ),
             provided_envelopes=payload.get("tool_result_envelopes"),
             provided_signals=payload.get("progress_signals"),
-            context_mode=str(payload.get("context_mode", "minimal")),
+            context_mode=self.harness_policy.context_policy,
             failure_category=failure_category.value,
             error=error,
             verification_passed=(
@@ -941,7 +984,7 @@ class ForgeAgentRunner:
             failure_category=failure_category,
             model_rounds=payload.get("model_rounds", 0),
             confirm_requests=payload.get("confirm_requests", 0),
-            repair_attempts_used=payload.get("repair_attempts_used", 0),
+            repair_attempts_used=repair_attempts_used,
             validation_attempts=payload.get("validation_attempts", 0),
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),

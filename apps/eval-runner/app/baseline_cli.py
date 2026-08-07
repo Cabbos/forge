@@ -14,6 +14,7 @@ from app.baseline import (
 from app.baseline_comparison import compare_baseline_campaigns, write_baseline_comparison
 from app.baseline_models import BaselineCampaignMetadata
 from app.config import get_settings
+from app.harness_contracts import HarnessPolicyV1
 from app.harness_profiles import (
     harness_profile_fingerprint,
     load_harness_profile,
@@ -148,6 +149,15 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         harness_fingerprint=harness_profile_fingerprint(profile),
         max_model_rounds=profile.max_model_rounds,
         max_repair_attempts=profile.repair_attempt_limit,
+        harness_policy=HarnessPolicyV1(
+            prompt_mode=profile.prompt_mode,
+            context_policy=profile.context_policy,
+            tool_result_policy=profile.tool_result_policy,
+            stagnation_policy=profile.stagnation_policy,
+            verification_policy=profile.verification_policy,
+            repair_attempt_limit=profile.repair_attempt_limit,
+            parallel_read_tools=profile.parallel_read_tools,
+        ),
         use_provider_credential_store=True,
     )
     preflight = runner.credential_preflight()
