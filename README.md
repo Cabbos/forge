@@ -131,7 +131,7 @@ npm run eval:report:latest         # 查看最近一次报告
 
 Forge-built monorepo provenance 使用独立 integration campaign，把通过 trust、scope、patch replay 和可见/隐藏验证的 Forge patch 串成 Git commit 链与外置哈希账本，最终由 `FORGE-BUILD-MANIFEST.json` 绑定 fixture、dataset、harness、artifact index、账本、最终源码树和全量验证。完整命令与证明边界见 [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md)；该机制证明被接受源码的来源与完整性，不代替 scoring track，也不代表 20-case holdout 成功。
 
-DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、逐任务与累计预算、可恢复账本、可信报告和独立验证。`baseline run` 会先执行不创建 session、不触发 provider 的 typed credential preflight；隔离 HOME 不会清除 controller 已导出的 `DEEPSEEK_API_KEY`，本地付费运行可从 Git 忽略且权限为 `600` 的 `apps/eval-runner/.env` 显式导出，不要求使用钥匙串。预检失败时不会写 pending、attempt 或预算记录。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
+DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、逐任务与累计预算、可恢复账本、可信报告和独立验证。`baseline run` 会先执行不创建 session、不触发 provider 的 typed credential preflight；隔离 HOME 不会清除 controller 已导出的 `DEEPSEEK_API_KEY`，本地付费运行可从 Git 忽略且权限为 `600` 的 `apps/eval-runner/.env` 显式导出，不要求使用钥匙串。Python 字节码与 pytest cache 被强制写入工作区外的隔离 runtime-state，避免“仅验证、无需改代码”的任务产生伪 patch；预检失败时不会写 pending、attempt 或预算记录。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
 
 ## 开发
 

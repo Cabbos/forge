@@ -1109,6 +1109,9 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
         "assert runtime_home != pathlib.Path(sys.argv[1])\n"
         "assert os.environ['CARGO_HOME'] == sys.argv[2]\n"
         "assert os.environ['RUSTUP_HOME'] == sys.argv[3]\n"
+        "assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'\n"
+        "assert os.environ['PYTHONPYCACHEPREFIX'] == str(runtime_state/'python-cache')\n"
+        "assert os.environ['PYTEST_ADDOPTS'] == '-p no:cacheprovider'\n"
         "(runtime_home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
         "(runtime_home/'.forge'/'sessions'/'eval.json').write_text('{}')\n"
         "sqlite3.connect(runtime_state/'registry.db').close()\n"
@@ -1182,6 +1185,38 @@ def test_forge_runner_runtime_files_never_become_changed_files(tmp_path: Path) -
     assert trace.error is None
     assert trace.changed_files == []
     assert trace.scope_violations == []
+
+
+def test_forge_runner_python_verification_cache_never_becomes_a_patch(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "test_existing.py").write_text("def test_existing(): assert True\n")
+    script = tmp_path / "pytest_agent.py"
+    script.write_text(
+        "import json,pathlib,subprocess,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "completed=subprocess.run([sys.executable,'-m','pytest','-q'],cwd=workspace)\n"
+        "assert completed.returncode == 0\n"
+        "json.dump({'final_answer':'verified','changed_files':[],'file_diffs':[]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="python-cache-isolation",
+        title="Python cache isolation",
+        prompt="Verify without source edits.",
+        fixture_path=str(fixture),
+        expected_files_changed=[],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error is None
+    assert trace.changed_files == []
+    assert trace.patch_replay is not None
+    assert trace.patch_replay.ok is True
 
 
 def test_forge_runner_times_out_setup_command(tmp_path: Path) -> None:

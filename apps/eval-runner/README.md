@@ -269,9 +269,12 @@ from the inherited `DEEPSEEK_API_KEY` before consulting the optional system
 credential-store fallback. For local paid runs, keep the value in this
 directory's Git-ignored `.env` with file mode `600`, then explicitly export it
 into the controller process (`set -a; source .env; set +a`). The child HOME
-remains isolated and the credential is never serialized into a request or
-artifact. Failure leaves campaign metadata, pending records, attempts, and the
-budget ledger unchanged. All six commands require explicit
+remains isolated, Python bytecode and pytest caches are routed into the
+out-of-workspace runtime state, and the credential is never serialized into a
+request or artifact. This keeps verification-only no-op attempts free of
+synthetic cache-file patches. Failure leaves campaign metadata, pending
+records, attempts, and the budget ledger unchanged. All six commands require
+explicit
 `--campaign` and `--profile` arguments:
 
 ```bash

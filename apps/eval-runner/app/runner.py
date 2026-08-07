@@ -405,6 +405,9 @@ class ForgeAgentRunner:
                     "HOME": str(runtime_home),
                     "USERPROFILE": str(runtime_home),
                     "FORGE_EVAL_RUNTIME_STATE": str(runtime_state),
+                    "PYTHONDONTWRITEBYTECODE": "1",
+                    "PYTHONPYCACHEPREFIX": str(runtime_state / "python-cache"),
+                    "PYTEST_ADDOPTS": "-p no:cacheprovider",
                 }
             )
             setup_outputs = run_setup_commands(
