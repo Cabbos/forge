@@ -14,7 +14,7 @@ from pydantic import Field, model_validator
 
 from app.models import EvalModel
 from app.provenance import canonical_json_bytes, sha256_bytes
-from app.provenance_models import Sha256
+from app.provenance_models import GitSha1, Sha256
 
 _SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
@@ -105,6 +105,14 @@ class HoldoutGateReportV1(EvalModel):
     dataset_split: Literal["holdout"]
     dataset_fingerprint: Sha256
     harness_fingerprint: Sha256
+    profile_id: Literal[
+        "deepseek-v4-flash-anthropic-baseline-v1",
+        "deepseek-v4-flash-openai-chat-control-v1",
+        "deepseek-v4-flash-anthropic-minimal-v1",
+        "deepseek-v4-flash-openai-chat-minimal-v1",
+    ]
+    source_commit: GitSha1
+    price_table_fingerprint: Sha256
     provider: Literal["deepseek"]
     model: Literal["deepseek-v4-flash"]
     transport: Literal["anthropic_messages", "openai_chat_completions"]
@@ -241,6 +249,14 @@ def summarize_holdout_attempts(
     case_ids: Sequence[str],
     dataset_fingerprint: str,
     harness_fingerprint: str,
+    profile_id: Literal[
+        "deepseek-v4-flash-anthropic-baseline-v1",
+        "deepseek-v4-flash-openai-chat-control-v1",
+        "deepseek-v4-flash-anthropic-minimal-v1",
+        "deepseek-v4-flash-openai-chat-minimal-v1",
+    ],
+    source_commit: str,
+    price_table_fingerprint: str,
     transport: Literal["anthropic_messages", "openai_chat_completions"],
     budget_cny: Decimal,
 ) -> HoldoutGateReportV1:
@@ -269,6 +285,9 @@ def summarize_holdout_attempts(
         dataset_split="holdout",
         dataset_fingerprint=dataset_fingerprint,
         harness_fingerprint=harness_fingerprint,
+        profile_id=profile_id,
+        source_commit=source_commit,
+        price_table_fingerprint=price_table_fingerprint,
         provider="deepseek",
         model="deepseek-v4-flash",
         transport=transport,

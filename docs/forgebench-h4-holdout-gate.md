@@ -6,7 +6,8 @@ attempts). Reports should be derived with `summarize_holdout_attempts` from one
 immutable evidence record per case/repetition pair; hand-authored aggregate
 numbers cannot replace those records. The derived report records the selected
 model, official transport, dataset fingerprint, harness fingerprint, budget,
-and every evidence-coverage rate.
+source commit, profile identity, price-table fingerprint, and every
+evidence-coverage rate.
 
 The locked thresholds are:
 
