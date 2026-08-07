@@ -358,7 +358,8 @@ The CLI prints a JSON backtest report:
 Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to the Forge headless binary:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_ROOT=/absolute/path/to/forge \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
 
@@ -368,7 +369,8 @@ When debugging a real agent run, add `--output` to keep the full trace artifact
 while stdout remains the compact report:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_ROOT=/absolute/path/to/forge \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli \
     --cases eval_cases/small-edit-success \
     --provider forge \
@@ -607,7 +609,7 @@ uv run python -m app.worker --once
 
 | Variable | Required For | Description |
 |---|---|---|
-| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Defaults to `cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet` when run from `apps/desktop/`. |
+| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Use an absolute manifest path because the controller runs the command from an isolated temporary workspace. |
 | `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider for the headless agent (e.g. `anthropic`, `openai`, `deepseek`). Defaults to `deepseek`. |
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | Model ID for the headless agent. Defaults to `deepseek-v4-flash`. |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key for the chosen provider. Stored in `~/.forge/config.json` via Forge settings. |
@@ -720,7 +722,8 @@ quality warnings while still participating in API and trace-contract checks.
 Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a run with `provider: "forge"`:
 
 ```bash
-export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
+export FORGE_ROOT=/absolute/path/to/forge
+export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
 
 curl -X POST http://localhost:8000/runs \
   -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \

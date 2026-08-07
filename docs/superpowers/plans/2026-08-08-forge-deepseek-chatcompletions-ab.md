@@ -15,8 +15,10 @@ isolated runtime state, while only the explicit `.bun-cache` disposable
 directory is excluded by both observers. Task 7 is intentionally open:
 paid diagnostics have produced trusted route smokes but have also hit the
 controller's unknown-cost and patch-replay trust boundaries, so no complete
-30-attempt arm or paired comparison is claimed. H4 holdout execution remains
-closed until a complete trusted development pair exists.
+30-attempt arm or paired comparison is claimed. The first post-fix pair reached
+six trusted attempts per arm before the same unknown-cost multi-file API
+boundary, which the controller recovered without replay. H4 holdout execution
+remains closed until a complete trusted development pair exists.
 
 ---
 

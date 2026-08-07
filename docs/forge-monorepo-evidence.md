@@ -65,6 +65,12 @@ directory is filtered by both workspace observers; source files remain in the
 observed and replayed patch boundary. This closes the cache false-positive
 path without weakening fail-closed report/observation mismatch checks.
 
+The first post-fix paid pair (`bda5d977`) reached six trusted attempts per arm
+before both arms stopped at the same unknown-cost multi-file API interruption;
+recovery reserved the bounded ceiling and performed no replay. The resulting
+`h2-control-v4`/`h2-candidate-v4` ledgers are diagnostic only: there is still no
+complete 30-attempt arm, paired winner, or holdout claim.
+
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned
 baseline was written by Forge, nor does a passing contract gate alone prove

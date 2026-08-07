@@ -67,6 +67,18 @@ an independent trust failure before a paired arm existed. These artifacts are
 diagnostic evidence, not a comparison result; the controller did not retry the
 failed control attempt.
 
+After the cache-boundary fix, a new source-pinned pair (`bda5d977b85d234ffa3588f355302f2eb5cf3bc3`) produced six trusted, known-cost attempts on each arm before the same multi-file API case reached an unknown-cost runner interruption:
+
+| Campaign | Trusted attempts | Terminal attempts | Final status | Reserved spend (CNY) |
+| --- | ---: | ---: | --- | ---: |
+| `h2-control-v4` | 6 | 7 | blocked | `1.13673496` |
+| `h2-candidate-v4` | 6 | 7 | blocked | `1.18498476` |
+
+Both arms passed the cache isolation contract, scope, verification, and patch
+replay on all six trusted attempts. Recovery reserved the one-CNY per-task
+ceiling for the interrupted attempt and did not replay it. This is stronger
+route and harness evidence, but still not a complete paired 30-attempt result.
+
 ## Cache-boundary hardening
 
 The `cf7e4d4d` control diagnostic exposed a real harness boundary: the model
