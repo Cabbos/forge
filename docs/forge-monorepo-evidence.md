@@ -10,7 +10,7 @@ evidence and paid model-quality evidence.
 | Surface | Role | Authoritative checks |
 | --- | --- | --- |
 | `apps/desktop` | Forge runtime, adapters, headless route boundary | Rust library tests, desktop backend checks, acceptance matrix |
-| `apps/eval-runner` | ForgeBench catalog, controller, runner, scoring, trust, reports | `uv run pytest`, Ruff, mypy, H1/H2/H3 gates |
+| `apps/eval-runner` | ForgeBench catalog, controller, runner, scoring, trust, reports | `uv run pytest`, Ruff, mypy, H1/H2/H3/H4 gates |
 | `apps/website` | Product website prototype | `npm run build:website` |
 | `scripts/acceptance.sh` | Single repo-wide gate matrix | `--dry-run`, `--list-json`, exact gate execution |
 
@@ -28,7 +28,7 @@ enter a post-baseline product history; see
 | H1 | DeepSeek Anthropic control, budget ledger, unknown-cost recovery | development paid baseline machinery; no complete 30-case arm |
 | H2 | official Anthropic vs OpenAI Chat Completions route attestation and conformance | transport/harness A/B wiring; no Responses claim, winner, or holdout |
 | H3 | minimal context manifest, bounded tool envelopes, typed stagnation policy | offline convergence evidence; no paid score improvement |
-| H4 | this index plus provenance campaign contract | auditable monorepo packaging; authorship is proven only for finalized campaign history |
+| H4 | locked 60-attempt holdout report/decision gate plus provenance campaign contract | release decision boundary and auditable monorepo packaging; an actual holdout result still requires paid evidence and finalized campaign history |
 
 ## Reproducible gates
 
@@ -40,13 +40,15 @@ scripts/acceptance.sh --only "Forge-built monorepo provenance contract"
 scripts/acceptance.sh --only "DeepSeek H1 paid-baseline contract"
 scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
 scripts/acceptance.sh --only "frontier harness contract evidence"
+scripts/acceptance.sh --only "ForgeBench frozen holdout release gate"
 scripts/acceptance.sh --list-json
 ```
 
-The matrix currently contains 84 executable gates. `--list-json` is the
+The matrix currently contains 85 executable gates. `--list-json` is the
 machine-readable source for release tooling; `--results-json` binds executed
-results to the current commit. The H3 gate is intentionally offline and is
-safe to run without a provider key.
+results to the current commit. The H3 and H4 contract gates are intentionally
+offline and safe to run without a provider key; they prove decision boundaries,
+not paid model-quality results.
 
 ## Current boundary
 
