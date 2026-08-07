@@ -26,7 +26,7 @@ enter a post-baseline product history; see
 | --- | --- | --- |
 | H0 | isolated runtime, workspace observer, patch replay, frozen 10/20 dataset | harness trust and dataset integrity; no frontier KPI |
 | H1 | DeepSeek Anthropic control, budget ledger, unknown-cost recovery | development paid baseline machinery; no complete 30-case arm |
-| H2 | official Anthropic vs OpenAI Chat Completions route attestation and conformance | transport/harness A/B wiring; no Responses claim, winner, or holdout |
+| H2 | official Anthropic vs OpenAI Chat Completions route attestation and conformance | complete v6 development comparison (`no_material_difference`); no Responses or holdout claim |
 | H3 | minimal context manifest, bounded tool envelopes, typed stagnation policy | offline convergence evidence; no paid score improvement |
 | H4 | locked 60-attempt holdout report/decision gate plus provenance campaign contract | release decision boundary and auditable monorepo packaging; an actual holdout result still requires paid evidence and finalized campaign history |
 
@@ -54,10 +54,10 @@ not paid model-quality results.
 
 The paid diagnostic is recorded in
 [`forgebench-h2-paid-diagnostic.md`](forgebench-h2-paid-diagnostic.md). Both
-official DeepSeek routes pass trusted smoke calls, while synchronized-source
-development campaigns stop at fail-closed boundaries (unknown charge or patch
-replay/trust failure) without replay. Therefore there is no complete trusted
-30-attempt arm, no paired A/B winner, and no valid 20-case holdout claim yet.
+official DeepSeek routes pass trusted smoke calls, and the v6 source-pinned
+development campaigns now complete 30 attempts per arm with independent
+verification. The paired decision is `no_material_difference`; there is still
+no valid 20-case holdout claim.
 
 The latest offline hardening also isolates Bun/uv cache roots under each
 attempt's runtime state. Only the explicitly named `.bun-cache` disposable
@@ -79,13 +79,22 @@ token-shaped `sk-...` or Bearer values at an identifier boundary, with
 regression coverage for both paths and real token rejection. The historical v4
 artifacts remain immutable and are not replayed.
 
-A fresh pair pinned to `f72a0b4c` then completed a bounded 7-attempt arm on each
-official route. Both arms verified with seven trusted, known-usage, verification
-passing artifacts and zero scope violations (`0.14829088 CNY` control,
-`0.15879656 CNY` candidate); the control `task-api-bulk-update` artifact now
-publishes normally. This closes the observed artifact-publication boundary but
-does not complete the required 30-attempt arms, establish a winner, or unseal
-H4 holdout execution.
+A fresh pair pinned to `f72a0b4c` first completed a bounded 7-attempt arm on
+each official route. Both arms verified with seven trusted, known-usage,
+verification-passing artifacts and zero scope violations (`0.14829088 CNY`
+control, `0.15879656 CNY` candidate); the control `task-api-bulk-update`
+artifact now publishes normally. This closed the observed artifact-publication
+boundary before the pair was extended to the full development split.
+
+That same pair subsequently completed 30 attempts per arm and passed independent
+campaign verification. Control was 30/30 trusted with 0.9000 trusted success,
+0.1000 scope violations, median 25.0 model rounds, and `0.74215116 CNY`; the
+candidate was 30/30 trusted with 0.9333 trusted success, 0.0333 scope
+violations, median 27.5 rounds, and `0.73471284 CNY`. Usage was known and
+verification passed for every attempt. The canonical paired comparison
+(`a6bd277a04ef2810d97c88096690c3a10567d6ec73d9fc625575bfda0c2b9f2b`) selected
+`no_material_difference`. This is a frozen development result, not a frontier
+or holdout claim; the H4 release gate remains separate.
 
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned

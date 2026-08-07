@@ -116,6 +116,30 @@ against the locked 30-attempt development baseline, so no winner, frontier
 score, or H4 holdout claim is made. These v6 artifacts are immutable and were
 not mixed with the earlier v4/v5 diagnostic campaigns.
 
+## v6 complete development comparison
+
+The same v6 pair was then allowed to finish the locked 30 attempts per arm.
+Both campaign ledgers and reports verified with zero pending attempts and zero
+unknown-cost attempts. The canonical comparison was written outside the source
+tree at `/private/tmp/forge-h2-campaigns-v6/comparison-v1.json` with SHA-256
+`a6bd277a04ef2810d97c88096690c3a10567d6ec73d9fc625575bfda0c2b9f2b`.
+
+| Metric | Anthropic control | OpenAI Chat Completions candidate |
+| --- | ---: | ---: |
+| Completed / trusted | 30 / 30 | 30 / 30 |
+| Trusted success rate | 0.9000 | 0.9333 |
+| Verification pass rate | 1.0000 | 1.0000 |
+| Scope-violation rate | 0.1000 | 0.0333 |
+| Median model rounds | 25.0 | 27.5 |
+| Median cost (CNY) | `0.01700738` | `0.01937556` |
+| Total cost (CNY) | `0.74215116` | `0.73471284` |
+
+The paired bootstrap comparison selected `no_material_difference`; all 30
+attempts on each arm had known usage and no provider errors. This is a valid
+development transport/harness comparison, not a frontier leaderboard claim:
+the result is tied to this frozen dataset, model snapshot, price table, source
+commit, and harness fingerprints. H4 remains a separate sealed holdout gate.
+
 ## Cache-boundary hardening
 
 The `cf7e4d4d` control diagnostic exposed a real harness boundary: the model
@@ -133,6 +157,8 @@ never exception/provider text.
 
 ## Next gate
 
-The offline H3 work should diagnose or improve the bulk-update execution path,
-then rerun the complete development pair only after the acceptance gate passes.
-The H4 holdout remains closed.
+The complete development pair and comparison now pass. The next gate is the
+separate H4 sealed holdout campaign: it requires 20 holdout cases × 3
+repetitions, a clean source-pinned run, provenance verification, and the locked
+release thresholds. Until that campaign produces a verified 60-attempt report,
+Forge makes no holdout or frontier-quality claim.

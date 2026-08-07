@@ -12,27 +12,28 @@
 offline-verified. A synchronized-source paid diagnostic also exposed and then
 closed a cache-boundary false positive: Bun/uv cache roots now live under
 isolated runtime state, while only the explicit `.bun-cache` disposable
-directory is excluded by both observers. Task 7 is intentionally open:
-paid diagnostics have produced trusted route smokes but have also hit the
-controller's unknown-cost and patch-replay trust boundaries, so no complete
-30-attempt arm or paired comparison is claimed. The first post-fix pair reached
-six trusted attempts per arm before the same unknown-cost multi-file API
-boundary, which the controller recovered without replay. Offline reproduction
-then found two artifact-publication false positives: source-level
-`api_key = os.getenv(...)` and the embedded `sk-api` substring in the
-`task-api-bulk-update` temporary workspace path. The scrubber now requires
-token-shaped `sk-...` or Bearer values at an identifier boundary, with
-regression coverage; historical paid artifacts remain immutable and are not
-replayed. H4 holdout execution remains closed until a complete trusted
-development pair exists.
+directory is excluded by both observers. Task 7 remains open for the separate
+holdout/release step. Paid diagnostics first hit the controller's unknown-cost
+and patch-replay trust boundaries; the scrubber investigation then found two
+artifact-publication false positives: source-level `api_key = os.getenv(...)`
+and the embedded `sk-api` substring in the `task-api-bulk-update` temporary
+workspace path. The scrubber now requires token-shaped `sk-...` or Bearer
+values at an identifier boundary, with regression coverage; historical paid
+artifacts remain immutable and are not replayed. A fresh source-pinned pair now
+has a complete 30-attempt development comparison with a locked
+`no_material_difference` decision. H4 is eligible to run, but no holdout
+report has been executed or claimed yet.
 
-Post-fix bounded evidence is now available from a fresh source-pinned pair at
-`f72a0b4c`: control and candidate each completed 7/7 trusted, known-usage,
-verification-passing attempts with zero scope violations. Spend was
-`0.14829088 CNY` and `0.15879656 CNY`, respectively, and the control API bulk
-update artifact published successfully. This closes the observed scrubber
-boundary but remains incomplete versus the locked 30-attempt arms; no A/B
-winner or H4 execution is claimed.
+Post-fix evidence is now available from a fresh source-pinned pair at
+`f72a0b4c`: both arms completed the locked 30 attempts with 30/30 trusted,
+known-usage, verification-passing artifacts. Control recorded 0.9000 trusted
+success, 0.1000 scope violations, median 25.0 rounds, and `0.74215116 CNY`;
+candidate recorded 0.9333 trusted success, 0.0333 scope violations, median
+27.5 rounds, and `0.73471284 CNY`. The paired comparison digest is
+`a6bd277a04ef2810d97c88096690c3a10567d6ec73d9fc625575bfda0c2b9f2b` and its
+locked decision is `no_material_difference`. This is a complete development
+transport comparison, not a frontier claim; H4 remains a separate sealed
+holdout release gate.
 
 ---
 

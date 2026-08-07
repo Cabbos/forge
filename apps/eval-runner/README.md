@@ -328,11 +328,12 @@ offline contract is:
 scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
 ```
 
-The paired comparison is development evidence only; it is not a holdout or
-frontier-grade result. See
+The v6 paired comparison is development evidence only; it selected
+`no_material_difference` and is not a holdout or frontier-grade result. See
 [`../../docs/forgebench-h2-transport-ab.md`](../../docs/forgebench-h2-transport-ab.md).
 If a paid arm is interrupted with unknown cost, its bounded recovery evidence is
-reported separately and no comparison winner is emitted; see
+reported separately and no comparison is emitted; the verified v6 result is
+recorded in
 [`../../docs/forgebench-h2-paid-diagnostic.md`](../../docs/forgebench-h2-paid-diagnostic.md).
 
 The CLI prints a JSON backtest report:
