@@ -112,6 +112,19 @@ def test_provenance_entry_is_strict_trusted_forge_evidence() -> None:
             make_entry(**update)
 
 
+def test_verification_metadata_allows_source_code_api_key_assignments() -> None:
+    verification = VerificationDigest(
+        command="python -c \"api_key = os.getenv('DEEPSEEK_API_KEY')\"",
+        exit_code=0,
+        stdout_sha256=SHA_A,
+        stderr_sha256=SHA_B,
+        verified_commit=GIT_B,
+        passed=True,
+    )
+
+    assert verification.passed is True
+
+
 def test_manifest_references_every_required_artifact_and_ordered_task() -> None:
     manifest = make_manifest()
 

@@ -12,7 +12,9 @@ Sha256 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 GitSha1 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 
 SECRET_PATTERN = re.compile(
-    r"(?i)(?:sk-[a-z0-9_-]{16,}|api[_-]?key\s*[:=]|bearer\s+[a-z0-9._-]{12,})"
+    # Match token-shaped values, not source-code identifiers such as
+    # ``api_key = os.getenv(...)`` that legitimately appear in traces.
+    r"(?i)(?:sk-[a-z0-9_-]{16,}|bearer\s+[a-z0-9._-]{12,})"
 )
 SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 

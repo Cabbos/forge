@@ -17,8 +17,12 @@ paid diagnostics have produced trusted route smokes but have also hit the
 controller's unknown-cost and patch-replay trust boundaries, so no complete
 30-attempt arm or paired comparison is claimed. The first post-fix pair reached
 six trusted attempts per arm before the same unknown-cost multi-file API
-boundary, which the controller recovered without replay. H4 holdout execution
-remains closed until a complete trusted development pair exists.
+boundary, which the controller recovered without replay. Offline reproduction
+then found a separate artifact-publication false positive: source-level
+`api_key = os.getenv(...)` was classified as secret material. The scrubber now
+requires token-shaped `sk-...` or Bearer values, with regression coverage;
+historical paid artifacts remain immutable and are not replayed. H4 holdout
+execution remains closed until a complete trusted development pair exists.
 
 ---
 
