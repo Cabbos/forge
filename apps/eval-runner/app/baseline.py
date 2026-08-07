@@ -275,11 +275,16 @@ def run_baseline_campaign(
                     _atomic_write_model(artifact_path, artifact)
                 except BaselineCrashInjected:
                     raise
-                except Exception:
+                except Exception as exc:
                     with suppress(OSError, ValidationError, ValueError):
                         _atomic_write_model(
                             pending_path,
-                            pending.model_copy(update={"interruption_stage": interruption_stage}),
+                            pending.model_copy(
+                                update={
+                                    "interruption_stage": interruption_stage,
+                                    "interruption_reason": type(exc).__name__,
+                                }
+                            ),
                         )
                     return _blocked_result(
                         campaign_root,
@@ -820,6 +825,11 @@ def _interrupted_attempt_artifact(
                 {
                     "event_type": "baseline_interruption",
                     "stage": pending.interruption_stage or "unknown",
+                    **(
+                        {"reason": pending.interruption_reason}
+                        if pending.interruption_reason is not None
+                        else {}
+                    ),
                 }
             ]
         ),

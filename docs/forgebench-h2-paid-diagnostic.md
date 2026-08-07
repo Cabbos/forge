@@ -90,7 +90,9 @@ isolated `runtime-state`, and the Python/Rust observers share a narrow,
 explicit `.bun-cache` disposable-directory allowlist. Product files beside
 that directory remain observed, and a model-reported cache path still creates
 a report/observation mismatch. This fix is offline-tested; the old paid
-artifact remains immutable diagnostic evidence and is not replayed.
+artifact remains immutable diagnostic evidence and is not replayed. Recovery
+also records only the bounded exception class alongside the interruption stage,
+never exception/provider text.
 
 ## Next gate
 

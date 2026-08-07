@@ -455,6 +455,8 @@ def test_interrupted_paid_attempt_blocks_resume_and_recovery_never_reissues(
     assert interrupted.status == "blocked"
     assert interrupted.blockers == ["interrupted_paid_attempt_unknown_cost"]
     assert len(list((campaign / "pending").glob("*.json"))) == 1
+    pending_payload = json.loads(next((campaign / "pending").glob("*.json")).read_text())
+    assert pending_payload["interruption_reason"] == "RuntimeError"
 
     forbidden_runner = FakeRunner(campaign_root=campaign)
     resumed = run_baseline_campaign(
@@ -472,7 +474,11 @@ def test_interrupted_paid_attempt_blocks_resume_and_recovery_never_reissues(
     artifact = next((campaign / "attempts").glob("*.json"))
     recovered_artifact = BaselineAttemptArtifact.model_validate_json(artifact.read_bytes())
     assert recovered_artifact.trace.raw_events == [
-        {"event_type": "baseline_interruption", "stage": "runner"}
+        {
+            "event_type": "baseline_interruption",
+            "reason": "RuntimeError",
+            "stage": "runner",
+        }
     ]
     assert "runner stage" in (recovered_artifact.trace.failure_reason or "")
     verification = verify_baseline_campaign(**campaign_kwargs(campaign))

@@ -39,6 +39,13 @@ class BaselinePendingAttempt(EvalModel):
         ]
         | None
     ) = Field(default=None, exclude_if=lambda value: value is None)
+    # Keep only the exception class, never provider/error text, in durable
+    # interruption evidence so diagnostics remain bounded and secret-free.
+    interruption_reason: str | None = Field(
+        default=None,
+        max_length=120,
+        exclude_if=lambda value: value is None,
+    )
 
     @model_validator(mode="after")
     def validate_pending_attempt(self) -> "BaselinePendingAttempt":
