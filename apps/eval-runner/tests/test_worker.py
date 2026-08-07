@@ -150,15 +150,23 @@ def test_worker_stops_publication_when_lease_is_reclaimed(
 def test_worker_cancellation_interrupts_running_subprocess(tmp_path: Path) -> None:
     storage = queued_sqlite_storage(tmp_path)
     script = tmp_path / "long_agent.py"
+    started = tmp_path / "agent-started"
     script.write_text(
-        "import time\nprint('started', flush=True)\ntime.sleep(30)\n",
+        (
+            "import sys\n"
+            "import time\n"
+            "from pathlib import Path\n"
+            "Path(sys.argv[1]).touch()\n"
+            "print('started', flush=True)\n"
+            "time.sleep(30)\n"
+        ),
         encoding="utf-8",
     )
     run = make_pending_run("run-1").model_copy(update={"provider": EvalProvider.FORGE})
     storage.create_run(run)
     worker = EvalWorker(
         storage=storage,
-        forge_command=shlex.join([sys.executable, "-u", str(script)]),
+        forge_command=shlex.join([sys.executable, "-u", str(script), str(started)]),
     )
     thread = threading.Thread(target=worker.run_once)
     thread.start()
@@ -168,6 +176,7 @@ def test_worker_cancellation_interrupts_running_subprocess(tmp_path: Path) -> No
             and current.status == RunStatus.RUNNING
         )
     )
+    wait_until(started.exists)
 
     storage.cancel_run("run-1")
     thread.join(timeout=3)
