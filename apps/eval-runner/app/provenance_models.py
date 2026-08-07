@@ -14,6 +14,7 @@ GitSha1 = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")]
 SECRET_PATTERN = re.compile(
     r"(?i)(?:sk-[a-z0-9_-]{16,}|api[_-]?key\s*[:=]|bearer\s+[a-z0-9._-]{12,})"
 )
+SAFE_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 
 
 def _contains_secret(value: Any) -> bool:
@@ -107,6 +108,9 @@ class ForgeProvenanceEntry(EvalModel):
         for field_name in ("task_id", "run_id", "provider", "model", "transport"):
             if not str(getattr(self, field_name)).strip():
                 raise ValueError(f"{field_name} must not be empty")
+        for field_name in ("task_id", "run_id"):
+            if SAFE_ID_PATTERN.fullmatch(str(getattr(self, field_name))) is None:
+                raise ValueError(f"{field_name} must be a safe identifier")
         if _contains_secret(self.model_dump(mode="json")):
             raise ValueError("provenance entry contains secret-like content")
         return self
