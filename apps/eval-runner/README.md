@@ -322,6 +322,9 @@ scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
 The paired comparison is development evidence only; it is not a holdout or
 frontier-grade result. See
 [`../../docs/forgebench-h2-transport-ab.md`](../../docs/forgebench-h2-transport-ab.md).
+If a paid arm is interrupted with unknown cost, its bounded recovery evidence is
+reported separately and no comparison winner is emitted; see
+[`../../docs/forgebench-h2-paid-diagnostic.md`](../../docs/forgebench-h2-paid-diagnostic.md).
 
 The CLI prints a JSON backtest report:
 

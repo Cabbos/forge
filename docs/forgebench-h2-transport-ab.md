@@ -69,4 +69,6 @@ that transport/endpoint family is the only experimental difference, and publish
 per-task success, scope, rounds, cost, latency, provider errors, trust blockers,
 and the selected arm. If the candidate does not materially improve trusted
 success or safety-preserving efficiency, Anthropic remains the default for the
-next phase.
+next phase. The current paid diagnostic boundary is recorded in
+[`forgebench-h2-paid-diagnostic.md`](forgebench-h2-paid-diagnostic.md); it is
+explicitly not a transport winner claim.
