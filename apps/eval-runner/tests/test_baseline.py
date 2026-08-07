@@ -465,6 +465,12 @@ def test_interrupted_paid_attempt_blocks_resume_and_recovery_never_reissues(
     assert recovered.blockers == ["interrupted_paid_attempt_unknown_cost"]
     assert list((campaign / "pending").iterdir()) == []
     assert forbidden_runner.calls == []
+    artifact = next((campaign / "attempts").glob("*.json"))
+    recovered_artifact = BaselineAttemptArtifact.model_validate_json(artifact.read_bytes())
+    assert recovered_artifact.trace.raw_events == [
+        {"event_type": "baseline_interruption", "stage": "runner"}
+    ]
+    assert "runner stage" in (recovered_artifact.trace.failure_reason or "")
     verification = verify_baseline_campaign(**campaign_kwargs(campaign))
     assert "interrupted_paid_attempt_unknown_cost" in verification.blockers
     assert verification.spent_cny == Decimal("1")

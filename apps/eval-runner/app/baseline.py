@@ -7,7 +7,7 @@ import subprocess
 import tempfile
 from collections import Counter, defaultdict
 from collections.abc import Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from datetime import UTC, datetime
 from decimal import Decimal
 from math import ceil
@@ -244,18 +244,22 @@ def run_baseline_campaign(
                 _atomic_write_model(pending_path, pending)
                 calls_started += 1
 
+                interruption_stage = "runner"
                 try:
                     trace = runner.run_task(task)
+                    interruption_stage = "usage_accounting"
                     usage = account_provider_usage(
                         provider_events_from_trace(trace),
                         profile,
                     )
+                    interruption_stage = "trust_evaluation"
                     trust_result = _trust_for_trace(
                         task,
                         trace,
                         dataset_fingerprint_value=metadata.dataset_fingerprint,
                         harness_check=harness_check,
                     )
+                    interruption_stage = "artifact_publish"
                     artifact = _attempt_artifact(
                         pending,
                         profile,
@@ -270,6 +274,11 @@ def run_baseline_campaign(
                 except BaselineCrashInjected:
                     raise
                 except Exception:
+                    with suppress(OSError, ValidationError, ValueError):
+                        _atomic_write_model(
+                            pending_path,
+                            pending.model_copy(update={"interruption_stage": interruption_stage}),
+                        )
                     return _blocked_result(
                         campaign_root,
                         [_INTERRUPTED_BLOCKER],
@@ -787,6 +796,11 @@ def _interrupted_attempt_artifact(
     profile: HarnessProfileV1,
 ) -> BaselineAttemptArtifact:
     now = datetime.now(UTC)
+    stage_detail = (
+        f" at the {pending.interruption_stage} stage"
+        if pending.interruption_stage is not None
+        else ""
+    )
     trace = AgentTrace(
         task_id=pending.task_id,
         user_prompt="Interrupted paid baseline attempt.",
@@ -794,8 +808,18 @@ def _interrupted_attempt_artifact(
         provider=EvalProvider.FORGE,
         final_answer="",
         error=_INTERRUPTED_BLOCKER,
-        failure_reason="Paid attempt was interrupted after its pending record was durable.",
+        failure_reason=(
+            f"Paid attempt was interrupted after its pending record was durable{stage_detail}."
+        ),
         failure_category=FailureCategory.RUNNER_ERROR,
+        raw_events=(
+            [
+                {
+                    "event_type": "baseline_interruption",
+                    "stage": pending.interruption_stage or "unknown",
+                }
+            ]
+        ),
         started_at=pending.started_at,
         ended_at=now,
         duration_ms=max(0, int((now - pending.started_at).total_seconds() * 1000)),

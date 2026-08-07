@@ -46,6 +46,10 @@ verification. A paid campaign stops without retry when it observes:
 Recovery never reissues an interrupted pending call. Known usage is priced using
 the official CNY snapshot; Anthropic cache fields retain their additive
 semantics, while Chat Completions uses inclusive `prompt_tokens` semantics.
+When a controller-side interruption is observed after the durable pending marker,
+recovery preserves only a bounded non-secret stage marker and emits it as a
+`baseline_interruption` raw event; the exact charge remains unknown and the arm
+stays blocked.
 
 ## Offline gate and claims
 

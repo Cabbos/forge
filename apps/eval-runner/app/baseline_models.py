@@ -30,6 +30,15 @@ class BaselinePendingAttempt(EvalModel):
     harness_fingerprint: Sha256
     reserved_cost_cny: Decimal = Field(gt=0, allow_inf_nan=False)
     started_at: datetime
+    interruption_stage: (
+        Literal[
+            "runner",
+            "usage_accounting",
+            "trust_evaluation",
+            "artifact_publish",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
 
     @model_validator(mode="after")
     def validate_pending_attempt(self) -> "BaselinePendingAttempt":

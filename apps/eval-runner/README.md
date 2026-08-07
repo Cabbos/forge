@@ -272,8 +272,12 @@ into the controller process (`set -a; source .env; set +a`). The child HOME
 remains isolated, Python bytecode and pytest caches are routed into the
 out-of-workspace runtime state, and the credential is never serialized into a
 request or artifact. This keeps verification-only no-op attempts free of
-synthetic cache-file patches. Failure leaves campaign metadata, pending
-records, attempts, and the budget ledger unchanged. All six commands require
+synthetic cache-file patches. If an interruption occurs after the pending marker
+is durable, recovery records only a bounded non-secret interruption stage
+(runner, usage accounting, trust evaluation, or artifact publication) in the
+pending evidence before reserving the unknown cost; it never replays the
+provider call. No attempt or budget entry is published before recovery. All six
+commands require
 explicit
 `--campaign` and `--profile` arguments:
 
