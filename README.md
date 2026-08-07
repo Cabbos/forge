@@ -221,6 +221,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 | [`apps/desktop/README.md`](apps/desktop/README.md) | 桌面产品定位、承诺与体验（含英文版链接） |
 | [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
 | [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md) | Forge-built monorepo provenance、integration campaign 命令与证明边界 |
+| [`docs/forge-monorepo-evidence.md`](docs/forge-monorepo-evidence.md) | desktop / eval-runner / website 的统一证据索引、gate 与 H0–H4 声明边界 |
 | [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md) | DeepSeek H1 paid baseline、预算账本、恢复语义与显式 CLI |
 | [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
 | [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
