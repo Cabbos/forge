@@ -18,6 +18,14 @@ preflight:
 | H1 control | Anthropic Messages | `0.0333108` | `ok: true` |
 | H2 candidate | OpenAI Chat Completions | `0.0532278` | `ok: true` |
 
+After the bounded command-string fix, a fresh isolated H2 candidate smoke also
+completed one paid development attempt from source commit
+`7dba8291ddd639ef5267b86a3aab9d00ccbacded`. The attempt was trusted, passed
+verification and scope checks, recorded known usage, and cost `0.05115632 CNY`.
+It is retained as a route-path diagnostic only; it does not extend either
+historical seven-attempt campaign, complete a 30-attempt arm, or establish an
+A/B winner.
+
 ## Fail-closed outcome
 
 Five diagnostic campaigns were allowed to run only until the first unknown-cost
