@@ -9,6 +9,7 @@ import pytest
 from app.metrics import calculate_metrics
 from app.models import (
     AgentTrace,
+    DatasetSplit,
     EvalArtifact,
     EvalProvider,
     EvaluationRun,
@@ -146,6 +147,139 @@ def test_dataset_fingerprint_is_independent_of_case_order(tmp_path: Path) -> Non
     second = EvaluationTask(id="b", title="B", prompt="Do B.")
 
     assert dataset_fingerprint([first, second]) == dataset_fingerprint([second, first])
+
+
+def test_dataset_fingerprint_hashes_fixture_and_scenario_contents_not_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.datasets import dataset_fingerprint
+
+    verifier_root = tmp_path / "verifiers"
+    verifier_root.mkdir()
+    (verifier_root / "_support.py").write_text("CAP = 12000\n", encoding="utf-8")
+    (verifier_root / "opaque-check.py").write_text("assert True\n", encoding="utf-8")
+    monkeypatch.setattr("app.datasets.VERIFIER_ROOT", verifier_root)
+
+    first_fixture = tmp_path / "first" / "fixture"
+    second_fixture = tmp_path / "second" / "fixture"
+    first_scenario = tmp_path / "first" / "scenario"
+    second_scenario = tmp_path / "second" / "scenario"
+    for root in (first_fixture, second_fixture):
+        root.mkdir(parents=True)
+        (root / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    for root in (first_scenario, second_scenario):
+        root.mkdir(parents=True)
+        (root / "product.py").write_text("VALUE = 0\n", encoding="utf-8")
+
+    common = {
+        "id": "real-coding",
+        "title": "Repair behavior",
+        "prompt": "Repair the product behavior.",
+        "fixture_id": "forgebench-monorepo",
+        "fixture_version": "1.0.0",
+        "dataset_split": "development",
+        "hidden_verifier_id": "opaque-check",
+        "full_verification_command": "python tools/release/verify.py",
+        "expected_files_changed": ["product.py"],
+        "metadata": {"real_coding": True},
+    }
+    first = EvaluationTask(
+        **common,
+        fixture_path=str(first_fixture),
+        scenario_path=str(first_scenario),
+    )
+    second = EvaluationTask(
+        **common,
+        fixture_path=str(second_fixture),
+        scenario_path=str(second_scenario),
+    )
+
+    assert dataset_fingerprint([first]) == dataset_fingerprint([second])
+
+    (second_fixture / "product.py").write_text("VALUE = 2\n", encoding="utf-8")
+    assert dataset_fingerprint([first]) != dataset_fingerprint([second])
+    (second_fixture / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (second_scenario / "product.py").write_text("VALUE = -1\n", encoding="utf-8")
+    assert dataset_fingerprint([first]) != dataset_fingerprint([second])
+
+
+def test_dataset_fingerprint_tracks_verifier_contents_and_case_contract(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.datasets import dataset_fingerprint
+
+    verifier_root = tmp_path / "verifiers"
+    verifier_root.mkdir()
+    support = verifier_root / "_support.py"
+    verifier = verifier_root / "opaque-check.py"
+    alternate = verifier_root / "alternate-check.py"
+    support.write_text("CAP = 12000\n", encoding="utf-8")
+    verifier.write_text("assert True\n", encoding="utf-8")
+    alternate.write_text("assert True\n", encoding="utf-8")
+    monkeypatch.setattr("app.datasets.VERIFIER_ROOT", verifier_root)
+
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    fixture.mkdir()
+    scenario.mkdir()
+    (fixture / "product.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (scenario / "product.py").write_text("VALUE = 0\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="real-coding",
+        title="Repair behavior",
+        prompt="Repair the product behavior.",
+        fixture_id="forgebench-monorepo",
+        fixture_version="1.0.0",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+        dataset_split="development",
+        hidden_verifier_id="opaque-check",
+        full_verification_command="python tools/release/verify.py",
+        validation_commands=["pytest targeted.py"],
+        pass_to_pass_commands=["pytest baseline.py"],
+        fail_to_pass_commands=["pytest regression.py"],
+        expected_success=True,
+        expected_files_changed=["product.py"],
+        required_scores=["task_success"],
+        metadata={"real_coding": True},
+    )
+    baseline = dataset_fingerprint([task])
+
+    verifier.write_text("assert False\n", encoding="utf-8")
+    assert dataset_fingerprint([task]) != baseline
+    verifier.write_text("assert True\n", encoding="utf-8")
+
+    contract_updates = (
+        {"expected_success": False},
+        {"pass_to_pass_commands": ["pytest other-baseline.py"]},
+        {"fail_to_pass_commands": ["pytest other-regression.py"]},
+        {"full_verification_command": "python tools/release/verify-all.py"},
+        {"dataset_split": DatasetSplit.HOLDOUT},
+        {"hidden_verifier_id": "alternate-check"},
+    )
+    for update in contract_updates:
+        assert dataset_fingerprint([task.model_copy(update=update)]) != baseline
+
+    support.write_text("CAP = 8000\n", encoding="utf-8")
+    assert dataset_fingerprint([task]) != baseline
+
+
+def test_dataset_fingerprint_uses_path_independent_marker_for_missing_fixture(
+    tmp_path: Path,
+) -> None:
+    from app.datasets import dataset_fingerprint
+
+    first = EvaluationTask(
+        id="invalid-case",
+        title="Missing fixture",
+        prompt="Exercise fail-closed quality reporting.",
+        fixture_path=str(tmp_path / "first" / "missing"),
+    )
+    second = first.model_copy(update={"fixture_path": str(tmp_path / "elsewhere" / "missing")})
+
+    assert dataset_fingerprint([first]) == dataset_fingerprint([second])
 
 
 def test_sqlite_storage_creates_experiment_snapshot_table(tmp_path: Path) -> None:
