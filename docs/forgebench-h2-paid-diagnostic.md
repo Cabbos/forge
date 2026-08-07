@@ -26,6 +26,11 @@ It is retained as a route-path diagnostic only; it does not extend either
 historical seven-attempt campaign, complete a 30-attempt arm, or establish an
 A/B winner.
 
+The controller also persists the initial `runner` stage in the pending marker.
+This makes an external process interruption auditable without guessing whether
+usage, trust evaluation, or artifact publication had started; recovery still
+reserves the full per-task ceiling and never replays the call.
+
 ## Fail-closed outcome
 
 Five diagnostic campaigns were allowed to run only until the first unknown-cost
