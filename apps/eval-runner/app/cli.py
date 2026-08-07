@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 
+from app.baseline_cli import baseline_main
 from app.campaign_cli import campaign_main
 from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
@@ -211,6 +212,8 @@ def main(argv: list[str] | None = None) -> int:
         return forgebench_main(raw_argv[1:])
     if raw_argv[:1] == ["campaign"]:
         return campaign_main(raw_argv[1:])
+    if raw_argv[:1] == ["baseline"]:
+        return baseline_main(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(

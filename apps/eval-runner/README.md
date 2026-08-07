@@ -254,6 +254,31 @@ the `campaign init`, `campaign accept`, `campaign finalize`, and
 interventions, invalidation rules, and proof limits. H0C made no paid DeepSeek
 call and does not claim holdout success.
 
+### DeepSeek H1 paid baseline
+
+The H1 controller pins DeepSeek V4 Flash over the Anthropic-compatible
+transport to the frozen 10-case development split for three repetitions. It
+records a durable pending marker before every provider call, accounts exact CNY
+from canonical provider usage, enforces per-task and campaign caps, never
+reissues an interrupted paid attempt, and emits a compact report plus
+content-addressed artifact index. All six commands require explicit
+`--campaign` and `--profile` arguments:
+
+```bash
+uv run python -m app.cli baseline init --campaign <path> --campaign-id <id> --profile <profile>
+uv run python -m app.cli baseline run --campaign <path> --profile <profile> --max-attempts 1
+uv run python -m app.cli baseline status --campaign <path> --profile <profile>
+uv run python -m app.cli baseline recover --campaign <path> --profile <profile>
+uv run python -m app.cli baseline report --campaign <path> --profile <profile>
+uv run python -m app.cli baseline verify --campaign <path> --profile <profile>
+```
+
+See
+[`../../docs/forgebench-h1-baseline.md`](../../docs/forgebench-h1-baseline.md)
+for the frozen official price, 8 CNY allocation, recovery semantics, offline
+gate, and proof boundary. This is a pinned development baseline, not a frontier
+claim; the sealed holdout remains untouched.
+
 The CLI prints a JSON backtest report:
 
 ```json

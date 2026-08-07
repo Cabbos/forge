@@ -47,11 +47,7 @@ FORGEBENCH_ROOT = Path(__file__).resolve().parents[1] / "forgebench"
 DEVELOPMENT_CASES = FORGEBENCH_ROOT / "cases" / "development"
 HOLDOUT_CASES = FORGEBENCH_ROOT / "cases" / "holdout"
 DATASET_LOCK = FORGEBENCH_ROOT / "dataset-lock.json"
-PROFILE_PATH = (
-    FORGEBENCH_ROOT
-    / "profiles"
-    / "deepseek-v4-flash-anthropic-baseline-v1.json"
-)
+PROFILE_PATH = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-anthropic-baseline-v1.json"
 
 
 def provider_event(
@@ -86,12 +82,8 @@ def make_trace(
 ) -> AgentTrace:
     now = datetime.now(UTC)
     usage_event = event or provider_event()
-    provider = (
-        "deepseek" if identity_matches else "unexpected-provider"
-    )
-    model = (
-        "deepseek-v4-flash" if identity_matches else "unexpected-model"
-    )
+    provider = "deepseek" if identity_matches else "unexpected-provider"
+    model = "deepseek-v4-flash" if identity_matches else "unexpected-model"
     return AgentTrace(
         task_id=task.id,
         user_prompt=task.prompt,
@@ -115,9 +107,7 @@ def make_trace(
             passed=True,
             exit_code=0,
         ),
-        forge_run_evidence=ForgeRunEvidence(
-            provider_usage={"events": [usage_event]}
-        ),
+        forge_run_evidence=ForgeRunEvidence(provider_usage={"events": [usage_event]}),
         workspace_observation=WorkspaceObservation(
             available=workspace_available,
             source="fake_runner",
@@ -652,9 +642,7 @@ def test_report_has_deterministic_percentiles_and_flaky_per_task_results(
     }
     assert report.trust_blockers == {}
     assert report.attempt_artifact_index_sha256 == sha256_bytes(index_bytes)
-    assert json.loads(report_bytes)["attempt_artifact_index_sha256"] == sha256_bytes(
-        index_bytes
-    )
+    assert json.loads(report_bytes)["attempt_artifact_index_sha256"] == sha256_bytes(index_bytes)
 
     regenerated = generate_baseline_report(**campaign_kwargs(campaign))
     assert regenerated == report

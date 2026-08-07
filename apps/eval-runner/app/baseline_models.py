@@ -66,9 +66,7 @@ class BaselineAttemptArtifact(EvalModel):
             raise ValueError("baseline trace must come from Forge")
         if harness_profile_fingerprint(self.profile) != self.harness_fingerprint:
             raise ValueError("profile fingerprint does not match artifact")
-        actual_trace_sha256 = sha256_bytes(
-            canonical_json_bytes(self.trace.model_dump(mode="json"))
-        )
+        actual_trace_sha256 = sha256_bytes(canonical_json_bytes(self.trace.model_dump(mode="json")))
         if actual_trace_sha256 != self.trace_sha256:
             raise ValueError("trace digest does not match artifact")
         _reject_secret_material(self.model_dump(mode="json"))

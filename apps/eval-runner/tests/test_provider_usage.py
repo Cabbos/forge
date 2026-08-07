@@ -268,9 +268,7 @@ def test_provider_events_are_read_from_forge_evidence_without_raw_event_duplicat
             {"event_type": "usage", **legacy},
         ],
         final_answer="Done.",
-        forge_run_evidence=ForgeRunEvidence(
-            provider_usage={"events": [canonical, legacy]}
-        ),
+        forge_run_evidence=ForgeRunEvidence(provider_usage={"events": [canonical, legacy]}),
         started_at=now,
         ended_at=now,
         duration_ms=0,

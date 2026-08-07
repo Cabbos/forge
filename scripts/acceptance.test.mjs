@@ -96,6 +96,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command:
         "cd apps/eval-runner && uv run pytest tests/test_provenance_models.py tests/test_provenance.py tests/test_campaign.py tests/test_campaign_verify.py",
     },
+    {
+      label: "DeepSeek H1 paid-baseline contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_provider_usage.py tests/test_baseline.py tests/test_baseline_cli.py",
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "eval quality suite",
@@ -481,6 +486,27 @@ test("Forge-built provenance documentation states the proof boundary", () => {
   for (const relativePath of ["README.md", "apps/eval-runner/README.md", "CHANGELOG.md"]) {
     const content = readFileSync(join(root, relativePath), "utf8");
     assert.match(content, /Forge-built monorepo provenance/, `${relativePath} should link the proof contract`);
+  }
+});
+
+test("DeepSeek H1 baseline documentation states the paid boundary", () => {
+  const baselinePath = join(root, "docs", "forgebench-h1-baseline.md");
+  assert.equal(existsSync(baselinePath), true, "docs/forgebench-h1-baseline.md should exist");
+
+  const baseline = readFileSync(baselinePath, "utf8");
+  for (const phrase of [
+    "0.02 CNY",
+    "interrupted_paid_attempt_unknown_cost",
+    "development only",
+    "baseline verify",
+    "no holdout",
+  ]) {
+    assert.match(baseline, new RegExp(phrase), `baseline documentation should include: ${phrase}`);
+  }
+
+  for (const relativePath of ["README.md", "apps/eval-runner/README.md", "CHANGELOG.md"]) {
+    const content = readFileSync(join(root, relativePath), "utf8");
+    assert.match(content, /DeepSeek H1 paid baseline/, `${relativePath} should link the H1 baseline`);
   }
 });
 

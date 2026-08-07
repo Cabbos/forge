@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 80 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 81 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 80 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 81 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -130,6 +130,8 @@ npm run eval:report:latest         # 查看最近一次报告
 可执行真实编码基准统一进入 `apps/eval-runner/forgebench/forgebench-monorepo`：10 个 development case 与 20 个 sealed holdout case 从同一产品基线创建独立副本并应用小型 scenario overlay，题面、场景、隐藏验证器和 fixture 都由内容指纹锁定。`eval_cases/` 继续承载 Forge runtime / scorer / contract 回归；旧 `continuity-ts-tooling` 与独立微型 fixture 不计入 frontier scoring。H0B 证明的是基准与证据链已冻结，不代表付费 holdout 已运行或 frontier KPI 已通过。
 
 Forge-built monorepo provenance 使用独立 integration campaign，把通过 trust、scope、patch replay 和可见/隐藏验证的 Forge patch 串成 Git commit 链与外置哈希账本，最终由 `FORGE-BUILD-MANIFEST.json` 绑定 fixture、dataset、harness、artifact index、账本、最终源码树和全量验证。完整命令与证明边界见 [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md)；该机制证明被接受源码的来源与完整性，不代替 scoring track，也不代表 20-case holdout 成功。
+
+DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、每次调用前 pending 记录、逐任务与累计预算、可恢复账本、可信报告和独立验证。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
 
 ## 开发
 
@@ -216,6 +218,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 | [`apps/desktop/README.md`](apps/desktop/README.md) | 桌面产品定位、承诺与体验（含英文版链接） |
 | [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
 | [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md) | Forge-built monorepo provenance、integration campaign 命令与证明边界 |
+| [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md) | DeepSeek H1 paid baseline、预算账本、恢复语义与显式 CLI |
 | [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
 | [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
 | [`apps/desktop/docs/product/forge-design-language.md`](apps/desktop/docs/product/forge-design-language.md) | 桌面设计语言契约（v5 "Console Craft"：冷石墨 + 青色强调 + Geist Mono） |

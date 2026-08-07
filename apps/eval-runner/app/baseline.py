@@ -263,9 +263,7 @@ def run_baseline_campaign(
                         usage,
                         trust_result,
                     )
-                    artifact_path = (
-                        campaign_root / _ATTEMPTS_DIR / f"{attempt_id}.json"
-                    )
+                    artifact_path = campaign_root / _ATTEMPTS_DIR / f"{attempt_id}.json"
                     if artifact_path.exists():
                         raise CampaignStateError("duplicate_attempt_artifact")
                     _atomic_write_model(artifact_path, artifact)
@@ -347,9 +345,7 @@ def recover_baseline_campaign(
                     "pending_record_invalid",
                 )
                 _validate_pending_identity(pending, metadata, profile)
-                artifact_path = (
-                    campaign_root / _ATTEMPTS_DIR / f"{pending.attempt_id}.json"
-                )
+                artifact_path = campaign_root / _ATTEMPTS_DIR / f"{pending.attempt_id}.json"
                 if artifact_path.exists():
                     artifact = _read_canonical_model(
                         artifact_path,
@@ -388,11 +384,7 @@ def recover_baseline_campaign(
                 spent_cny=verification.spent_cny,
                 blockers=verification.blockers,
             )
-        status = (
-            "complete"
-            if verification.attempt_count == metadata.max_attempts
-            else "paused"
-        )
+        status = "complete" if verification.attempt_count == metadata.max_attempts else "paused"
         return BaselineRunResult(
             status=status,
             calls_started=0,
@@ -526,11 +518,7 @@ def _build_artifact_index(
             BaselineArtifactIndexEntry(
                 path=f"{_ATTEMPTS_DIR}/{artifact.attempt_id}.json",
                 sha256=sha256_bytes(
-                    (
-                        campaign_root
-                        / _ATTEMPTS_DIR
-                        / f"{artifact.attempt_id}.json"
-                    ).read_bytes()
+                    (campaign_root / _ATTEMPTS_DIR / f"{artifact.attempt_id}.json").read_bytes()
                 ),
             )
             for artifact in ordered
@@ -550,14 +538,8 @@ def _build_baseline_report(
         key=lambda artifact: (artifact.repetition, artifact.task_id),
     )
     completed = len(ordered)
-    attempt_blockers = {
-        artifact.attempt_id: _attempt_blockers(artifact) for artifact in ordered
-    }
-    trusted = [
-        artifact
-        for artifact in ordered
-        if not attempt_blockers[artifact.attempt_id]
-    ]
+    attempt_blockers = {artifact.attempt_id: _attempt_blockers(artifact) for artifact in ordered}
+    trusted = [artifact for artifact in ordered if not attempt_blockers[artifact.attempt_id]]
     trusted_successes = sum(1 for artifact in trusted if trace_passed(artifact.trace))
     verification_passes = sum(
         1
@@ -578,9 +560,7 @@ def _build_baseline_report(
         if artifact.usage.status != "known" or artifact.usage.cost_cny is None
     )
 
-    failure_categories = Counter(
-        artifact.primary_failure_category for artifact in ordered
-    )
+    failure_categories = Counter(artifact.primary_failure_category for artifact in ordered)
     trust_blocker_counts: Counter[str] = Counter()
     for artifact in ordered:
         blockers = set(attempt_blockers[artifact.attempt_id])
@@ -593,26 +573,18 @@ def _build_baseline_report(
     per_task: dict[str, dict[str, int | float | bool]] = {}
     for task_id in metadata.task_ids:
         task_attempts = by_task[task_id]
-        task_successes = [
-            trace_passed(artifact.trace) for artifact in task_attempts
-        ]
+        task_successes = [trace_passed(artifact.trace) for artifact in task_attempts]
         task_trusted = [
-            artifact
-            for artifact in task_attempts
-            if not attempt_blockers[artifact.attempt_id]
+            artifact for artifact in task_attempts if not attempt_blockers[artifact.attempt_id]
         ]
-        task_trusted_successes = sum(
-            1 for artifact in task_trusted if trace_passed(artifact.trace)
-        )
+        task_trusted_successes = sum(1 for artifact in task_trusted if trace_passed(artifact.trace))
         per_task[task_id] = {
             "attempts": len(task_attempts),
             "trusted_attempts": len(task_trusted),
             "trusted_successes": task_trusted_successes,
             "successes": sum(task_successes),
             "trusted_success_rate": (
-                task_trusted_successes / len(task_attempts)
-                if task_attempts
-                else 0.0
+                task_trusted_successes / len(task_attempts) if task_attempts else 0.0
             ),
             "verification_passes": sum(
                 1
@@ -628,9 +600,7 @@ def _build_baseline_report(
                 if task_attempts
                 else 0.0
             ),
-            "flaky": bool(task_successes)
-            and any(task_successes)
-            and not all(task_successes),
+            "flaky": bool(task_successes) and any(task_successes) and not all(task_successes),
         }
 
     if trust_blocker_counts:
@@ -659,9 +629,7 @@ def _build_baseline_report(
         median_model_rounds=float(median(rounds)) if rounds else 0.0,
         p95_model_rounds=float(_nearest_rank_int(rounds)) if rounds else 0.0,
         median_cost_cny=median(known_costs) if known_costs else None,
-        p95_cost_cny=(
-            _nearest_rank_decimal(known_costs) if known_costs else None
-        ),
+        p95_cost_cny=(_nearest_rank_decimal(known_costs) if known_costs else None),
         total_cost_cny=total_cost,
         unknown_cost_attempts=unknown_cost_attempts,
         failure_categories=dict(sorted(failure_categories.items())),
@@ -877,9 +845,7 @@ def _budget_entry_for_artifact(
     cumulative = (previous.cumulative_cost_cny if previous else Decimal(0)) + cost
     return BaselineBudgetEntry(
         sequence=len(entries) + 1,
-        previous_entry_sha256=(
-            baseline_entry_digest(previous) if previous is not None else None
-        ),
+        previous_entry_sha256=(baseline_entry_digest(previous) if previous is not None else None),
         attempt_id=artifact.attempt_id,
         status=status,
         cost_cny=cost,
@@ -952,9 +918,7 @@ def _verify_attempts_and_budget(
     for index, entry in enumerate(entries, start=1):
         if entry.sequence != index:
             blockers.append("budget_sequence_mismatch")
-        expected_previous = (
-            baseline_entry_digest(previous) if previous is not None else None
-        )
+        expected_previous = baseline_entry_digest(previous) if previous is not None else None
         if entry.previous_entry_sha256 != expected_previous:
             blockers.append("budget_hash_chain_mismatch")
         budget_artifact = artifacts.get(entry.attempt_id)
@@ -962,9 +926,7 @@ def _verify_attempts_and_budget(
             if entry.artifact_sha256 != baseline_artifact_digest(budget_artifact):
                 blockers.append("budget_artifact_digest_mismatch")
             expected_status = (
-                "known"
-                if budget_artifact.usage.status == "known"
-                else "reserved_unknown"
+                "known" if budget_artifact.usage.status == "known" else "reserved_unknown"
             )
             expected_cost = (
                 budget_artifact.usage.cost_cny
@@ -1021,9 +983,7 @@ def _trust_for_trace(
     harness_check: Any,
 ) -> TrustGateResult:
     report = build_report([trace])
-    scorer_calibrated = all(
-        score_can_gate_ci(score) for score in score_trace(trace).values()
-    )
+    scorer_calibrated = all(score_can_gate_ci(score) for score in score_trace(trace).values())
     return evaluate_trust_gates(
         harness_check=harness_check,
         dataset_fingerprint=dataset_fingerprint_value,
@@ -1129,9 +1089,7 @@ def _append_budget_entry(path: Path, entry: BaselineBudgetEntry) -> None:
     existing = _load_budget_entries(path)
     if len(existing) + 1 != entry.sequence:
         raise CampaignStateError("budget_sequence_mismatch")
-    expected_previous = (
-        baseline_entry_digest(existing[-1]) if existing else None
-    )
+    expected_previous = baseline_entry_digest(existing[-1]) if existing else None
     if entry.previous_entry_sha256 != expected_previous:
         raise CampaignStateError("budget_hash_chain_mismatch")
     line = canonical_json_bytes(entry.model_dump(mode="json")) + b"\n"

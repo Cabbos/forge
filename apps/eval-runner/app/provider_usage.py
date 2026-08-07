@@ -30,9 +30,7 @@ def provider_events_from_trace(trace: AgentTrace) -> list[dict[str, Any]]:
             return [event for event in events if isinstance(event, dict)]
 
     return [
-        event
-        for event in trace.raw_events
-        if _event_kind(event) in {"provider_usage", "usage"}
+        event for event in trace.raw_events if _event_kind(event) in {"provider_usage", "usage"}
     ]
 
 
@@ -43,8 +41,7 @@ def account_provider_usage(
     canonical_events = [
         event
         for event in provider_events
-        if event.get("provider_id") is not None
-        and event.get("source") != "legacy_usage"
+        if event.get("provider_id") is not None and event.get("source") != "legacy_usage"
     ]
     blockers: list[str] = []
     if not canonical_events:
