@@ -54,10 +54,10 @@ not paid model-quality results.
 
 The paid diagnostic is recorded in
 [`forgebench-h2-paid-diagnostic.md`](forgebench-h2-paid-diagnostic.md). Both
-official DeepSeek routes pass smoke calls, but the development campaigns stop
-on a reproducible bulk-update task with unknown charge and are recovered
-without replay. Therefore there is no complete trusted 30-attempt arm, no
-paired A/B winner, and no valid 20-case holdout claim yet.
+official DeepSeek routes pass trusted smoke calls, while synchronized-source
+development campaigns stop at fail-closed boundaries (unknown charge or patch
+replay/trust failure) without replay. Therefore there is no complete trusted
+30-attempt arm, no paired A/B winner, and no valid 20-case holdout claim yet.
 
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned

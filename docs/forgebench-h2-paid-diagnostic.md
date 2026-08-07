@@ -51,6 +51,22 @@ artifact was published. The correct conclusion is that the harness successfully
 proved both official routes and stopped safely at an unresolved provider/model
 execution boundary; it did not establish a transport winner.
 
+## Latest synchronized-source diagnostics
+
+After the interruption-stage hardening, a clean paid-run worktree produced the
+following additional evidence from one shared source commit
+`cf7e4d4d31690db734ae59a84888405231699e4f`:
+
+| Campaign | Terminal attempts | Final status | Spend (CNY) | Boundary |
+| --- | ---: | --- | ---: | --- |
+| `h2-control-v3` | 4 | blocked | `0.11575648` | `patch_replay_failed` / untrusted |
+| `h2-candidate-v3` | 1 | active | `0.03946696` | trusted smoke only |
+
+The candidate smoke is a valid route-path artifact, but the control stopped on
+an independent trust failure before a paired arm existed. These artifacts are
+diagnostic evidence, not a comparison result; the controller did not retry the
+failed control attempt.
+
 ## Next gate
 
 The offline H3 work should diagnose or improve the bulk-update execution path,
