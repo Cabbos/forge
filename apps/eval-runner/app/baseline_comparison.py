@@ -96,7 +96,7 @@ def compare_baseline_campaigns(
         )
         for control_key, candidate_key in zip(control_order, candidate_order, strict=True)
     }
-    winner = _select_winner(control_metrics, candidate_metrics)
+    winner = _select_winner(control_metrics, candidate_metrics, bootstrap_intervals)
     return BaselineComparison(
         control_campaign_id=control_metadata.campaign_id,
         candidate_campaign_id=candidate_metadata.campaign_id,
@@ -336,31 +336,24 @@ def _build_metrics(
 def _select_winner(
     control: BaselineComparisonMetrics,
     candidate: BaselineComparisonMetrics,
+    intervals: dict[str, BootstrapInterval],
 ) -> str:
-    if candidate.trusted_success_rate > control.trusted_success_rate:
-        if (
-            candidate.verification_pass_rate >= control.verification_pass_rate
-            and candidate.scope_violation_rate <= control.scope_violation_rate
-        ):
-            return "candidate"
+    success = intervals["trusted_success_rate_delta"]
+    verification = intervals["verification_pass_rate_delta"]
+    scope = intervals["scope_violation_rate_delta"]
+
+    if success.high < 0 or verification.high < 0 or scope.low > 0:
         return "control"
-    if candidate.trusted_success_rate < control.trusted_success_rate:
-        return "control"
+
+    quality_noninferior = verification.low >= 0 and scope.high <= 0
+    if not quality_noninferior or success.low < 0:
+        return "no_material_difference"
+    if success.low > 0:
+        return "candidate"
+
     if (
-        candidate.verification_pass_rate < control.verification_pass_rate
-        or candidate.scope_violation_rate > control.scope_violation_rate
-    ):
-        return "control"
-    if any(
-        candidate_value < control_value
-        for candidate_value, control_value in (
-            (candidate.median_model_rounds, control.median_model_rounds),
-            (candidate.p95_model_rounds, control.p95_model_rounds),
-            (candidate.median_cost_cny, control.median_cost_cny),
-            (candidate.p95_cost_cny, control.p95_cost_cny),
-            (candidate.median_duration_ms, control.median_duration_ms),
-            (candidate.p95_duration_ms, control.p95_duration_ms),
-        )
+        intervals["median_model_rounds_delta"].high < 0
+        or intervals["median_duration_ms_delta"].high < 0
     ):
         return "candidate"
     return "no_material_difference"

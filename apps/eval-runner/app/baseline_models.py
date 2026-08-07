@@ -389,6 +389,9 @@ class BaselineComparison(EvalModel):
     candidate_harness_fingerprint: Sha256 | None = None
     source_commit: GitSha1 | None = None
     bootstrap_intervals: dict[str, BootstrapInterval] = Field(default_factory=dict)
+    selection_policy: Literal["paired_bootstrap_quality_gated_v1"] = (
+        "paired_bootstrap_quality_gated_v1"
+    )
 
     @model_validator(mode="after")
     def validate_comparison(self) -> "BaselineComparison":

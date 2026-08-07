@@ -10,9 +10,11 @@ from app.baseline import (
 )
 from app.baseline_comparison import (
     BaselineComparisonError,
+    _select_winner,
     compare_baseline_campaigns,
     write_baseline_comparison,
 )
+from app.baseline_models import BaselineComparisonMetrics, BootstrapInterval
 from app.harness_profiles import harness_profile_bytes, load_harness_profile
 from tests.test_baseline import FakeRunner
 
@@ -101,11 +103,48 @@ def test_compare_requires_complete_trusted_orthogonal_h2_arms(tmp_path: Path) ->
         interval.method == "paired_bootstrap" and interval.resamples == 2_000
         for interval in result.bootstrap_intervals.values()
     )
+    assert result.selection_policy == "paired_bootstrap_quality_gated_v1"
     assert set(result.outcome_changes) == {
         f"r{repetition}:{task_id}"
         for repetition in range(1, 4)
         for task_id in json.loads(DATASET_LOCK.read_text())["development"]["ids"]
     }
+
+
+def test_selection_is_uncertainty_gated_and_fail_closed() -> None:
+    metrics = BaselineComparisonMetrics(
+        attempts=30,
+        trusted_attempts=30,
+        trusted_success_rate=0.5,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        median_model_rounds=3.0,
+        p95_model_rounds=4.0,
+        median_cost_cny=1.0,
+        p95_cost_cny=1.0,
+        median_duration_ms=100.0,
+        p95_duration_ms=100.0,
+        failure_categories={},
+        provider_errors={},
+        trust_blockers={},
+    )
+
+    def interval(estimate: float, low: float, high: float) -> BootstrapInterval:
+        return BootstrapInterval(estimate=estimate, low=low, high=high, resamples=2_000, seed=1)
+
+    intervals = {
+        "trusted_success_rate_delta": interval(0.1, -0.1, 0.3),
+        "verification_pass_rate_delta": interval(0.0, 0.0, 0.0),
+        "scope_violation_rate_delta": interval(0.0, 0.0, 0.0),
+        "median_model_rounds_delta": interval(-1.0, -1.0, -0.1),
+        "median_duration_ms_delta": interval(-10.0, -10.0, -1.0),
+    }
+
+    assert _select_winner(metrics, metrics, intervals) == "no_material_difference"
+    intervals["trusted_success_rate_delta"] = interval(0.1, 0.01, 0.3)
+    assert _select_winner(metrics, metrics, intervals) == "candidate"
+    intervals["scope_violation_rate_delta"] = interval(0.1, 0.01, 0.2)
+    assert _select_winner(metrics, metrics, intervals) == "control"
 
 
 def test_compare_rejects_same_transport_and_incomplete_campaign(tmp_path: Path) -> None:

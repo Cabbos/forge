@@ -46,7 +46,11 @@ silently backfilled.
 Paired comparison artifacts also publish deterministic 2,000-resample bootstrap
 intervals for success, verification, scope, rounds, and duration deltas. The
 seed and method are serialized with the artifact so a later report cannot
-quietly change the uncertainty calculation.
+quietly change the uncertainty calculation. Winner selection is
+`paired_bootstrap_quality_gated_v1`: a candidate needs a confidence-separated
+success gain or efficiency gain, with verification and scope non-inferiority;
+ambiguous intervals remain `no_material_difference` instead of being promoted
+to a winner.
 
 ## Verification
 
