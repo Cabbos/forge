@@ -106,6 +106,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::provider_conformance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_runner.py tests/test_baseline_comparison.py tests/test_provider_usage.py",
     },
+    {
+      label: "frontier harness contract evidence",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_harness_contracts.py tests/test_runner.py -k "harness_contract"',
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "eval quality suite",

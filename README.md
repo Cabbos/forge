@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 83 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 84 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 83 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 84 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -134,6 +134,7 @@ Forge-built monorepo provenance 使用独立 integration campaign，把通过 tr
 DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、逐任务与累计预算、可恢复账本、可信报告和独立验证。`baseline run` 会先执行不创建 session、不触发 provider 的 typed credential preflight；隔离 HOME 不会清除 controller 已导出的 `DEEPSEEK_API_KEY`，本地付费运行可从 Git 忽略且权限为 `600` 的 `apps/eval-runner/.env` 显式导出，不要求使用钥匙串。Python 字节码与 pytest cache 被强制写入工作区外的隔离 runtime-state，避免“仅验证、无需改代码”的任务产生伪 patch；预检失败时不会写 pending、attempt 或预算记录。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
 
 DeepSeek H2 official transport A/B 只比较 DeepSeek V4 Flash 的两条官方路由：Anthropic Messages (`https://api.deepseek.com/anthropic`) 与 OpenAI-compatible Chat Completions (`https://api.deepseek.com`)。路由覆盖是 eval-only 的 isolated route override：controller 在子进程隔离 `HOME` 下写入无 secret 的临时 profile，并由 Rust 以 typed route identity 做 fail-closed attestation；桌面默认 DeepSeek 仍然是 Anthropic，用户设置和共享 session builder 不变。付费 campaign 在 route identity mismatch、provider schema drift、unknown usage/cost、untrusted workspace、patch replay failure 或 interrupted call 时立即停止且不重放 pending call。Forge 不声称支持 DeepSeek OpenAI Responses；H2 证明的是 development split 的协议与 harness 对照，不是 holdout 或 frontier 成绩。详见 [`docs/forgebench-h2-transport-ab.md`](docs/forgebench-h2-transport-ab.md)。
+H3 现在为每条 Forge trace 写入 bounded harness contract evidence：minimal context manifest、typed tool-result envelope 和双轮 no-progress 一次 redirect/再停止的 stagnation decision；大输出保留 digest 而不把无限内容塞入 trace。该 gate 只证明 harness 证据边界，不证明付费分数提升。详见 [`docs/forgebench-h3-harness-contracts.md`](docs/forgebench-h3-harness-contracts.md)。
 
 ## 开发
 
@@ -171,7 +172,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：83 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：84 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |

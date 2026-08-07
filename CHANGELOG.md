@@ -187,3 +187,4 @@
 - Added a global background status bar with expandable task rows for agent work, review items, scheduler tasks, and health alerts.
 - Added richer tool previews for Markdown write/edit operations and compact multi-file diff tree summaries.
 - Added `scripts/acceptance.sh` and browser acceptance coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI.
+- Added the first H3 frontier harness contract evidence slice. Forge eval traces now retain a minimal hashed context manifest, bounded typed tool-result envelopes with explicit truncation/digest evidence, and typed progress/stagnation decisions with one recovery redirect before stop. This is an offline harness-readiness gate, not a paid score or holdout claim.

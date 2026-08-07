@@ -208,6 +208,51 @@ def test_forge_runner_keeps_hidden_controller_fields_out_of_agent_payload(
     assert commands[hidden_index + 1] == "python3 tools/release/verify.py"
 
 
+def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) -> None:
+    agent = tmp_path / "harness_contract_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "json.load(sys.stdin)\n"
+            "json.dump({\n"
+            "  'final_answer': 'done',\n"
+            "  'tool_calls': [{'command': 'read_file', 'stdout': 'ok', "
+            "'stderr': '', 'exit_code': 0}],\n"
+            "  'tool_result_envelopes': [{\n"
+            "    'tool': 'read_file', 'status': 'ok', 'summary': 'read one file',\n"
+            "    'facts': ['exit_code=0'], 'content': 'ok',\n"
+            "    'next_evidence': [], 'artifact_digest': None,\n"
+            "    'truncated': False, 'retryable': False\n"
+            "  }],\n"
+            "  'progress_signals': [\n"
+            "    {'round': 1, 'kind': 'no_progress', 'evidence': 'same state'},\n"
+            "    {'round': 2, 'kind': 'no_progress', 'evidence': 'same state'}\n"
+            "  ]\n"
+            "}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="harness-contract-evidence",
+        title="Harness contract evidence",
+        prompt="Preserve typed evidence.",
+        context_files=["README.md"],
+        verification_command="python -c 'print(1)'",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    event = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "harness_contract_evidence"
+    )
+    assert event["context_manifest"]["mode"] == "minimal"
+    assert event["tool_results"]["source"] == "agent_payload"
+    assert event["tool_results"]["envelopes"][0]["content"] == "ok"
+    assert event["progress"]["stagnation"]["action"] == "redirect"
+
+
 def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
     tmp_path: Path,
 ) -> None:

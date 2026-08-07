@@ -2,10 +2,13 @@
 
 CLI runs share the fail-closed trust orchestrator. Exit code `0` requires trusted evidence and passing thresholds, `1` indicates trust/threshold failure, and argparse/input errors use `2`; `--report-only` preserves report generation while ignoring trust blockers.
 Reports include `score_coverage` entries with `observed`, `expected`, and `coverage` for every universal, emitted, or case-required score; unknown required score names fail case-quality validation.
+Forge traces also carry a bounded `harness_contract_evidence` event: a minimal context manifest (hashes and byte/token estimates only), typed/truncation-aware tool-result envelopes, and progress/stagnation evidence. Two consecutive no-progress rounds permit one recovery redirect and then stop; missing progress signals remain explicit rather than being inferred as progress.
 Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup and validation are outside the observation window; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
 The eval doctor precheck runs with a disposable home and never reads desktop session snapshots. Every real Forge attempt owns sibling `workspace` and `runtime-state` roots: `HOME`, `USERPROFILE`, registry, Continuity, logs, profiles, and snapshots are routed outside the observed product workspace, while `CARGO_HOME` and `RUSTUP_HOME` continue to resolve the installed toolchains. A golden harness is trusted only after a real observer change and clean-fixture patch replay both succeed.
 
 ForgeBench is the canonical executable real-coding dataset: 10 development cases and 20 sealed holdout cases share one versioned product monorepo, run in independent copies with scenario overlays, and are frozen by content fingerprints for the fixture, case splits, and opaque hidden verifiers. This H0B state proves dataset integrity and polarity, not paid holdout success or a frontier KPI.
+
+The offline H3 contract evidence is documented in [`docs/forgebench-h3-harness-contracts.md`](../../docs/forgebench-h3-harness-contracts.md). It is a harness-readiness gate, not a paid model-quality claim.
 
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
 

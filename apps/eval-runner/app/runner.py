@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.harness_contracts import harness_contract_evidence
 from app.hidden_verifiers import run_hidden_verifier, verifier_command
 from app.models import (
     AgentTrace,
@@ -759,6 +760,16 @@ class ForgeAgentRunner:
         shell_outputs = TypeAdapter(list[ShellOutput]).validate_python(
             [*setup_outputs, *payload.get("shell_outputs", []), *all_validation_outputs]
         )
+        harness_evidence = harness_contract_evidence(
+            task_context_files=task.context_files,
+            workspace=workspace,
+            tool_calls=(
+                (call.command, call.stdout, call.stderr, call.exit_code) for call in tool_calls
+            ),
+            provided_envelopes=payload.get("tool_result_envelopes"),
+            provided_signals=payload.get("progress_signals"),
+            context_mode=str(payload.get("context_mode", "minimal")),
+        )
         file_diffs = TypeAdapter(list[FileDiff]).validate_python(payload.get("file_diffs", []))
         verification_result = (
             VerificationResult.model_validate(payload["verification_result"])
@@ -783,7 +794,7 @@ class ForgeAgentRunner:
                 duration_ms=last_validation.duration_ms,
             )
         changed_files = workspace_observation.changed_files
-        raw_events = list(payload.get("raw_events", []))
+        raw_events = [*payload.get("raw_events", []), harness_evidence]
         identity_event = {
             "event_type": "eval_agent_identity",
             "provider": payload.get("forge_agent_provider"),
