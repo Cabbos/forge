@@ -84,16 +84,19 @@ route and harness evidence, but still not a complete paired 30-attempt result.
 The v4 interruption was independently reproduced offline after the paid
 artifacts were frozen. The Forge runner completed a valid trace with known
 usage, but `BaselineAttemptArtifact` rejected its verification metadata because
-the trace contained ordinary source code such as
-`api_key = os.getenv('DEEPSEEK_API_KEY')`. The old secret scrub pattern treated
-the identifier assignment itself as a secret-like value, so the controller
-collapsed a publishable attempt into the fail-closed unknown-cost boundary.
+the trace contained ordinary source and temporary paths. The old secret scrub
+pattern first treated `api_key = os.getenv('DEEPSEEK_API_KEY')` as a secret-like
+assignment; after that marker was narrowed, the task workspace path
+`...task-api-bulk-update...` still contained the embedded substring `sk-api`.
+Both false positives collapsed a publishable attempt into the fail-closed
+unknown-cost boundary.
 
-The harness now matches only token-shaped `sk-...` and Bearer values. A
-regression test proves environment-variable lookup source is accepted while
-the existing token rejection remains. This corrects a false positive without
-weakening secret-material rejection. The v4 ledgers and raw artifacts remain
-immutable diagnostic evidence; they were not replayed or rewritten.
+The harness now matches only token-shaped `sk-...` and Bearer values at an
+identifier boundary. Regression tests cover environment-variable lookup source,
+task-api workspace paths, and real token rejection. This corrects both false
+positives without weakening secret-material rejection. The v4 ledgers and raw
+artifacts remain immutable diagnostic evidence; they were not replayed or
+rewritten.
 
 ## Cache-boundary hardening
 

@@ -71,12 +71,13 @@ recovery reserved the bounded ceiling and performed no replay. The resulting
 `h2-control-v4`/`h2-candidate-v4` ledgers are diagnostic only: there is still no
 complete 30-attempt arm, paired winner, or holdout claim.
 
-Offline root-cause analysis then found that the v4 artifact publication path
-also had a secret-scrub false positive: source-level
-`api_key = os.getenv('DEEPSEEK_API_KEY')` was mistaken for secret material.
-The scrubber now requires token-shaped `sk-...` or Bearer values, with a
-regression test for environment-variable lookup and existing token rejection.
-The historical v4 artifacts remain immutable and are not replayed.
+Offline root-cause analysis then found two secret-scrub false positives in the
+v4 artifact publication path: source-level
+`api_key = os.getenv('DEEPSEEK_API_KEY')` and the embedded `sk-api` substring in
+the `task-api-bulk-update` temporary workspace path. The scrubber now requires
+token-shaped `sk-...` or Bearer values at an identifier boundary, with
+regression coverage for both paths and real token rejection. The historical v4
+artifacts remain immutable and are not replayed.
 
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned

@@ -125,6 +125,19 @@ def test_verification_metadata_allows_source_code_api_key_assignments() -> None:
     assert verification.passed is True
 
 
+def test_verification_metadata_allows_task_api_workspace_paths() -> None:
+    verification = VerificationDigest(
+        command="/private/tmp/forge-eval-forgebench-dev-task-api-bulk-update-abc123/verify",
+        exit_code=0,
+        stdout_sha256=SHA_A,
+        stderr_sha256=SHA_B,
+        verified_commit=GIT_B,
+        passed=True,
+    )
+
+    assert verification.passed is True
+
+
 def test_manifest_references_every_required_artifact_and_ordered_task() -> None:
     manifest = make_manifest()
 
