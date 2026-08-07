@@ -39,6 +39,7 @@ from app.harness_profiles import (
     harness_profile_fingerprint,
     load_harness_profile,
 )
+from app.harness_telemetry import summarize_harness_telemetry
 from app.judge_calibration import score_can_gate_ci
 from app.metrics import trace_passed
 from app.models import (
@@ -645,6 +646,7 @@ def _build_baseline_report(
         per_task=per_task,
         trust_blockers=dict(sorted(trust_blocker_counts.items())),
         attempt_artifact_index_sha256=index_sha256,
+        harness_telemetry=summarize_harness_telemetry([artifact.trace for artifact in ordered]),
     )
 
 

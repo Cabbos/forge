@@ -208,6 +208,38 @@ class BaselineArtifactIndex(EvalModel):
         return self
 
 
+class HarnessTelemetrySummary(EvalModel):
+    """Bounded aggregate evidence emitted by the H3 harness contract."""
+
+    attempts_with_contract: int = Field(default=0, ge=0)
+    contract_coverage: float = Field(default=0.0, ge=0.0, le=1.0)
+    median_tool_calls: float = Field(default=0.0, ge=0.0)
+    p95_tool_calls: float = Field(default=0.0, ge=0.0)
+    repeated_tool_call_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    tool_call_histogram: dict[str, int] = Field(default_factory=dict)
+    median_context_bytes: float = Field(default=0.0, ge=0.0)
+    p95_context_bytes: float = Field(default=0.0, ge=0.0)
+    median_context_tokens: float = Field(default=0.0, ge=0.0)
+    p95_context_tokens: float = Field(default=0.0, ge=0.0)
+    context_duplicate_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    context_conflict_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    context_bytes_by_tier: dict[str, int] = Field(default_factory=dict)
+    context_items_by_tier: dict[str, int] = Field(default_factory=dict)
+    stagnation_redirects: int = Field(default=0, ge=0)
+    stagnation_stops: int = Field(default=0, ge=0)
+    single_repair_compliance_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+
+    @model_validator(mode="after")
+    def validate_histogram(self) -> "HarnessTelemetrySummary":
+        if any(not key.isdigit() or value < 0 for key, value in self.tool_call_histogram.items()):
+            raise ValueError("tool call histogram keys must be nonnegative integer strings")
+        if any(value < 0 for value in self.context_bytes_by_tier.values()):
+            raise ValueError("context bytes by tier must be nonnegative")
+        if any(value < 0 for value in self.context_items_by_tier.values()):
+            raise ValueError("context items by tier must be nonnegative")
+        return self
+
+
 class BaselineReport(EvalModel):
     schema_version: Literal[1] = 1
     campaign_id: str
@@ -235,6 +267,9 @@ class BaselineReport(EvalModel):
     per_task: dict[str, dict[str, int | float | bool]]
     trust_blockers: dict[str, int]
     attempt_artifact_index_sha256: Sha256
+    harness_telemetry: HarnessTelemetrySummary = Field(
+        default_factory=lambda: HarnessTelemetrySummary()
+    )
 
     @model_validator(mode="after")
     def validate_report(self) -> "BaselineReport":
@@ -261,6 +296,15 @@ class BaselineReport(EvalModel):
             raise ValueError("failure category counts must be nonnegative")
         if any(not key.strip() or value < 1 for key, value in self.trust_blockers.items()):
             raise ValueError("trust blocker counts must be positive")
+        if self.harness_telemetry.attempts_with_contract > self.completed_attempts:
+            raise ValueError("harness telemetry coverage cannot exceed completed attempts")
+        expected_coverage = (
+            self.harness_telemetry.attempts_with_contract / self.completed_attempts
+            if self.completed_attempts
+            else 0.0
+        )
+        if abs(self.harness_telemetry.contract_coverage - expected_coverage) > 1e-12:
+            raise ValueError("harness telemetry coverage does not match attempt counts")
         _reject_secret_material(self.model_dump(mode="json"))
         return self
 
@@ -282,6 +326,9 @@ class BaselineComparisonMetrics(EvalModel):
     failure_categories: dict[str, int]
     provider_errors: dict[str, int]
     trust_blockers: dict[str, int]
+    harness_telemetry: HarnessTelemetrySummary = Field(
+        default_factory=lambda: HarnessTelemetrySummary()
+    )
 
     @model_validator(mode="after")
     def validate_comparison_metrics(self) -> "BaselineComparisonMetrics":
@@ -291,7 +338,31 @@ class BaselineComparisonMetrics(EvalModel):
             raise ValueError("comparison provider error counts must be nonnegative")
         if any(not key.strip() or value < 1 for key, value in self.trust_blockers.items()):
             raise ValueError("comparison trust blocker counts must be positive")
+        if self.harness_telemetry.attempts_with_contract > self.attempts:
+            raise ValueError("comparison telemetry coverage cannot exceed attempts")
+        expected_coverage = self.harness_telemetry.attempts_with_contract / self.attempts
+        if abs(self.harness_telemetry.contract_coverage - expected_coverage) > 1e-12:
+            raise ValueError("comparison telemetry coverage does not match attempt counts")
         _reject_secret_material(self.model_dump(mode="json"))
+        return self
+
+
+class BootstrapInterval(EvalModel):
+    """Deterministic paired bootstrap interval for one comparison delta."""
+
+    estimate: float
+    low: float
+    high: float
+    method: Literal["paired_bootstrap"] = "paired_bootstrap"
+    resamples: int = Field(ge=1)
+    seed: int = Field(ge=0)
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> "BootstrapInterval":
+        if self.low > self.high:
+            raise ValueError("bootstrap interval low bound cannot exceed high bound")
+        if not self.low <= self.estimate <= self.high:
+            raise ValueError("bootstrap interval must contain its point estimate")
         return self
 
 
@@ -316,6 +387,7 @@ class BaselineComparison(EvalModel):
     control_harness_fingerprint: Sha256 | None = None
     candidate_harness_fingerprint: Sha256 | None = None
     source_commit: GitSha1 | None = None
+    bootstrap_intervals: dict[str, BootstrapInterval] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_comparison(self) -> "BaselineComparison":
@@ -328,6 +400,8 @@ class BaselineComparison(EvalModel):
             raise ValueError("candidate campaign must have all attempts trusted")
         if any(not key.strip() or not value.strip() for key, value in self.outcome_changes.items()):
             raise ValueError("comparison outcomes must contain nonblank keys and values")
+        if any(not key.strip() for key in self.bootstrap_intervals):
+            raise ValueError("bootstrap interval names must be nonblank")
         _reject_secret_material(self.model_dump(mode="json"))
         return self
 

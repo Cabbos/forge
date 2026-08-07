@@ -90,6 +90,17 @@ def test_compare_requires_complete_trusted_orthogonal_h2_arms(tmp_path: Path) ->
     assert result.control_metrics.trusted_attempts == 30
     assert result.candidate_metrics.trusted_attempts == 30
     assert result.blockers == []
+    assert set(result.bootstrap_intervals) == {
+        "trusted_success_rate_delta",
+        "verification_pass_rate_delta",
+        "scope_violation_rate_delta",
+        "median_model_rounds_delta",
+        "median_duration_ms_delta",
+    }
+    assert all(
+        interval.method == "paired_bootstrap" and interval.resamples == 2_000
+        for interval in result.bootstrap_intervals.values()
+    )
     assert set(result.outcome_changes) == {
         f"r{repetition}:{task_id}"
         for repetition in range(1, 4)

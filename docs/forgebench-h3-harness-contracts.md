@@ -26,6 +26,17 @@ envelopes/signals are validated strictly. Missing progress signals are marked
 `source: missing`; they are never inferred as success or silently treated as
 progress.
 
+Baseline reports aggregate the event into `harness_telemetry`: contract
+coverage, tool-call histogram and repeated-call rate, context byte/token
+percentiles and tier totals, duplicate/conflict rates, stagnation redirects and
+stops, and single-repair compliance. Missing contract events remain visible as
+reduced coverage instead of being silently backfilled.
+
+Paired comparison artifacts also publish deterministic 2,000-resample bootstrap
+intervals for success, verification, scope, rounds, and duration deltas. The
+seed and method are serialized with the artifact so a later report cannot
+quietly change the uncertainty calculation.
+
 ## Verification
 
 Run the offline gate:

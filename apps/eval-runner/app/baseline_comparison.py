@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 from collections import Counter
+from collections.abc import Callable
 from math import ceil
 from pathlib import Path
+from random import Random
 from statistics import median
 from typing import Any, TypeVar
 
@@ -18,8 +20,10 @@ from app.baseline_models import (
     BaselineComparison,
     BaselineComparisonMetrics,
     BaselineReport,
+    BootstrapInterval,
 )
 from app.harness_profiles import HarnessProfileV1, harness_profile_fingerprint, load_harness_profile
+from app.harness_telemetry import summarize_harness_telemetry
 from app.metrics import trace_passed
 from app.models import EvalModel
 from app.provenance import canonical_json_bytes, sha256_bytes
@@ -29,6 +33,8 @@ _REPORT_NAME = "baseline-report.json"
 _ATTEMPTS_DIR = "attempts"
 _BUDGET_NAME = "budget.jsonl"
 _ROUTE_FIELDS = {"profile_id", "transport", "endpoint_family", "base_url"}
+_BOOTSTRAP_RESAMPLES = 2_000
+_BOOTSTRAP_SEED = 20260808
 
 
 class BaselineComparisonError(ValueError):
@@ -83,6 +89,7 @@ def compare_baseline_campaigns(
     ) = candidate
     control_metrics = _build_metrics(control_report, control_artifacts)
     candidate_metrics = _build_metrics(candidate_report, candidate_artifacts)
+    bootstrap_intervals = _build_bootstrap_intervals(control_artifacts, candidate_artifacts)
     outcome_changes = {
         f"r{control_artifacts[control_key].repetition}:{control_artifacts[control_key].task_id}": (
             f"{_outcome(control_artifacts[control_key])}->{_outcome(candidate_artifacts[candidate_key])}"
@@ -108,6 +115,7 @@ def compare_baseline_campaigns(
         control_harness_fingerprint=control_metadata.harness_fingerprint,
         candidate_harness_fingerprint=candidate_metadata.harness_fingerprint,
         source_commit=control_metadata.source_commit,
+        bootstrap_intervals=bootstrap_intervals,
     )
 
 
@@ -321,6 +329,7 @@ def _build_metrics(
         failure_categories=dict(sorted(report.failure_categories.items())),
         provider_errors=dict(sorted(provider_errors.items())),
         trust_blockers=dict(sorted(trust_blockers.items())),
+        harness_telemetry=summarize_harness_telemetry([artifact.trace for artifact in ordered]),
     )
 
 
@@ -355,6 +364,90 @@ def _select_winner(
     ):
         return "candidate"
     return "no_material_difference"
+
+
+def _build_bootstrap_intervals(
+    control_artifacts: dict[str, BaselineAttemptArtifact],
+    candidate_artifacts: dict[str, BaselineAttemptArtifact],
+) -> dict[str, BootstrapInterval]:
+    control_order = sorted(
+        control_artifacts.values(), key=lambda item: (item.repetition, item.task_id)
+    )
+    candidate_order = sorted(
+        candidate_artifacts.values(), key=lambda item: (item.repetition, item.task_id)
+    )
+    if len(control_order) != len(candidate_order) or not control_order:
+        raise BaselineComparisonError("bootstrap_pair_count_mismatch")
+    metrics: dict[
+        str, tuple[Callable[[BaselineAttemptArtifact], float], Callable[[list[float]], float]]
+    ] = {
+        "trusted_success_rate_delta": (
+            lambda artifact: float(trace_passed(artifact.trace)),
+            _mean,
+        ),
+        "verification_pass_rate_delta": (
+            lambda artifact: float(
+                artifact.trace.verification_result is not None
+                and artifact.trace.verification_result.passed
+            ),
+            _mean,
+        ),
+        "scope_violation_rate_delta": (
+            lambda artifact: float(bool(artifact.trace.scope_violations)),
+            _mean,
+        ),
+        "median_model_rounds_delta": (
+            lambda artifact: float(artifact.trace.model_rounds),
+            median,
+        ),
+        "median_duration_ms_delta": (
+            lambda artifact: float(artifact.trace.duration_ms),
+            median,
+        ),
+    }
+    intervals: dict[str, BootstrapInterval] = {}
+    for metric_index, (name, (value_of, estimator)) in enumerate(metrics.items()):
+        intervals[name] = _paired_bootstrap_interval(
+            [value_of(artifact) for artifact in control_order],
+            [value_of(artifact) for artifact in candidate_order],
+            estimator=estimator,
+            seed=_BOOTSTRAP_SEED + metric_index,
+        )
+    return intervals
+
+
+def _paired_bootstrap_interval(
+    control_values: list[float],
+    candidate_values: list[float],
+    *,
+    estimator: Callable[[list[float]], float],
+    seed: int,
+) -> BootstrapInterval:
+    if len(control_values) != len(candidate_values) or not control_values:
+        raise BaselineComparisonError("bootstrap_pair_count_mismatch")
+    estimate = estimator(candidate_values) - estimator(control_values)
+    rng = Random(seed)
+    deltas: list[float] = []
+    count = len(control_values)
+    for _ in range(_BOOTSTRAP_RESAMPLES):
+        sample_indexes = [rng.randrange(count) for _ in range(count)]
+        control_sample = [control_values[index] for index in sample_indexes]
+        candidate_sample = [candidate_values[index] for index in sample_indexes]
+        deltas.append(estimator(candidate_sample) - estimator(control_sample))
+    ordered = sorted(deltas)
+    low = ordered[int(0.025 * (_BOOTSTRAP_RESAMPLES - 1))]
+    high = ordered[int(0.975 * (_BOOTSTRAP_RESAMPLES - 1))]
+    return BootstrapInterval(
+        estimate=estimate,
+        low=min(low, estimate),
+        high=max(high, estimate),
+        resamples=_BOOTSTRAP_RESAMPLES,
+        seed=seed,
+    )
+
+
+def _mean(values: list[float]) -> float:
+    return sum(values) / len(values) if values else 0.0
 
 
 def _outcome(artifact: BaselineAttemptArtifact) -> str:
