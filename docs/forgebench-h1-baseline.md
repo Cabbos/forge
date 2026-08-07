@@ -28,6 +28,17 @@ a 100 CNY global ceiling for the full harness program. Exact known usage is
 accounted in CNY from canonical DeepSeek provider events. Missing, malformed,
 legacy-only, mismatched, or over-cap usage fails closed.
 
+Before any pending marker, attempt artifact, or budget record is created,
+`baseline run` executes a typed credential preflight against the exact pinned
+Forge headless command, provider, and model. The headless preflight resolves
+credentials only: it does not create an agent session, does not start a
+provider call, and never serializes the credential. H1 explicitly opts into the
+canonical provider's system credential reference so that an isolated eval HOME
+does not hide the desktop-managed key. A missing/unavailable credential,
+identity mismatch, malformed response, command failure, or 30-second timeout
+returns `error: baseline_run_preflight_failed` and leaves campaign metadata,
+`pending/`, `attempts/`, and `budget.jsonl` unchanged.
+
 Before a provider call, the controller atomically writes a
 `provider_call_pending` record. A completed attempt publishes its immutable
 artifact, appends a hash-chained budget entry, and only then removes the pending
@@ -71,10 +82,11 @@ uv run python -m app.cli baseline verify \
 ```
 
 Run requires `FORGE_EVAL_FORGE_AGENT_COMMAND` to point at the Forge headless
-adapter. The command and its environment are not serialized into campaign
-metadata or compact CLI output. `status` and `verify` are read-only; `report`
-may create or replace only the compact report and artifact index, never the
-budget ledger or attempt artifacts.
+adapter. The same command handles both preflight and the paid attempt. The
+command and its environment are not serialized into campaign metadata or
+compact CLI output. `status` and `verify` are read-only; `report` may create or
+replace only the compact report and artifact index, never the budget ledger or
+attempt artifacts.
 
 The offline contract is:
 

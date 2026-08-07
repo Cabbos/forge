@@ -18,8 +18,18 @@ pub const HEADLESS_DEFAULT_MAX_MODEL_ROUNDS: usize = 80;
 pub const HEADLESS_VALIDATION_TIMEOUT_SECS: u64 = 120;
 pub const HEADLESS_VALIDATION_OUTPUT_LIMIT: usize = 12_000;
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalHeadlessMode {
+    #[default]
+    Run,
+    CredentialPreflight,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalHeadlessRequest {
+    #[serde(default)]
+    pub mode: EvalHeadlessMode,
     #[serde(default)]
     pub task: Option<EvalHeadlessTask>,
     #[serde(default)]
@@ -32,6 +42,10 @@ pub struct EvalHeadlessRequest {
     /// Not yet wired to agent session creation; stored for forward-compat.
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// Explicitly allow an isolated headless run to fall back to the canonical
+    /// provider credential reference in the system credential store.
+    #[serde(default)]
+    pub use_provider_credential_store: bool,
     pub workspace_path: PathBuf,
     /// Optional eval-only root for internal runtime state such as registry.db.
     #[serde(default)]

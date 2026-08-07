@@ -261,7 +261,13 @@ transport to the frozen 10-case development split for three repetitions. It
 records a durable pending marker before every provider call, accounts exact CNY
 from canonical provider usage, enforces per-task and campaign caps, never
 reissues an interrupted paid attempt, and emits a compact report plus
-content-addressed artifact index. All six commands require explicit
+content-addressed artifact index. Before any pending marker or attempt is
+created, `baseline run` sends a typed credential preflight to the exact Forge
+headless command and frozen provider/model. The preflight creates no agent
+session and starts no provider call; it may resolve the canonical provider key
+from the system credential store despite the attempt's isolated HOME. Failure
+leaves campaign metadata, pending records, attempts, and the budget ledger
+unchanged. All six commands require explicit
 `--campaign` and `--profile` arguments:
 
 ```bash

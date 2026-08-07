@@ -208,6 +208,125 @@ def test_forge_runner_keeps_hidden_controller_fields_out_of_agent_payload(
     assert commands[hidden_index + 1] == "python3 tools/release/verify.py"
 
 
+def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "credential_preflight.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['mode'] == 'credential_preflight'\n"
+            "assert payload['provider'] == 'deepseek'\n"
+            "assert payload['model'] == 'deepseek-v4-flash'\n"
+            "assert payload['use_provider_credential_store'] is True\n"
+            "assert 'task' not in payload\n"
+            "assert 'prompt' not in payload\n"
+            "json.dump({'credential_preflight': {"
+            "'ok': True, 'provider': 'deepseek', "
+            "'model': 'deepseek-v4-flash', "
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        use_provider_credential_store=True,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-v4-flash"
+    assert result.provider_call_started is False
+    assert result.error is None
+
+
+def test_forge_runner_credential_preflight_contains_process_spawn_failure(
+    tmp_path: Path,
+) -> None:
+    runner = ForgeAgentRunner(
+        command=[str(tmp_path / "missing-forge-command")],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        use_provider_credential_store=True,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-v4-flash"
+    assert result.provider_call_started is False
+    assert result.error == "credential_preflight_command_failed"
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_error"),
+    [
+        (
+            '{"credential_preflight":{"ok":true,"provider":"other",'
+            '"model":"deepseek-v4-flash","provider_call_started":false,'
+            '"error":null}}',
+            "credential_preflight_identity_mismatch",
+        ),
+        (
+            '{"credential_preflight":{"ok":true,"provider":"deepseek",'
+            '"model":"deepseek-v4-flash","provider_call_started":true,'
+            '"error":null}}',
+            "credential_preflight_invalid_response",
+        ),
+        ("not-json", "credential_preflight_invalid_response"),
+    ],
+)
+def test_forge_runner_credential_preflight_rejects_untrusted_response(
+    tmp_path: Path,
+    response: str,
+    expected_error: str,
+) -> None:
+    agent = tmp_path / "untrusted_preflight.py"
+    agent.write_text(
+        "import sys\nsys.stdout.write(sys.argv[1])\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent), response],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider_call_started is False
+    assert result.error == expected_error
+
+
+def test_forge_runner_credential_preflight_times_out_without_provider_evidence(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "slow_preflight.py"
+    agent.write_text(
+        "import time\ntime.sleep(10)\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        command_timeout_seconds=0.05,
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider_call_started is False
+    assert result.error == "credential_preflight_timeout"
+
+
 def test_forge_runner_hidden_verifier_failure_blocks_success(tmp_path: Path) -> None:
     fixture = tmp_path / "fixture"
     fixture.mkdir()

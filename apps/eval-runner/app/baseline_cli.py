@@ -119,26 +119,33 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         raise _AlreadyReportedError
 
     profile = load_harness_profile(args.profile)
+    runner = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model=profile.profile_id,
+        command=command,
+        command_timeout_seconds=settings.command_timeout_seconds,
+        setup_timeout_seconds=settings.setup_timeout_seconds,
+        validation_timeout_seconds=settings.validation_timeout_seconds,
+        agent_provider=profile.provider,
+        agent_model=profile.model,
+        agent_transport=profile.transport,
+        harness_fingerprint=harness_profile_fingerprint(profile),
+        max_model_rounds=profile.max_model_rounds,
+        max_repair_attempts=profile.repair_attempt_limit,
+        use_provider_credential_store=True,
+    )
+    preflight = runner.credential_preflight()
+    if not preflight.ok:
+        print("error: baseline_run_preflight_failed", file=sys.stderr)
+        raise _AlreadyReportedError
+
     result = run_baseline_campaign(
         args.campaign,
         repository_root=REPOSITORY_ROOT,
         cases_path=args.cases,
         dataset_lock_path=args.dataset_lock,
         profile_path=args.profile,
-        runner=ForgeAgentRunner(
-            provider=EvalProvider.FORGE,
-            model=profile.profile_id,
-            command=command,
-            command_timeout_seconds=settings.command_timeout_seconds,
-            setup_timeout_seconds=settings.setup_timeout_seconds,
-            validation_timeout_seconds=settings.validation_timeout_seconds,
-            agent_provider=profile.provider,
-            agent_model=profile.model,
-            agent_transport=profile.transport,
-            harness_fingerprint=harness_profile_fingerprint(profile),
-            max_model_rounds=profile.max_model_rounds,
-            max_repair_attempts=profile.repair_attempt_limit,
-        ),
+        runner=runner,
         max_attempts=args.max_attempts,
     )
     return result.model_dump(mode="json"), 1 if result.status == "blocked" else 0

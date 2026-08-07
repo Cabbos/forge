@@ -7,13 +7,14 @@ import tempfile
 from collections.abc import Sequence
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
 from app.hidden_verifiers import run_hidden_verifier, verifier_command
 from app.models import (
     AgentTrace,
+    EvalModel,
     EvalProvider,
     EvaluationTask,
     FailureCategory,
@@ -35,6 +36,14 @@ from app.workspace_observer import observe_workspace_changes, snapshot_workspace
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
 DEFAULT_SETUP_TIMEOUT_SECONDS = 300
 DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
+
+
+class ForgeCredentialPreflight(EvalModel):
+    ok: bool
+    provider: str
+    model: str
+    provider_call_started: Literal[False]
+    error: str | None = None
 
 
 class EvalRunner(Protocol):
@@ -255,6 +264,7 @@ class ForgeAgentRunner:
         harness_fingerprint: str | None = None,
         max_model_rounds: int | None = None,
         max_repair_attempts: int | None = None,
+        use_provider_credential_store: bool = False,
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
@@ -268,6 +278,78 @@ class ForgeAgentRunner:
         self.harness_fingerprint = harness_fingerprint
         self.max_model_rounds = max_model_rounds
         self.max_repair_attempts = max_repair_attempts
+        self.use_provider_credential_store = use_provider_credential_store
+
+    def credential_preflight(self) -> ForgeCredentialPreflight:
+        if self.command is None:
+            return self._credential_preflight_error("forge_command_not_configured")
+
+        with tempfile.TemporaryDirectory(prefix="forge-eval-preflight-") as temp_dir:
+            temp_root = Path(temp_dir)
+            workspace = temp_root / "workspace"
+            workspace.mkdir()
+            runtime_state = temp_root / "runtime-state"
+            runtime_home = runtime_state / "home"
+            runtime_home.mkdir(parents=True)
+            continuity_database_path = runtime_state / "continuity.db"
+            child_env = os.environ.copy()
+            original_home = child_env.get("HOME") or child_env.get("USERPROFILE")
+            if original_home:
+                child_env.setdefault("CARGO_HOME", str(Path(original_home) / ".cargo"))
+                child_env.setdefault("RUSTUP_HOME", str(Path(original_home) / ".rustup"))
+            child_env.update(
+                {
+                    "HOME": str(runtime_home),
+                    "USERPROFILE": str(runtime_home),
+                    "FORGE_EVAL_RUNTIME_STATE": str(runtime_state),
+                }
+            )
+            payload = {
+                "mode": "credential_preflight",
+                "provider": self.agent_provider,
+                "model": self.agent_model,
+                "use_provider_credential_store": self.use_provider_credential_store,
+                "workspace_path": str(workspace),
+                "runtime_state_path": str(runtime_state),
+                "continuity_database_path": str(continuity_database_path),
+            }
+            try:
+                completed = run_bounded_process(
+                    self.command,
+                    input_text=json.dumps(payload),
+                    cwd=workspace,
+                    timeout_seconds=min(self.command_timeout_seconds, 30.0),
+                    cancel_requested=never_cancelled,
+                    env=child_env,
+                )
+            except OSError:
+                return self._credential_preflight_error("credential_preflight_command_failed")
+            if completed.outcome == ProcessOutcome.TIMED_OUT:
+                return self._credential_preflight_error("credential_preflight_timeout")
+            if completed.outcome != ProcessOutcome.COMPLETED:
+                return self._credential_preflight_error("credential_preflight_cancelled")
+            if completed.returncode != 0:
+                return self._credential_preflight_error("credential_preflight_command_failed")
+
+            try:
+                raw_payload = parse_forge_stdout(completed.stdout)
+                result = ForgeCredentialPreflight.model_validate(
+                    raw_payload["credential_preflight"]
+                )
+            except (KeyError, TypeError, ValidationError, ValueError, json.JSONDecodeError):
+                return self._credential_preflight_error("credential_preflight_invalid_response")
+            if result.provider != self.agent_provider or result.model != self.agent_model:
+                return self._credential_preflight_error("credential_preflight_identity_mismatch")
+            return result
+
+    def _credential_preflight_error(self, error: str) -> ForgeCredentialPreflight:
+        return ForgeCredentialPreflight(
+            ok=False,
+            provider=self.agent_provider,
+            model=self.agent_model,
+            provider_call_started=False,
+            error=error,
+        )
 
     def run_task(
         self,
@@ -410,6 +492,7 @@ class ForgeAgentRunner:
                 "prompt": task.prompt,
                 "provider": self.agent_provider,
                 "model": self.agent_model,
+                "use_provider_credential_store": self.use_provider_credential_store,
                 "workspace_path": str(workspace),
                 "runtime_state_path": str(runtime_state),
                 "continuity_database_path": str(continuity_database_path),

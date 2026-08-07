@@ -208,6 +208,7 @@ pub fn build_headless_request_from_trigger(
     let workspace_path = resolve_session_workspace_path(&workspace_hint)?;
 
     Ok(EvalHeadlessRequest {
+        mode: Default::default(),
         task: Some(EvalHeadlessTask {
             id: Some(trigger.id.clone()),
             prompt: Some(trigger.message.clone()),
@@ -217,6 +218,7 @@ pub fn build_headless_request_from_trigger(
         provider: trigger.provider.clone(),
         model: trigger.model.clone(),
         profile_id: trigger.profile_id.clone(),
+        use_provider_credential_store: false,
         workspace_path,
         runtime_state_path: None,
         continuity_database_path: None,

@@ -129,6 +129,106 @@ def test_baseline_run_requires_configured_forge_command_before_reservation(
     assert list((campaign / "attempts").iterdir()) == []
 
 
+def test_baseline_run_failed_preflight_does_not_reserve_budget(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "baseline"
+    fake_agent = tmp_path / "preflight_failure.py"
+    fake_agent.write_text(
+        """
+import json
+import sys
+
+payload = json.load(sys.stdin)
+assert payload["mode"] == "credential_preflight"
+json.dump(
+    {
+        "credential_preflight": {
+            "ok": False,
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provider_call_started": False,
+            "error": "missing_api_key",
+        }
+    },
+    sys.stdout,
+)
+""".strip()
+        + "\n",
+        encoding="utf-8",
+    )
+    env = {"FORGE_EVAL_FORGE_AGENT_COMMAND": shlex.join([sys.executable, str(fake_agent)])}
+    initialized = run_baseline_cli(
+        "init",
+        "--campaign",
+        str(campaign),
+        "--campaign-id",
+        "h1-preflight-failed",
+        "--profile",
+        str(PROFILE_PATH),
+        env=env,
+    )
+    assert initialized.returncode == 0
+    campaign_before = (campaign / "campaign.json").read_bytes()
+
+    completed = run_baseline_cli(
+        "run",
+        "--campaign",
+        str(campaign),
+        "--profile",
+        str(PROFILE_PATH),
+        "--max-attempts",
+        "1",
+        env=env,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr == "error: baseline_run_preflight_failed\n"
+    assert completed.stdout == ""
+    assert (campaign / "campaign.json").read_bytes() == campaign_before
+    assert (campaign / "budget.jsonl").read_bytes() == b""
+    assert list((campaign / "pending").iterdir()) == []
+    assert list((campaign / "attempts").iterdir()) == []
+
+
+def test_baseline_run_preflight_spawn_failure_keeps_campaign_immutable(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "baseline"
+    env = {"FORGE_EVAL_FORGE_AGENT_COMMAND": str(tmp_path / "missing-forge-command")}
+    initialized = run_baseline_cli(
+        "init",
+        "--campaign",
+        str(campaign),
+        "--campaign-id",
+        "h1-preflight-spawn-failed",
+        "--profile",
+        str(PROFILE_PATH),
+        env=env,
+    )
+    assert initialized.returncode == 0
+    campaign_before = (campaign / "campaign.json").read_bytes()
+
+    completed = run_baseline_cli(
+        "run",
+        "--campaign",
+        str(campaign),
+        "--profile",
+        str(PROFILE_PATH),
+        "--max-attempts",
+        "1",
+        env=env,
+    )
+
+    assert completed.returncode == 1
+    assert completed.stderr == "error: baseline_run_preflight_failed\n"
+    assert completed.stdout == ""
+    assert (campaign / "campaign.json").read_bytes() == campaign_before
+    assert (campaign / "budget.jsonl").read_bytes() == b""
+    assert list((campaign / "pending").iterdir()) == []
+    assert list((campaign / "attempts").iterdir()) == []
+
+
 def test_baseline_cli_runs_one_offline_attempt_and_keeps_reads_immutable(
     tmp_path: Path,
 ) -> None:
@@ -142,6 +242,22 @@ import pathlib
 import sys
 
 payload = json.loads(sys.stdin.read())
+if payload.get("mode") == "credential_preflight":
+    assert payload["use_provider_credential_store"] is True
+    json.dump(
+        {
+            "credential_preflight": {
+                "ok": True,
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "provider_call_started": False,
+                "error": None,
+            }
+        },
+        sys.stdout,
+    )
+    raise SystemExit(0)
+
 workspace = pathlib.Path(payload["workspace_path"])
 golden = pathlib.Path(sys.argv[1])
 paths = [

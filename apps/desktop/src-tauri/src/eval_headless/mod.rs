@@ -18,7 +18,9 @@ use crate::ipc::session_builder::{
 };
 use crate::settings;
 
-pub use types::{EvalHeadlessRequest, EvalHeadlessTask, HeadlessFileDiff, TracePayloadInput};
+pub use types::{
+    EvalHeadlessMode, EvalHeadlessRequest, EvalHeadlessTask, HeadlessFileDiff, TracePayloadInput,
+};
 
 pub use trace::{build_trace_payload, insert_agent_identity, insert_failure_fields};
 
@@ -48,7 +50,11 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         .as_ref()
         .and_then(|task| task.id.clone())
         .unwrap_or_else(|| "forge-headless-task".to_string());
-    let prompt = resolve::resolve_prompt(&request)?;
+    let prompt = if request.mode == EvalHeadlessMode::Run {
+        resolve::resolve_prompt(&request)?
+    } else {
+        String::new()
+    };
     let display_provider = request
         .provider
         .clone()
@@ -80,9 +86,45 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
     let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
-    let credentials = settings::CredentialResolver::new(credential_store)
-        .resolve(&agent_provider, selected_profile.as_ref())
-        .map_err(|error| error.to_string())?;
+    let credential_resolver = settings::CredentialResolver::new(credential_store);
+    let credentials_result = if request.use_provider_credential_store {
+        credential_resolver
+            .resolve_with_provider_store_fallback(&agent_provider, selected_profile.as_ref())
+    } else {
+        credential_resolver.resolve(&agent_provider, selected_profile.as_ref())
+    };
+    if request.mode == EvalHeadlessMode::CredentialPreflight {
+        let (credentials, resolution_error) = match credentials_result {
+            Ok(credentials) => (Some(credentials), None),
+            Err(_) => (None, Some("credential_unavailable")),
+        };
+        let agent_model = resolve::resolve_agent_model(
+            Some(&effective_model),
+            credentials
+                .as_ref()
+                .and_then(|credentials| credentials.model.as_deref()),
+            &agent_provider,
+        );
+        let available = credentials
+            .as_ref()
+            .is_some_and(|credentials| !credentials.api_key.trim().is_empty());
+        return Ok(serde_json::json!({
+            "credential_preflight": {
+                "ok": available,
+                "provider": agent_provider,
+                "model": agent_model,
+                "provider_call_started": false,
+                "error": if available {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(
+                        resolution_error.unwrap_or("missing_api_key").to_string()
+                    )
+                }
+            }
+        }));
+    }
+    let credentials = credentials_result.map_err(|error| error.to_string())?;
     let agent_model = resolve::resolve_agent_model(
         Some(&effective_model),
         credentials.model.as_deref(),
@@ -1068,6 +1110,65 @@ deleted file mode 100644\n\
             request.continuity_database_path.as_deref(),
             Some(std::path::Path::new("/tmp/runtime-state/continuity.db"))
         );
+    }
+
+    #[test]
+    fn credential_preflight_request_is_typed_and_store_opt_in_is_explicit() {
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "workspace_path": "/tmp/workspace",
+            "use_provider_credential_store": true
+        }))
+        .expect("credential preflight request");
+
+        assert_eq!(request.mode, types::EvalHeadlessMode::CredentialPreflight);
+        assert!(request.use_provider_credential_store);
+    }
+
+    #[tokio::test]
+    async fn credential_preflight_resolves_identity_without_provider_call() {
+        let _guard = ENV_LOCK.lock().await;
+        let previous_home = std::env::var("HOME").ok();
+        let previous_key = std::env::var("DEEPSEEK_API_KEY").ok();
+        let home = tempfile::tempdir().expect("home");
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("DEEPSEEK_API_KEY", "fake-key-for-preflight");
+
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "prompt": "",
+            "workspace_path": workspace.path(),
+            "use_provider_credential_store": false
+        }))
+        .expect("credential preflight request");
+        let payload = super::run_request(request)
+            .await
+            .expect("credential preflight payload");
+
+        restore_env("HOME", previous_home);
+        restore_env("DEEPSEEK_API_KEY", previous_key);
+
+        assert_eq!(payload["credential_preflight"]["ok"], true);
+        assert_eq!(payload["credential_preflight"]["provider"], "deepseek");
+        assert_eq!(
+            payload["credential_preflight"]["model"],
+            "deepseek-v4-flash"
+        );
+        assert_eq!(
+            payload["credential_preflight"]["provider_call_started"],
+            false
+        );
+        assert_eq!(
+            payload["credential_preflight"]["error"],
+            serde_json::Value::Null
+        );
+        assert!(payload.get("forge_run_evidence").is_none());
+        assert!(!payload.to_string().contains("fake-key-for-preflight"));
     }
 
     #[test]
