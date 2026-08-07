@@ -98,6 +98,24 @@ positives without weakening secret-material rejection. The v4 ledgers and raw
 artifacts remain immutable diagnostic evidence; they were not replayed or
 rewritten.
 
+## v6 bounded post-fix pair
+
+After the scrubber fix, a fresh clean worktree pinned to
+`f72a0b4ca57d9c7f8217b5c0259d58646117437a` ran the same two official routes for
+at most seven attempts per arm. Both campaigns verified with no pending record:
+
+| Arm | Transport | Attempts | Trusted | Known usage | Verification pass | Scope violations | Spend (CNY) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `h2-control-v6` | Anthropic Messages | 7 | 7 | 7 | 7 | 0 | `0.14829088` |
+| `h2-candidate-v6` | OpenAI Chat Completions | 7 | 7 | 7 | 7 | 0 | `0.15879656` |
+
+The control arm's `forgebench-dev-task-api-bulk-update` artifact was published
+normally, proving that the previous artifact-publication boundary is closed.
+This is bounded route/harness evidence only: each arm is still incomplete
+against the locked 30-attempt development baseline, so no winner, frontier
+score, or H4 holdout claim is made. These v6 artifacts are immutable and were
+not mixed with the earlier v4/v5 diagnostic campaigns.
+
 ## Cache-boundary hardening
 
 The `cf7e4d4d` control diagnostic exposed a real harness boundary: the model

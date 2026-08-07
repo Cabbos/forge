@@ -26,6 +26,14 @@ regression coverage; historical paid artifacts remain immutable and are not
 replayed. H4 holdout execution remains closed until a complete trusted
 development pair exists.
 
+Post-fix bounded evidence is now available from a fresh source-pinned pair at
+`f72a0b4c`: control and candidate each completed 7/7 trusted, known-usage,
+verification-passing attempts with zero scope violations. Spend was
+`0.14829088 CNY` and `0.15879656 CNY`, respectively, and the control API bulk
+update artifact published successfully. This closes the observed scrubber
+boundary but remains incomplete versus the locked 30-attempt arms; no A/B
+winner or H4 execution is claimed.
+
 ---
 
 ### Task 1: Generalize the frozen harness profile to two official routes

@@ -79,6 +79,14 @@ token-shaped `sk-...` or Bearer values at an identifier boundary, with
 regression coverage for both paths and real token rejection. The historical v4
 artifacts remain immutable and are not replayed.
 
+A fresh pair pinned to `f72a0b4c` then completed a bounded 7-attempt arm on each
+official route. Both arms verified with seven trusted, known-usage, verification
+passing artifacts and zero scope violations (`0.14829088 CNY` control,
+`0.15879656 CNY` candidate); the control `task-api-bulk-update` artifact now
+publishes normally. This closes the observed artifact-publication boundary but
+does not complete the required 30-attempt arms, establish a winner, or unseal
+H4 holdout execution.
+
 This document proves that the controls and evidence paths live together in the
 Forge monorepo and are executable. It does not claim that the controller-owned
 baseline was written by Forge, nor does a passing contract gate alone prove
