@@ -3,7 +3,17 @@ from pathlib import Path
 
 import pytest
 
+from app.harness_checks import run_observer_patch_replay_self_check
 from app.workspace_observer import observe_workspace_changes, snapshot_workspace
+
+
+def test_observer_patch_replay_self_check_passes() -> None:
+    result = run_observer_patch_replay_self_check()
+
+    assert result.ok is True
+    assert result.untracked_files == []
+    assert result.modified_files == ["src/value.txt"]
+    assert result.message == "observer and patch replay self-check passed"
 
 
 def test_workspace_observer_reports_added_modified_and_deleted_files(tmp_path: Path) -> None:

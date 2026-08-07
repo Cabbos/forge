@@ -5,7 +5,7 @@ import pytest
 
 from app.cases import load_cases
 from app.execution import ExecutionOptions, execute_evaluation
-from app.models import EvalProvider, TrustStatus
+from app.models import EvalProvider, TrustStatus, WorkspaceCheck
 
 
 def write_executable_case(
@@ -65,6 +65,26 @@ def test_execute_evaluation_returns_trusted_for_complete_mock_evidence(
 
     assert execution.trust_result.status == TrustStatus.TRUSTED
     assert execution.trust_result.trusted is True
+
+
+def test_execute_evaluation_is_untrusted_when_observer_replay_self_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    monkeypatch.setattr(
+        "app.harness_checks.run_observer_patch_replay_self_check",
+        lambda: WorkspaceCheck(ok=False, message="replay mismatch"),
+    )
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=load_cases(cases_path),
+        options=mock_options(),
+    )
+
+    assert execution.trust_result.status == TrustStatus.UNTRUSTED
+    assert "harness_untrusted" in execution.trust_result.blockers
 
 
 def test_execute_evaluation_is_unknown_when_workspace_evidence_is_missing(
