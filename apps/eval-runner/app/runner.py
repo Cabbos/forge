@@ -249,6 +249,12 @@ class ForgeAgentRunner:
         command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
         setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
         validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+        agent_provider: str | None = None,
+        agent_model: str | None = None,
+        agent_transport: str | None = None,
+        harness_fingerprint: str | None = None,
+        max_model_rounds: int | None = None,
+        max_repair_attempts: int | None = None,
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
@@ -256,6 +262,12 @@ class ForgeAgentRunner:
         self.command_timeout_seconds = command_timeout_seconds
         self.setup_timeout_seconds = setup_timeout_seconds
         self.validation_timeout_seconds = validation_timeout_seconds
+        self.agent_provider = agent_provider or self.provider.value
+        self.agent_model = agent_model or model
+        self.agent_transport = agent_transport
+        self.harness_fingerprint = harness_fingerprint
+        self.max_model_rounds = max_model_rounds
+        self.max_repair_attempts = max_repair_attempts
 
     def run_task(
         self,
@@ -384,11 +396,20 @@ class ForgeAgentRunner:
             # Map runner field names to Forge headless field names
             if task_dict.get("max_duration_seconds") is not None:
                 task_dict["timeout_secs"] = task_dict.pop("max_duration_seconds")
+            if self.max_model_rounds is not None:
+                task_max_model_rounds = task_dict.get("max_model_rounds")
+                task_dict["max_model_rounds"] = (
+                    self.max_model_rounds
+                    if task_max_model_rounds is None
+                    else min(task_max_model_rounds, self.max_model_rounds)
+                )
+            if self.max_repair_attempts is not None:
+                task_dict["max_repair_attempts"] = self.max_repair_attempts
             payload = {
                 "task": task_dict,
                 "prompt": task.prompt,
-                "provider": self.provider,
-                "model": self.model,
+                "provider": self.agent_provider,
+                "model": self.agent_model,
                 "workspace_path": str(workspace),
                 "runtime_state_path": str(runtime_state),
                 "continuity_database_path": str(continuity_database_path),
@@ -604,6 +625,17 @@ class ForgeAgentRunner:
         raw_events = list(payload.get("raw_events", []))
         raw_events.extend(
             [
+                {
+                    "event_type": "eval_agent_identity",
+                    "provider": payload.get("forge_agent_provider"),
+                    "model": payload.get("forge_agent_model"),
+                    "transport": self.agent_transport,
+                    "harness_fingerprint": self.harness_fingerprint,
+                    "identity_matches_profile": (
+                        payload.get("forge_agent_provider") == self.agent_provider
+                        and payload.get("forge_agent_model") == self.agent_model
+                    ),
+                },
                 {
                     "event_type": "eval_workspace_observation",
                     **workspace_observation.model_dump(mode="json"),

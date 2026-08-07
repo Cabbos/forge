@@ -1678,6 +1678,109 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
     assert trace.failure_category == FailureCategory.NONE
 
 
+def test_forge_runner_binds_profiled_agent_identity_and_budget(tmp_path: Path) -> None:
+    script = tmp_path / "fake_profiled_agent.py"
+    script.write_text(
+        """
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+task = payload["task"]
+assert payload["provider"] == "deepseek"
+assert payload["model"] == "deepseek-v4-flash"
+assert task["max_model_rounds"] == 12
+assert task["max_repair_attempts"] == 1
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "deepseek",
+        "forge_agent_model": "deepseek-v4-flash",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-identity",
+        title="Profiled agent identity",
+        prompt="Run Forge.",
+        max_model_rounds=24,
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="anthropic_messages",
+        harness_fingerprint="sha256:harness-profile",
+        max_model_rounds=12,
+        max_repair_attempts=1,
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
+    assert trace.provider == "forge"
+    assert trace.model == "forge-harness"
+    assert identity_event == {
+        "event_type": "eval_agent_identity",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "transport": "anthropic_messages",
+        "harness_fingerprint": "sha256:harness-profile",
+        "identity_matches_profile": True,
+    }
+
+
+def test_forge_runner_preserves_profiled_agent_identity_mismatch(tmp_path: Path) -> None:
+    script = tmp_path / "fake_mismatched_agent.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.loads(sys.stdin.read())
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "unexpected-provider",
+        "forge_agent_model": "unexpected-model",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-identity-mismatch",
+        title="Profiled agent identity mismatch",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="anthropic_messages",
+        harness_fingerprint="sha256:harness-profile",
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
+    assert identity_event["provider"] == "unexpected-provider"
+    assert identity_event["model"] == "unexpected-model"
+    assert identity_event["identity_matches_profile"] is False
+
+
 def test_forge_runner_accepts_json_object_after_log_lines(tmp_path: Path) -> None:
     script = tmp_path / "fake_forge_with_logs.py"
     script.write_text(
