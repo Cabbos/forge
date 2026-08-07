@@ -4,6 +4,207 @@ import sys
 from pathlib import Path
 
 import pytest
+from test_campaign import write_acceptance_artifacts
+
+from app.provenance import sha256_bytes
+
+
+def run_campaign_cli(*args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, "-m", "app.cli", "campaign", *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def write_campaign_profile(path: Path) -> None:
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "profile_id": "deepseek-v4-flash-frontier-v1",
+                "provider": "deepseek",
+                "model": "deepseek-v4-flash",
+                "transport": "anthropic-compatible",
+                "tool_policy": "forge-default",
+                "max_model_rounds": 40,
+            }
+        ),
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize("command", ["init", "accept", "status", "finalize", "verify"])
+def test_campaign_cli_mutations_and_reads_require_explicit_campaign(
+    command: str,
+) -> None:
+    completed = run_campaign_cli(command)
+
+    assert completed.returncode == 2
+    assert "--campaign" in completed.stderr
+
+
+def test_campaign_cli_runs_explicit_end_to_end_workflow_without_leaks(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "campaign"
+    profile = tmp_path / "harness-profile.json"
+    write_campaign_profile(profile)
+    initialized = run_campaign_cli(
+        "init",
+        "--campaign",
+        str(campaign),
+        "--harness-profile",
+        str(profile),
+    )
+    assert initialized.returncode == 0, initialized.stderr
+    initialized_payload = json.loads(initialized.stdout)
+    assert initialized_payload["status"] == "active"
+    assert initialized_payload["provider"] == "deepseek"
+    assert "worktree" not in initialized.stdout
+    assert str(tmp_path) not in initialized.stdout
+
+    trace_path, report_path, patch_path, _trace, _report = write_acceptance_artifacts(
+        campaign, tmp_path / "inputs"
+    )
+    accepted = run_campaign_cli(
+        "accept",
+        "--campaign",
+        str(campaign),
+        "--task-id",
+        "forgebench-dev-domain-normalize-title",
+        "--trace",
+        str(trace_path),
+        "--report",
+        str(report_path),
+        "--patch",
+        str(patch_path),
+    )
+    assert accepted.returncode == 0, accepted.stderr
+    accepted_payload = json.loads(accepted.stdout)
+    assert accepted_payload["status"] == "accepted"
+    assert accepted_payload["trace_sha256"] == sha256_bytes(trace_path.read_bytes())
+    assert accepted_payload["report_sha256"] == sha256_bytes(report_path.read_bytes())
+    assert accepted_payload["patch_sha256"] == sha256_bytes(patch_path.read_bytes())
+
+    ledger_before = (campaign / "ledger.jsonl").read_bytes()
+    head_before = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=campaign / "worktree",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    status = run_campaign_cli("status", "--campaign", str(campaign))
+    assert status.returncode == 0, status.stderr
+    status_payload = json.loads(status.stdout)
+    assert status_payload["entry_count"] == 1
+    assert status_payload["ledger_verified"] is True
+    assert status_payload["pending_accept"] is False
+    assert (campaign / "ledger.jsonl").read_bytes() == ledger_before
+    assert (
+        subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=campaign / "worktree",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        == head_before
+    )
+
+    finalized = run_campaign_cli("finalize", "--campaign", str(campaign))
+    assert finalized.returncode == 0, finalized.stderr
+    finalized_payload = json.loads(finalized.stdout)
+    assert finalized_payload["status"] == "complete"
+    assert len(finalized_payload["manifest_sha256"]) == 64
+
+    finalized_ledger = (campaign / "ledger.jsonl").read_bytes()
+    finalized_head = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=campaign / "worktree",
+        text=True,
+        capture_output=True,
+        check=True,
+    ).stdout
+    verified = run_campaign_cli("verify", "--campaign", str(campaign))
+    assert verified.returncode == 0, verified.stderr
+    verified_payload = json.loads(verified.stdout)
+    assert verified_payload["ok"] is True
+    assert verified_payload["blockers"] == []
+    assert (campaign / "ledger.jsonl").read_bytes() == finalized_ledger
+    assert (
+        subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=campaign / "worktree",
+            text=True,
+            capture_output=True,
+            check=True,
+        ).stdout
+        == finalized_head
+    )
+    combined_output = (
+        initialized.stdout + accepted.stdout + status.stdout + finalized.stdout + verified.stdout
+    ).lower()
+    assert "prompt" not in combined_output
+    assert "environment" not in combined_output
+    assert "api_key" not in combined_output
+    assert "sk-" not in combined_output
+
+
+def test_campaign_cli_rejects_implicit_inputs_and_reports_tamper(
+    tmp_path: Path,
+) -> None:
+    campaign = tmp_path / "campaign"
+    profile = tmp_path / "harness-profile.json"
+    write_campaign_profile(profile)
+    initialized = run_campaign_cli(
+        "init",
+        "--campaign",
+        str(campaign),
+        "--harness-profile",
+        str(profile),
+    )
+    assert initialized.returncode == 0, initialized.stderr
+
+    missing_inputs = run_campaign_cli(
+        "accept",
+        "--campaign",
+        str(campaign),
+        "--task-id",
+        "forgebench-dev-domain-normalize-title",
+    )
+    assert missing_inputs.returncode == 2
+    assert "--trace" in missing_inputs.stderr
+    assert "latest" not in missing_inputs.stderr.lower()
+
+    unknown = run_campaign_cli("status", "--campaign", str(tmp_path / "missing"))
+    assert unknown.returncode == 2
+    malformed = tmp_path / "malformed"
+    malformed.mkdir()
+    (malformed / "campaign.json").write_text("{", encoding="utf-8")
+    malformed_result = run_campaign_cli("status", "--campaign", str(malformed))
+    assert malformed_result.returncode == 2
+    secret_campaign = tmp_path / "secret-campaign"
+    secret_campaign.mkdir()
+    secret_value = "sk-" + "x" * 32
+    (secret_campaign / "campaign.json").write_text(
+        json.dumps({"schema_version": 1, "api_key": secret_value}),
+        encoding="utf-8",
+    )
+    secret_result = run_campaign_cli(
+        "status",
+        "--campaign",
+        str(secret_campaign),
+    )
+    assert secret_result.returncode == 2
+    assert secret_value not in secret_result.stdout + secret_result.stderr
+
+    (campaign / "campaign.json").write_text("{", encoding="utf-8")
+    tampered = run_campaign_cli("verify", "--campaign", str(campaign))
+    assert tampered.returncode == 1
+    assert json.loads(tampered.stdout)["blockers"] == ["campaign_metadata_invalid"]
 
 
 def test_cli_verifies_frozen_forgebench_catalog_without_leaking_holdout() -> None:

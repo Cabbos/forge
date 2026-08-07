@@ -3,6 +3,7 @@ import json
 import sys
 from pathlib import Path
 
+from app.campaign_cli import campaign_main
 from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.execution import EvaluationExecution, ExecutionOptions, execute_evaluation
@@ -208,6 +209,8 @@ def main(argv: list[str] | None = None) -> int:
         return promote_trace_main(raw_argv[1:])
     if raw_argv[:1] == ["forgebench"]:
         return forgebench_main(raw_argv[1:])
+    if raw_argv[:1] == ["campaign"]:
+        return campaign_main(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(
