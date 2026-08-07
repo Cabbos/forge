@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Sequence
 from decimal import Decimal
 from pathlib import Path
+from statistics import median
 from typing import Literal
 
 from pydantic import Field, model_validator
@@ -61,6 +63,38 @@ class HoldoutGateThresholdsV1(EvalModel):
 
 
 DEFAULT_HOLDOUT_THRESHOLDS = HoldoutGateThresholdsV1()
+
+
+class HoldoutAttemptEvidenceV1(EvalModel):
+    """One immutable, already-observed holdout attempt."""
+
+    schema_version: Literal[1] = 1
+    attempt_id: str
+    case_id: str
+    repetition: Literal[1, 2, 3]
+    trusted: bool
+    passed: bool
+    scope_violation: bool
+    model_rounds: int = Field(ge=0)
+    score_coverage: bool
+    contract_evidence: bool
+    workspace_evidence: bool
+    patch_replay: bool
+    verification_evidence: bool
+    usage_known: bool
+    terminal_failure_category: str | None
+    cost_cny: Decimal = Field(ge=0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_identity(self) -> HoldoutAttemptEvidenceV1:
+        if not _SAFE_ID.fullmatch(self.attempt_id) or not _SAFE_ID.fullmatch(self.case_id):
+            raise ValueError("holdout attempt and case ids must be safe identifiers")
+        if (
+            self.terminal_failure_category is not None
+            and not self.terminal_failure_category.strip()
+        ):
+            raise ValueError("terminal failure category must be nonblank when present")
+        return self
 
 
 class HoldoutGateReportV1(EvalModel):
@@ -198,6 +232,66 @@ def holdout_report_bytes(report: HoldoutGateReportV1) -> bytes:
 
 def holdout_report_fingerprint(report: HoldoutGateReportV1) -> str:
     return sha256_bytes(holdout_report_bytes(report))
+
+
+def summarize_holdout_attempts(
+    attempts: Sequence[HoldoutAttemptEvidenceV1],
+    *,
+    campaign_id: str,
+    case_ids: Sequence[str],
+    dataset_fingerprint: str,
+    harness_fingerprint: str,
+    transport: Literal["anthropic_messages", "openai_chat_completions"],
+    budget_cny: Decimal,
+) -> HoldoutGateReportV1:
+    """Derive a holdout report from every observed case/repetition pair."""
+
+    expected_cases = set(case_ids)
+    if len(expected_cases) != DEFAULT_HOLDOUT_THRESHOLDS.expected_case_count:
+        raise ValueError("holdout case id list must contain exactly 20 unique cases")
+    if len(attempts) != DEFAULT_HOLDOUT_THRESHOLDS.expected_attempts:
+        raise ValueError("holdout attempt list must contain exactly 60 attempts")
+    observed_keys = [(attempt.repetition, attempt.case_id) for attempt in attempts]
+    expected_keys = [
+        (repetition, case_id)
+        for repetition in range(1, DEFAULT_HOLDOUT_THRESHOLDS.repetitions + 1)
+        for case_id in sorted(expected_cases)
+    ]
+    if len(set(observed_keys)) != len(observed_keys) or set(observed_keys) != set(expected_keys):
+        raise ValueError("holdout attempts must contain each unique case/repetition pair")
+    if len({attempt.attempt_id for attempt in attempts}) != len(attempts):
+        raise ValueError("holdout attempt ids must be unique")
+
+    total = len(attempts)
+    trusted_successes = sum(attempt.trusted and attempt.passed for attempt in attempts)
+    return HoldoutGateReportV1(
+        campaign_id=campaign_id,
+        dataset_split="holdout",
+        dataset_fingerprint=dataset_fingerprint,
+        harness_fingerprint=harness_fingerprint,
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport=transport,
+        completed_attempts=total,
+        trusted_attempts=sum(attempt.trusted for attempt in attempts),
+        trusted_success_rate=trusted_successes / total,
+        scope_violation_rate=sum(attempt.scope_violation for attempt in attempts) / total,
+        median_model_rounds=float(median(attempt.model_rounds for attempt in attempts)),
+        score_coverage=sum(attempt.score_coverage for attempt in attempts) / total,
+        contract_coverage=sum(attempt.contract_evidence for attempt in attempts) / total,
+        workspace_evidence_rate=sum(attempt.workspace_evidence for attempt in attempts) / total,
+        patch_replay_rate=sum(attempt.patch_replay for attempt in attempts) / total,
+        verification_evidence_rate=sum(attempt.verification_evidence for attempt in attempts)
+        / total,
+        usage_known_rate=sum(attempt.usage_known for attempt in attempts) / total,
+        terminal_failure_category_rate=sum(
+            attempt.terminal_failure_category is not None for attempt in attempts
+        )
+        / total,
+        total_cost_cny=sum((attempt.cost_cny for attempt in attempts), Decimal(0)),
+        budget_cny=budget_cny,
+        status="complete",
+    )
 
 
 def load_holdout_report(path: Path) -> HoldoutGateReportV1:

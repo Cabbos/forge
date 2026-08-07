@@ -5,10 +5,12 @@ from pydantic import ValidationError
 
 from app.holdout_gate import (
     DEFAULT_HOLDOUT_THRESHOLDS,
+    HoldoutAttemptEvidenceV1,
     HoldoutGateReportV1,
     evaluate_holdout_gate,
     holdout_report_bytes,
     holdout_report_fingerprint,
+    summarize_holdout_attempts,
 )
 
 
@@ -109,3 +111,85 @@ def test_holdout_report_cost_is_decimal_and_canonical() -> None:
 
     assert report.total_cost_cny == Decimal("31.20")
     assert b'"total_cost_cny":"31.20"' in holdout_report_bytes(report)
+
+
+def _attempts(*, missing_terminal_category: bool = False) -> list[HoldoutAttemptEvidenceV1]:
+    attempts: list[HoldoutAttemptEvidenceV1] = []
+    for repetition in range(1, 4):
+        for case_number in range(1, 21):
+            passed = not (
+                (repetition == 1 and case_number > 8) or (repetition == 3 and case_number == 20)
+            )
+            attempts.append(
+                HoldoutAttemptEvidenceV1(
+                    attempt_id=f"r{repetition}-case{case_number}",
+                    case_id=f"case-{case_number}",
+                    repetition=repetition,
+                    trusted=not (repetition == 3 and case_number == 20),
+                    passed=passed,
+                    scope_violation=False,
+                    model_rounds=10,
+                    score_coverage=True,
+                    contract_evidence=True,
+                    workspace_evidence=True,
+                    patch_replay=True,
+                    verification_evidence=True,
+                    usage_known=True,
+                    terminal_failure_category=(
+                        None
+                        if missing_terminal_category
+                        else ("passed" if passed else "verification_failed")
+                    ),
+                    cost_cny=Decimal("0.52"),
+                )
+            )
+    return attempts
+
+
+def test_holdout_summary_is_derived_from_unique_attempt_evidence() -> None:
+    report = summarize_holdout_attempts(
+        _attempts(),
+        campaign_id="derived-holdout-v1",
+        case_ids=[f"case-{number}" for number in range(1, 21)],
+        dataset_fingerprint="a" * 64,
+        harness_fingerprint="b" * 64,
+        transport="anthropic_messages",
+        budget_cny=Decimal("35"),
+    )
+
+    assert report.completed_attempts == 60
+    assert report.trusted_attempts == 59
+    assert report.trusted_success_rate == pytest.approx(47 / 60)
+    assert report.total_cost_cny == Decimal("31.20")
+    assert "holdout_trusted_attempts_incomplete" in evaluate_holdout_gate(report).blockers
+
+
+def test_holdout_summary_rejects_duplicate_or_missing_case_repetitions() -> None:
+    attempts = _attempts()
+    attempts[-1] = attempts[-2].model_copy(update={"attempt_id": "duplicate"})
+
+    with pytest.raises(ValueError, match="unique case/repetition"):
+        summarize_holdout_attempts(
+            attempts,
+            campaign_id="derived-holdout-v1",
+            case_ids=[f"case-{number}" for number in range(1, 21)],
+            dataset_fingerprint="a" * 64,
+            harness_fingerprint="b" * 64,
+            transport="anthropic_messages",
+            budget_cny=Decimal("35"),
+        )
+
+
+def test_holdout_summary_preserves_missing_terminal_failure_category() -> None:
+    report = summarize_holdout_attempts(
+        _attempts(missing_terminal_category=True),
+        campaign_id="derived-holdout-v1",
+        case_ids=[f"case-{number}" for number in range(1, 21)],
+        dataset_fingerprint="a" * 64,
+        harness_fingerprint="b" * 64,
+        transport="anthropic_messages",
+        budget_cny=Decimal("35"),
+    )
+
+    assert report.terminal_failure_category_rate == 0.0
+    assert "holdout_failure_taxonomy_incomplete" in evaluate_holdout_gate(report).blockers

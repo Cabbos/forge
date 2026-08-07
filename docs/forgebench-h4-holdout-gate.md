@@ -2,8 +2,11 @@
 
 H4 is the release boundary for the frozen ForgeBench holdout, not a tuning
 loop. The report contract requires 20 sealed cases × 3 repetitions (60
-attempts) and records the selected model, official transport, dataset
-fingerprint, harness fingerprint, budget, and every evidence-coverage rate.
+attempts). Reports should be derived with `summarize_holdout_attempts` from one
+immutable evidence record per case/repetition pair; hand-authored aggregate
+numbers cannot replace those records. The derived report records the selected
+model, official transport, dataset fingerprint, harness fingerprint, budget,
+and every evidence-coverage rate.
 
 The locked thresholds are:
 
