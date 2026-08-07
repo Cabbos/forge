@@ -135,6 +135,7 @@ class FakeRunner:
         workspace_available: bool = True,
         patch_replay_ok: bool = True,
         fail_after_pending: bool = False,
+        crash_before_runner: bool = False,
         identity_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.campaign_root = campaign_root
@@ -143,6 +144,7 @@ class FakeRunner:
         self.workspace_available = workspace_available
         self.patch_replay_ok = patch_replay_ok
         self.fail_after_pending = fail_after_pending
+        self.crash_before_runner = crash_before_runner
         self.identity_overrides = identity_overrides
         self.calls: list[str] = []
 
@@ -158,6 +160,8 @@ class FakeRunner:
             )["harness_fingerprint"]
         if self.fail_after_pending:
             raise RuntimeError("simulated provider interruption")
+        if self.crash_before_runner:
+            raise BaselineCrashInjected("simulated abrupt runner interruption")
         return make_trace(
             task,
             event=self.event,
@@ -474,6 +478,23 @@ def test_interrupted_paid_attempt_blocks_resume_and_recovery_never_reissues(
     verification = verify_baseline_campaign(**campaign_kwargs(campaign))
     assert "interrupted_paid_attempt_unknown_cost" in verification.blockers
     assert verification.spent_cny == Decimal("1")
+
+
+def test_pending_marker_records_runner_stage_before_external_interruption(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    runner = FakeRunner(campaign_root=campaign, crash_before_runner=True)
+
+    with pytest.raises(BaselineCrashInjected, match="abrupt runner interruption"):
+        run_baseline_campaign(
+            **campaign_kwargs(campaign),
+            runner=runner,
+            max_attempts=1,
+        )
+
+    pending = next((campaign / "pending").glob("*.json"))
+    assert json.loads(pending.read_text())["interruption_stage"] == "runner"
 
 
 @pytest.mark.parametrize(

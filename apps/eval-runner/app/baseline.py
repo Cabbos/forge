@@ -240,6 +240,7 @@ def run_baseline_campaign(
                     harness_fingerprint=metadata.harness_fingerprint,
                     reserved_cost_cny=profile.max_cost_cny_per_task,
                     started_at=datetime.now(UTC),
+                    interruption_stage="runner",
                 )
                 pending_path = campaign_root / _PENDING_DIR / f"{attempt_id}.json"
                 _atomic_write_model(pending_path, pending)
