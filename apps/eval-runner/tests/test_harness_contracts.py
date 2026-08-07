@@ -12,6 +12,7 @@ from app.harness_contracts import (
     ToolResultEnvelope,
     ToolResultStatus,
     build_context_manifest,
+    classify_failure,
     envelope_from_shell_output,
     evaluate_stagnation,
     harness_contract_evidence,
@@ -79,6 +80,31 @@ def test_stagnation_redirects_once_then_stops() -> None:
     assert stopped.redirects_used == 1
 
 
+@pytest.mark.parametrize(
+    ("error", "legacy_category", "verification_passed", "expected"),
+    [
+        (None, "none", True, "passed"),
+        ("api returned 503", "runner_error", None, "provider_error"),
+        ("unexpected trace shape", "runner_error", None, "harness_contract_error"),
+        (None, "scope_violation", True, "scope_violation"),
+    ],
+)
+def test_failure_taxonomy_never_emits_generic_runner_error(
+    error: str | None,
+    legacy_category: str,
+    verification_passed: bool | None,
+    expected: str,
+) -> None:
+    evidence = classify_failure(
+        error=error,
+        legacy_category=legacy_category,
+        verification_passed=verification_passed,
+    )
+
+    assert evidence.primary.value == expected
+    assert evidence.primary.value != "runner_error"
+
+
 def test_harness_contract_evidence_marks_missing_progress_explicitly(tmp_path: Path) -> None:
     evidence = harness_contract_evidence(
         task_context_files=[],
@@ -90,3 +116,4 @@ def test_harness_contract_evidence_marks_missing_progress_explicitly(tmp_path: P
     assert evidence["tool_results"]["source"] == "derived_shell_output"
     assert evidence["progress"]["source"] == "missing"
     assert evidence["progress"]["stagnation"]["action"] == "continue"
+    assert evidence["failure_taxonomy"]["primary"] == "model_incomplete"

@@ -216,6 +216,8 @@ def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) 
             "json.load(sys.stdin)\n"
             "json.dump({\n"
             "  'final_answer': 'done',\n"
+            "  'verification_result': {'command': 'pytest', 'passed': True, "
+            "'stdout': 'ok', 'stderr': '', 'exit_code': 0, 'duration_ms': 1},\n"
             "  'tool_calls': [{'command': 'read_file', 'stdout': 'ok', "
             "'stderr': '', 'exit_code': 0}],\n"
             "  'tool_result_envelopes': [{\n"
@@ -251,6 +253,7 @@ def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) 
     assert event["tool_results"]["source"] == "agent_payload"
     assert event["tool_results"]["envelopes"][0]["content"] == "ok"
     assert event["progress"]["stagnation"]["action"] == "redirect"
+    assert event["failure_taxonomy"]["primary"] == "passed"
 
 
 def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(

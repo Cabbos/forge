@@ -91,6 +91,113 @@ class StagnationDecision(HarnessContractModel):
     recovery_instruction: str | None = Field(default=None, max_length=500)
 
 
+class PrimaryFailureCategory(StrEnum):
+    PASSED = "passed"
+    MODEL_INCORRECT = "model_incorrect"
+    MODEL_INCOMPLETE = "model_incomplete"
+    MODEL_NO_PROGRESS = "model_no_progress"
+    MODEL_BUDGET_EXHAUSTED = "model_budget_exhausted"
+    PROVIDER_ERROR = "provider_error"
+    TOOL_ERROR = "tool_error"
+    PERMISSION_BLOCKED = "permission_blocked"
+    VERIFICATION_FAILED = "verification_failed"
+    SCOPE_VIOLATION = "scope_violation"
+    WORKSPACE_OBSERVER_UNTRUSTED = "workspace_observer_untrusted"
+    PATCH_REPLAY_FAILED = "patch_replay_failed"
+    HARNESS_CONTRACT_ERROR = "harness_contract_error"
+    CANCELLED = "cancelled"
+    TIMED_OUT = "timed_out"
+
+
+class FailureTaxonomyEvidence(HarnessContractModel):
+    primary: PrimaryFailureCategory
+    source: str = "controller"
+    legacy_category: str | None = None
+    reason: str = Field(max_length=500)
+
+
+def classify_failure(
+    *,
+    error: str | None,
+    legacy_category: str | None,
+    verification_passed: bool | None,
+    scope_violation: bool = False,
+) -> FailureTaxonomyEvidence:
+    """Map legacy runner outcomes to the explicit frontier taxonomy."""
+
+    normalized_error = (error or "").lower()
+    normalized_legacy = (legacy_category or "").lower()
+    if scope_violation or normalized_legacy == "scope_violation":
+        primary = PrimaryFailureCategory.SCOPE_VIOLATION
+        reason = "changed files violated the declared task scope"
+    elif normalized_legacy in {"cancelled", "canceled"} or "cancel" in normalized_error:
+        primary = PrimaryFailureCategory.CANCELLED
+        reason = "the attempt was cancelled before terminal success"
+    elif normalized_legacy in {"timeout", "timed_out"} or "timeout" in normalized_error:
+        primary = PrimaryFailureCategory.TIMED_OUT
+        reason = "the bounded attempt timeout fired"
+    elif normalized_legacy in {
+        "budget_exhausted",
+        "max_model_rounds_exceeded",
+        "model_budget_exhausted",
+    }:
+        primary = PrimaryFailureCategory.MODEL_BUDGET_EXHAUSTED
+        reason = "the model or harness budget was exhausted"
+    elif normalized_legacy in {"verification_failed", "verification"}:
+        primary = PrimaryFailureCategory.VERIFICATION_FAILED
+        reason = "controller-owned verification did not pass"
+    elif normalized_legacy in {"tool_error", "tool", "tool_failed"}:
+        primary = PrimaryFailureCategory.TOOL_ERROR
+        reason = "a tool result reported an error"
+    elif normalized_legacy in {"permission_blocked", "permission_denied"}:
+        primary = PrimaryFailureCategory.PERMISSION_BLOCKED
+        reason = "the requested operation was blocked by permission policy"
+    elif normalized_legacy in {"patch_replay_failed", "replay_failed"}:
+        primary = PrimaryFailureCategory.PATCH_REPLAY_FAILED
+        reason = "the emitted patch did not replay cleanly"
+    elif normalized_legacy in {"workspace_observer_untrusted", "observer_untrusted"}:
+        primary = PrimaryFailureCategory.WORKSPACE_OBSERVER_UNTRUSTED
+        reason = "workspace observer evidence was unavailable or contradictory"
+    elif normalized_legacy in {"provider_error", "api", "provider"} or any(
+        token in normalized_error for token in ("provider", "api", "network", "credential")
+    ):
+        primary = PrimaryFailureCategory.PROVIDER_ERROR
+        reason = "the provider boundary returned an error"
+    elif normalized_legacy in {
+        "model_no_progress",
+        "repeated_no_progress",
+        "no_progress",
+    }:
+        primary = PrimaryFailureCategory.MODEL_NO_PROGRESS
+        reason = "typed progress evidence reached the stagnation stop"
+    elif normalized_legacy in {"model_incorrect", "incorrect"}:
+        primary = PrimaryFailureCategory.MODEL_INCORRECT
+        reason = "verification evidence contradicts the requested outcome"
+    elif normalized_legacy in {"model_incomplete", "incomplete", "no_verification"}:
+        primary = PrimaryFailureCategory.MODEL_INCOMPLETE
+        reason = "the attempt ended without complete success evidence"
+    elif normalized_legacy in {"forge_contract_error", "harness_contract_error"}:
+        primary = PrimaryFailureCategory.HARNESS_CONTRACT_ERROR
+        reason = "the emitted trace violated the harness contract"
+    elif not error and verification_passed is True:
+        primary = PrimaryFailureCategory.PASSED
+        reason = "verification and scope evidence passed"
+    elif not error and verification_passed is False:
+        primary = PrimaryFailureCategory.VERIFICATION_FAILED
+        reason = "verification evidence did not pass"
+    elif not error:
+        primary = PrimaryFailureCategory.MODEL_INCOMPLETE
+        reason = "the attempt has no terminal success evidence"
+    else:
+        primary = PrimaryFailureCategory.HARNESS_CONTRACT_ERROR
+        reason = "the legacy runner error had no safe explicit taxonomy mapping"
+    return FailureTaxonomyEvidence(
+        primary=primary,
+        legacy_category=legacy_category,
+        reason=reason,
+    )
+
+
 def evaluate_stagnation(
     signals: Iterable[ProgressSignal],
     *,
@@ -257,6 +364,10 @@ def harness_contract_evidence(
     provided_envelopes: Any = None,
     provided_signals: Any = None,
     context_mode: str = "minimal",
+    failure_category: str | None = None,
+    error: str | None = None,
+    verification_passed: bool | None = None,
+    scope_violation: bool = False,
 ) -> dict[str, Any]:
     """Build a JSON-safe evidence event without retaining unbounded output."""
 
@@ -281,6 +392,12 @@ def harness_contract_evidence(
         signal_source = "agent_payload"
         decision = evaluate_stagnation(signals)
     manifest = build_context_manifest(task_context_files, workspace, mode=context_mode)
+    failure = classify_failure(
+        error=error,
+        legacy_category=failure_category,
+        verification_passed=verification_passed,
+        scope_violation=scope_violation,
+    )
     return {
         "event_type": "harness_contract_evidence",
         "schema_version": 1,
@@ -295,4 +412,5 @@ def harness_contract_evidence(
             "signals": [signal.model_dump(mode="json") for signal in signals],
             "stagnation": decision.model_dump(mode="json"),
         },
+        "failure_taxonomy": failure.model_dump(mode="json"),
     }

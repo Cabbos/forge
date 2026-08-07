@@ -15,6 +15,10 @@ needed for frontier tuning explicit and bounded before another paid campaign.
 - `ProgressSignal` and `StagnationDecision` make no-progress rounds typed. Two
   consecutive no-progress rounds allow one bounded recovery redirect; a second
   pair stops with an explicit reason.
+- `FailureTaxonomyEvidence` maps legacy runner outcomes to one explicit primary
+  category (`passed`, model, provider, tool, permission, verification, scope,
+  observer, replay, contract, cancellation, or timeout) so reports never need
+  to expose a generic `runner_error` as the terminal cause.
 
 Every Forge trace now emits one `harness_contract_evidence` raw event. Legacy
 shell tool calls are converted into bounded envelopes, while agent-provided
