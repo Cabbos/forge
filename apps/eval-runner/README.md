@@ -241,6 +241,19 @@ micro-fixtures are retained while their runtime-contract assertions migrate.
 They are excluded from frontier scoring and cannot satisfy
 `metadata.real_coding=true`.
 
+### Forge-built monorepo provenance
+
+The scoring track and integration track are separate. Scoring attempts remain
+immutable benchmark evidence; only an explicitly selected, trusted Forge patch
+that passes scope, replay, visible, hidden, and full verification may enter the
+integration campaign's product commit chain. The controller-authored canonical
+baseline is benchmark scaffolding, not a Forge-authored patch. See
+[`../../docs/forgebench-provenance.md`](../../docs/forgebench-provenance.md) for
+the `campaign init`, `campaign accept`, `campaign finalize`, and
+`campaign verify` workflow, the `FORGE-BUILD-MANIFEST.json` contract, controller
+interventions, invalidation rules, and proof limits. H0C made no paid DeepSeek
+call and does not claim holdout success.
+
 The CLI prints a JSON backtest report:
 
 ```json

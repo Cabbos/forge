@@ -129,6 +129,8 @@ npm run eval:report:latest         # 查看最近一次报告
 
 可执行真实编码基准统一进入 `apps/eval-runner/forgebench/forgebench-monorepo`：10 个 development case 与 20 个 sealed holdout case 从同一产品基线创建独立副本并应用小型 scenario overlay，题面、场景、隐藏验证器和 fixture 都由内容指纹锁定。`eval_cases/` 继续承载 Forge runtime / scorer / contract 回归；旧 `continuity-ts-tooling` 与独立微型 fixture 不计入 frontier scoring。H0B 证明的是基准与证据链已冻结，不代表付费 holdout 已运行或 frontier KPI 已通过。
 
+Forge-built monorepo provenance 使用独立 integration campaign，把通过 trust、scope、patch replay 和可见/隐藏验证的 Forge patch 串成 Git commit 链与外置哈希账本，最终由 `FORGE-BUILD-MANIFEST.json` 绑定 fixture、dataset、harness、artifact index、账本、最终源码树和全量验证。完整命令与证明边界见 [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md)；该机制证明被接受源码的来源与完整性，不代替 scoring track，也不代表 20-case holdout 成功。
+
 ## 开发
 
 从仓库根目录启动完整桌面应用：
@@ -165,7 +167,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：80 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：81 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |
@@ -213,6 +215,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 | --- | --- |
 | [`apps/desktop/README.md`](apps/desktop/README.md) | 桌面产品定位、承诺与体验（含英文版链接） |
 | [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
+| [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md) | Forge-built monorepo provenance、integration campaign 命令与证明边界 |
 | [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
 | [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
 | [`apps/desktop/docs/product/forge-design-language.md`](apps/desktop/docs/product/forge-design-language.md) | 桌面设计语言契约（v5 "Console Craft"：冷石墨 + 青色强调 + Geist Mono） |

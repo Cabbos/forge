@@ -91,6 +91,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       command:
         "cd apps/eval-runner && uv run pytest tests/test_artifact_hashing.py tests/test_forgebench_fixture.py tests/test_forgebench_catalog.py tests/test_hidden_verifiers.py && uv run python -m app.cli forgebench verify-catalog",
     },
+    {
+      label: "Forge-built monorepo provenance contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_provenance_models.py tests/test_provenance.py tests/test_campaign.py tests/test_campaign_verify.py",
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "eval quality suite",
@@ -454,6 +459,29 @@ test("acceptance script dry-run lists the final product gates", () => {
     ownershipSubcommands.length,
     "ownership gate subcommands must be unique",
   );
+});
+
+test("Forge-built provenance documentation states the proof boundary", () => {
+  const provenancePath = join(root, "docs", "forgebench-provenance.md");
+  assert.equal(existsSync(provenancePath), true, "docs/forgebench-provenance.md should exist");
+
+  const provenance = readFileSync(provenancePath, "utf8");
+  for (const phrase of [
+    "FORGE-BUILD-MANIFEST.json",
+    "controller interventions",
+    "campaign verify",
+    "scoring track",
+    "integration track",
+    "paid DeepSeek",
+    "holdout success",
+  ]) {
+    assert.match(provenance, new RegExp(phrase), `provenance documentation should include: ${phrase}`);
+  }
+
+  for (const relativePath of ["README.md", "apps/eval-runner/README.md", "CHANGELOG.md"]) {
+    const content = readFileSync(join(root, relativePath), "utf8");
+    assert.match(content, /Forge-built monorepo provenance/, `${relativePath} should link the proof contract`);
+  }
 });
 
 test("acceptance script exposes a machine-readable gate list", () => {
