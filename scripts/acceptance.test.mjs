@@ -81,6 +81,11 @@ test("acceptance script dry-run lists the final product gates", () => {
       label: "desktop protocol sync",
       command: "npm --prefix apps/desktop run check:protocol",
     },
+    {
+      label: "eval runtime isolation and golden truth",
+      command:
+        "node --test scripts/eval-doctor-precheck.test.mjs && cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_runner.py tests/test_workspace_observer.py tests/test_execution.py",
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "eval quality suite",

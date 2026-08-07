@@ -1,5 +1,6 @@
 # Changelog
 
+- Isolated eval doctor prechecks and every real Forge attempt from desktop runtime state. Attempts now use sibling `workspace` and `runtime-state` roots, preserve only installed Rust toolchain locations, and require a real observer change plus clean-fixture patch replay before the golden harness can be trusted; this is H0 evidence, not a 20-case holdout or frontier claim.
 - Eval CLI execution now uses the shared fail-closed trust orchestrator, emits the same trust result in stdout/artifacts, exits `1` for trust or threshold failures, and supports explicit `--report-only` inspection.
 - Eval reports now publish per-score observed/expected coverage, preserve universal-score denominators across every trace, and reject case files that declare unknown required score names.
 - Eval Forge runs now derive changed-file and scope evidence from independent filesystem snapshots, isolate setup/validation effects, bound and cancel subprocess groups, scrub future repository state, and record fresh-fixture patch replay evidence.

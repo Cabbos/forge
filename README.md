@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 78 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 79 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 78 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 79 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -125,6 +125,8 @@ npm run eval:report:latest         # 查看最近一次报告
 
 看点：Forge 跑次导出 ForgeRunEvidence 后，eval-runner 按确认正确性、上下文重复、验证存在性、改动文件范围、恢复证据、用量一致性等 30+ 维度打分；trust gate 区分 UNTRUSTED（明确失败）与 UNKNOWN（缺证据），changed-file 以独立文件系统快照为权威而不信任 agent 自报，emitted diff 在全新 fixture 里 replay 验证。
 
+真实 Forge eval 的 controller 与 agent runtime 分域：doctor precheck 使用一次性 home，不读取用户桌面的 session snapshot；每次 attempt 都创建同级 `workspace` 与 `runtime-state`，把 `HOME`、`USERPROFILE`、registry、Continuity、日志、profile 和 snapshot 路由到观测工作区之外。`CARGO_HOME` / `RUSTUP_HOME` 只保留现有工具链解析，不作为 Forge 运行时状态。golden harness 只有在真实 observer 捕获文件变化、且生成的 patch 能在干净 fixture 中 replay 后才可信；这证明 H0 harness 证据链，不代表 20-case holdout 或 frontier KPI 已通过。
+
 ## 开发
 
 从仓库根目录启动完整桌面应用：
@@ -161,7 +163,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：78 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：79 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |
