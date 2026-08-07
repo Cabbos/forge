@@ -31,6 +31,11 @@ class EvalProvider(StrEnum):
     FORGE = "forge"
 
 
+class DatasetSplit(StrEnum):
+    DEVELOPMENT = "development"
+    HOLDOUT = "holdout"
+
+
 class TrustStatus(StrEnum):
     UNKNOWN = "unknown"
     TRUSTED = "trusted"
@@ -124,6 +129,12 @@ class EvaluationTask(EvalModel):
     title: str
     prompt: str
     fixture_path: str | None = None
+    fixture_id: str | None = None
+    fixture_version: str | None = None
+    scenario_path: str | None = None
+    dataset_split: DatasetSplit | None = None
+    hidden_verifier_id: str | None = None
+    full_verification_command: str | None = None
     context_files: list[str] = Field(default_factory=list)
     setup_commands: list[str] = Field(default_factory=list)
     validation_commands: list[str] = Field(default_factory=list)

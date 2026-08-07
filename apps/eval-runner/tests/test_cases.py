@@ -266,6 +266,65 @@ def test_load_cases_reads_case_directories_and_resolves_fixture_paths(tmp_path: 
     assert Path(tasks[0].fixture_path) == first_dir / "fixture"
 
 
+def test_load_cases_resolves_canonical_fixture_and_scenario_descriptor(
+    tmp_path: Path,
+) -> None:
+    case_dir = tmp_path / "forgebench-dev-domain-normalize-title"
+    fixture = tmp_path / "forgebench-monorepo"
+    scenario = case_dir / "scenario"
+    fixture.mkdir()
+    scenario.mkdir(parents=True)
+    (case_dir / "case.json").write_text(
+        json.dumps(
+            {
+                "id": "forgebench-dev-domain-normalize-title",
+                "title": "Normalize task titles",
+                "prompt": "Normalize repeated whitespace in task titles.",
+                "fixture_id": "forgebench-monorepo",
+                "fixture_version": "1.0.0",
+                "fixture_path": "../forgebench-monorepo",
+                "scenario_path": "./scenario",
+                "dataset_split": "development",
+                "hidden_verifier_id": "domain-normalize-title",
+                "full_verification_command": "python tools/release/verify.py",
+                "validation_commands": ["bun test tests/cases/domain-normalize-title.test.ts"],
+                "expected_files_changed": ["packages/domain/src/task-title.ts"],
+                "metadata": {"real_coding": True, "holdout_unsealed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    task = load_cases(case_dir)[0]
+
+    assert task.fixture_id == "forgebench-monorepo"
+    assert task.fixture_version == "1.0.0"
+    assert task.fixture_path == str(fixture.resolve())
+    assert task.scenario_path == str(scenario.resolve())
+    assert task.dataset_split.value == "development"
+    assert task.hidden_verifier_id == "domain-normalize-title"
+    assert task.full_verification_command == "python tools/release/verify.py"
+    assert validate_case_quality([task]) == []
+
+
+def test_load_cases_rejects_unknown_dataset_split(tmp_path: Path) -> None:
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "invalid-split",
+                "title": "Invalid split",
+                "prompt": "Reject this case.",
+                "dataset_split": "training",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(CaseLoadError, match="Could not load eval cases"):
+        load_cases(case)
+
+
 def test_load_cases_rejects_duplicate_task_ids(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     write_case(cases_dir, "duplicate")
@@ -605,6 +664,108 @@ def test_case_quality_reports_missing_fixture_path(tmp_path: Path) -> None:
             "message": "Eval case fixture_path does not exist.",
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("missing_field", "expected_code"),
+    [
+        ("fixture_id", "missing_fixture_id"),
+        ("fixture_version", "missing_fixture_version"),
+        ("fixture_path", "missing_fixture_path"),
+        ("dataset_split", "missing_dataset_split"),
+        ("hidden_verifier_id", "missing_hidden_verifier"),
+        ("full_verification_command", "missing_full_verification"),
+    ],
+)
+def test_case_quality_requires_canonical_descriptor_for_real_coding_cases(
+    tmp_path: Path,
+    missing_field: str,
+    expected_code: str,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    payload = {
+        "id": f"missing-{missing_field}",
+        "title": "Incomplete real coding case",
+        "prompt": "Repair the product behavior.",
+        "fixture_id": "forgebench-monorepo",
+        "fixture_version": "1.0.0",
+        "fixture_path": "fixture",
+        "dataset_split": "development",
+        "hidden_verifier_id": "opaque-check",
+        "full_verification_command": "python tools/release/verify.py",
+        "validation_commands": ["pytest"],
+        "expected_files_changed": ["src/app.py"],
+        "metadata": {"real_coding": True, "holdout_unsealed": False},
+    }
+    payload.pop(missing_field)
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps(payload), encoding="utf-8")
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [(issue.severity, issue.code) for issue in issues] == [("error", expected_code)]
+
+
+def test_case_quality_rejects_missing_scenario_path_when_declared(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "missing-scenario",
+                "title": "Missing scenario",
+                "prompt": "Repair the product behavior.",
+                "fixture_id": "forgebench-monorepo",
+                "fixture_version": "1.0.0",
+                "fixture_path": "fixture",
+                "scenario_path": "does-not-exist",
+                "dataset_split": "development",
+                "hidden_verifier_id": "opaque-check",
+                "full_verification_command": "python tools/release/verify.py",
+                "validation_commands": ["pytest"],
+                "expected_files_changed": ["src/app.py"],
+                "metadata": {"real_coding": True, "holdout_unsealed": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [(issue.severity, issue.code) for issue in issues] == [
+        ("error", "missing_scenario_path")
+    ]
+
+
+def test_case_quality_rejects_unsealed_holdout_case(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    case = tmp_path / "case.json"
+    case.write_text(
+        json.dumps(
+            {
+                "id": "unsealed-holdout",
+                "title": "Unsealed holdout",
+                "prompt": "Repair the product behavior.",
+                "fixture_id": "forgebench-monorepo",
+                "fixture_version": "1.0.0",
+                "fixture_path": "fixture",
+                "dataset_split": "holdout",
+                "hidden_verifier_id": "opaque-check",
+                "full_verification_command": "python tools/release/verify.py",
+                "validation_commands": ["pytest"],
+                "expected_files_changed": ["src/app.py"],
+                "metadata": {"real_coding": True, "holdout_unsealed": True},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    issues = validate_case_quality(load_cases(case))
+
+    assert [(issue.severity, issue.code) for issue in issues] == [("error", "holdout_unsealed")]
 
 
 def test_case_quality_allows_contract_only_cases_without_executable_assertions(
