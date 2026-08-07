@@ -34,10 +34,16 @@ Forge headless command, provider, and model. The headless preflight resolves
 credentials only: it does not create an agent session, does not start a
 provider call, and never serializes the credential. H1 explicitly opts into the
 canonical provider's system credential reference so that an isolated eval HOME
-does not hide the desktop-managed key. A missing/unavailable credential,
-identity mismatch, malformed response, command failure, or 30-second timeout
-returns `error: baseline_run_preflight_failed` and leaves campaign metadata,
-`pending/`, `attempts/`, and `budget.jsonl` unchanged.
+does not hide the desktop-managed key, but credential resolution checks the
+controller environment first. The local paid campaign uses
+`DEEPSEEK_API_KEY` from `apps/eval-runner/.env`; that file is Git-ignored,
+permissioned `600`, and must be explicitly exported with
+`set -a; source .env; set +a` before invoking the CLI. The child HOME, profiles,
+logs, registry, Continuity state, and shell environment remain isolated, and
+the credential value is never serialized. A missing credential, identity
+mismatch, malformed response, command failure, or 30-second timeout returns
+`error: baseline_run_preflight_failed` and leaves campaign metadata, `pending/`,
+`attempts/`, and `budget.jsonl` unchanged.
 
 Before a provider call, the controller atomically writes a
 `provider_call_pending` record. A completed attempt publishes its immutable

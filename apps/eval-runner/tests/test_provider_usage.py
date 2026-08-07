@@ -28,6 +28,7 @@ def provider_event(
     model: Any = "deepseek-v4-flash",
     input_tokens: Any = 1_000,
     cache_read_tokens: Any = 250,
+    cache_creation_tokens: Any = 0,
     output_tokens: Any = 100,
     reasoning_tokens: Any = 50,
     source: Any = "deepseek",
@@ -38,6 +39,7 @@ def provider_event(
         "model": model,
         "input_tokens": input_tokens,
         "cache_read_tokens": cache_read_tokens,
+        "cache_creation_tokens": cache_creation_tokens,
         "output_tokens": output_tokens,
         "reasoning_tokens": reasoning_tokens,
         "source": source,
@@ -67,6 +69,33 @@ def test_prices_cache_hit_miss_and_output_in_cny(profile: HarnessProfileV1) -> N
     assert accounting.status == "known"
     assert accounting.blockers == []
     assert accounting.model_dump(mode="json")["cost_cny"] == "0.955"
+
+
+def test_anthropic_usage_treats_input_as_uncached_and_adds_cache_tokens(
+    profile: HarnessProfileV1,
+) -> None:
+    accounting = account_provider_usage(
+        provider_events=[
+            provider_event(
+                source="anthropic",
+                input_tokens=173,
+                cache_read_tokens=2_176,
+                cache_creation_tokens=10,
+                output_tokens=144,
+                reasoning_tokens=None,
+            )
+        ],
+        profile=profile,
+    )
+
+    assert accounting.status == "known"
+    assert accounting.input_tokens == 2_359
+    assert accounting.cache_hit_input_tokens == 2_176
+    assert accounting.cache_miss_input_tokens == 183
+    assert accounting.output_tokens == 144
+    assert accounting.reasoning_tokens is None
+    assert accounting.cost_cny == Decimal("0.00051452")
+    assert accounting.blockers == []
 
 
 def test_sums_multiple_provider_events_and_ignores_adjacent_legacy_usage(

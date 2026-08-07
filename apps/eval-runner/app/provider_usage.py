@@ -61,6 +61,7 @@ def account_provider_usage(
 
     input_tokens = 0
     cache_hit_input_tokens = 0
+    cache_miss_input_tokens = 0
     output_tokens = 0
     reasoning_tokens = 0
     reasoning_tokens_known = True
@@ -77,17 +78,35 @@ def account_provider_usage(
         event_cache_hit = _required_token_count(event, "cache_read_tokens", blockers)
         event_output = _required_token_count(event, "output_tokens", blockers)
         event_reasoning = _optional_token_count(event, "reasoning_tokens", blockers)
+        event_cache_creation = (
+            _required_token_count(event, "cache_creation_tokens", blockers)
+            if event.get("source") == "anthropic"
+            else 0
+        )
         if event_reasoning is None:
             reasoning_tokens_known = False
 
-        if event_input is None or event_cache_hit is None or event_output is None:
-            continue
-        if event_cache_hit > event_input:
-            blockers.append("provider_usage_cache_read_exceeds_input")
+        if (
+            event_input is None
+            or event_cache_hit is None
+            or event_cache_creation is None
+            or event_output is None
+        ):
             continue
 
-        input_tokens += event_input
+        if event.get("source") == "anthropic":
+            event_cache_miss = event_input + event_cache_creation
+            event_total_input = event_cache_miss + event_cache_hit
+        else:
+            if event_cache_hit > event_input:
+                blockers.append("provider_usage_cache_read_exceeds_input")
+                continue
+            event_total_input = event_input
+            event_cache_miss = event_input - event_cache_hit
+
+        input_tokens += event_total_input
         cache_hit_input_tokens += event_cache_hit
+        cache_miss_input_tokens += event_cache_miss
         output_tokens += event_output
         if event_reasoning is not None:
             reasoning_tokens += event_reasoning
@@ -95,7 +114,6 @@ def account_provider_usage(
     if blockers:
         return _unknown_accounting(len(canonical_events), blockers)
 
-    cache_miss_input_tokens = input_tokens - cache_hit_input_tokens
     prices = profile.price_table
     cost_cny = (
         Decimal(cache_hit_input_tokens) * prices.input_cache_hit_cny_per_million

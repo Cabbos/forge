@@ -265,9 +265,13 @@ content-addressed artifact index. Before any pending marker or attempt is
 created, `baseline run` sends a typed credential preflight to the exact Forge
 headless command and frozen provider/model. The preflight creates no agent
 session and starts no provider call; it may resolve the canonical provider key
-from the system credential store despite the attempt's isolated HOME. Failure
-leaves campaign metadata, pending records, attempts, and the budget ledger
-unchanged. All six commands require explicit
+from the inherited `DEEPSEEK_API_KEY` before consulting the optional system
+credential-store fallback. For local paid runs, keep the value in this
+directory's Git-ignored `.env` with file mode `600`, then explicitly export it
+into the controller process (`set -a; source .env; set +a`). The child HOME
+remains isolated and the credential is never serialized into a request or
+artifact. Failure leaves campaign metadata, pending records, attempts, and the
+budget ledger unchanged. All six commands require explicit
 `--campaign` and `--profile` arguments:
 
 ```bash
