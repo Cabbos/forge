@@ -181,6 +181,20 @@ OPENROUTER_API_KEY=...
 
 默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
+### DeepSeek H2 official transport A/B（eval-only）
+
+Forge 的 H2 harness 只在隔离的 headless eval 子进程中比较 DeepSeek V4
+Flash 的两条官方路由：Anthropic Messages
+(`https://api.deepseek.com/anthropic`) 和 OpenAI-compatible Chat Completions
+(`https://api.deepseek.com`)。controller 写入 child `HOME` 下的 secret-free
+临时 profile，Rust 以 typed provider/model/transport/base-url identity 做
+fail-closed 校验；这不是桌面设置覆盖，桌面默认 DeepSeek 仍走 Anthropic，
+共享 session builder 也不变。付费运行在路由身份不匹配、provider schema
+漂移、unknown usage/cost、不可信 workspace、patch replay 失败或中断调用
+时停止并且不重放 pending call。该实验不实现也不声称 DeepSeek OpenAI
+Responses 支持；H2 结果仅是 development split 的 transport/harness 证据，
+不是 holdout 或 frontier 成绩。
+
 设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema、`/models`、Anthropic-compatible `/v1/models`、Gemini `/v1beta/models` 或 Ollama `/api/tags` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
 
 ## 开发命令

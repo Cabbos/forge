@@ -961,6 +961,12 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
         ),
         None,
     )
+    legacy_identity_without_route_fields = identity is not None and not any(
+        field in identity for field in ("endpoint_family", "base_url")
+    )
+    route_identity_required = (
+        artifact.profile.base_url is not None or not legacy_identity_without_route_fields
+    )
     if (
         identity is None
         or identity.get("provider") != artifact.profile.provider
@@ -968,6 +974,14 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
         or identity.get("transport") != artifact.profile.transport
         or identity.get("harness_fingerprint") != artifact.harness_fingerprint
         or identity.get("identity_matches_profile") is not True
+        or (
+            route_identity_required
+            and identity.get("endpoint_family") != artifact.profile.endpoint_family
+        )
+        or (
+            route_identity_required
+            and identity.get("base_url") != artifact.profile.resolved_base_url
+        )
     ):
         blockers.append("agent_identity_mismatch")
     if artifact.trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR:

@@ -13,6 +13,10 @@ from app.provenance import canonical_json_bytes, sha256_bytes
 PROFILE_ID = "deepseek-v4-flash-anthropic-baseline-v1"
 PRICE_SOURCE = "https://api-docs.deepseek.com/zh-cn/quick_start/pricing/"
 PRICE_RETRIEVED_AT = date(2026, 8, 7)
+OFFICIAL_DEEPSEEK_ROUTES: dict[tuple[str, str], str] = {
+    ("anthropic_messages", "anthropic"): "https://api.deepseek.com/anthropic",
+    ("openai_chat_completions", "openai"): "https://api.deepseek.com",
+}
 _SENSITIVE_KEY = re.compile(
     r"(?:api[_-]?key|authorization|auth[_-]?token|access[_-]?token|secret|password)",
     re.IGNORECASE,
@@ -62,11 +66,21 @@ class PriceTableV1(EvalModel):
 
 class HarnessProfileV1(EvalModel):
     schema_version: Literal[1] = 1
-    profile_id: Literal["deepseek-v4-flash-anthropic-baseline-v1"]
+    profile_id: Literal[
+        "deepseek-v4-flash-anthropic-baseline-v1",
+        "deepseek-v4-flash-openai-chat-control-v1",
+    ]
     provider: Literal["deepseek"]
     model: Literal["deepseek-v4-flash"]
-    transport: Literal["anthropic_messages"]
-    endpoint_family: Literal["anthropic"]
+    transport: Literal["anthropic_messages", "openai_chat_completions"]
+    endpoint_family: Literal["anthropic", "openai"]
+    base_url: (
+        Literal[
+            "https://api.deepseek.com/anthropic",
+            "https://api.deepseek.com",
+        ]
+        | None
+    ) = Field(default=None, exclude_if=lambda value: value is None)
     reasoning_effort: Literal["provider_default"]
     thinking_mode: Literal["enabled_default"]
     prompt_mode: Literal["current_product_v1"]
@@ -85,6 +99,34 @@ class HarnessProfileV1(EvalModel):
     campaign_budget_cny: Decimal = Field(gt=0, allow_inf_nan=False)
     global_budget_cny: Decimal = Field(gt=0, allow_inf_nan=False)
     price_table: PriceTableV1
+
+    @property
+    def resolved_base_url(self) -> str:
+        expected = OFFICIAL_DEEPSEEK_ROUTES.get((self.transport, self.endpoint_family))
+        if expected is None:
+            raise ValueError("profile route is not an official frozen DeepSeek route")
+        if self.base_url is not None and self.base_url != expected:
+            raise ValueError("profile base URL does not match its route")
+        return expected
+
+    @model_validator(mode="after")
+    def validate_route_identity(self) -> "HarnessProfileV1":
+        expected = OFFICIAL_DEEPSEEK_ROUTES.get((self.transport, self.endpoint_family))
+        expected_profile = {
+            ("anthropic_messages", "anthropic"): "deepseek-v4-flash-anthropic-baseline-v1",
+            ("openai_chat_completions", "openai"): "deepseek-v4-flash-openai-chat-control-v1",
+        }.get((self.transport, self.endpoint_family))
+        if (
+            expected is None
+            or self.profile_id != expected_profile
+            or (
+                self.profile_id == "deepseek-v4-flash-openai-chat-control-v1"
+                and self.base_url is None
+            )
+            or (self.base_url is not None and self.base_url != expected)
+        ):
+            raise ValueError("profile identity must match an approved route")
+        return self
 
     @model_validator(mode="after")
     def validate_budget_hierarchy(self) -> "HarnessProfileV1":
@@ -117,7 +159,7 @@ def load_harness_profile(path: Path) -> HarnessProfileV1:
 
 
 def harness_profile_bytes(profile: HarnessProfileV1) -> bytes:
-    return canonical_json_bytes(profile.model_dump(mode="json"))
+    return canonical_json_bytes(profile.model_dump(mode="json", exclude_none=True))
 
 
 def harness_profile_fingerprint(profile: HarnessProfileV1) -> str:

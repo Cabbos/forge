@@ -15,11 +15,22 @@ PROFILE_PATH = (
     / "profiles"
     / "deepseek-v4-flash-anthropic-baseline-v1.json"
 )
+OPENAI_PROFILE_PATH = (
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-openai-chat-control-v1.json"
+)
 
 
 @pytest.fixture
 def profile() -> HarnessProfileV1:
     return load_harness_profile(PROFILE_PATH)
+
+
+@pytest.fixture
+def openai_profile() -> HarnessProfileV1:
+    return load_harness_profile(OPENAI_PROFILE_PATH)
 
 
 def provider_event(
@@ -69,6 +80,30 @@ def test_prices_cache_hit_miss_and_output_in_cny(profile: HarnessProfileV1) -> N
     assert accounting.status == "known"
     assert accounting.blockers == []
     assert accounting.model_dump(mode="json")["cost_cny"] == "0.955"
+
+
+def test_openai_usage_treats_cache_read_as_inclusive_input(
+    openai_profile: HarnessProfileV1,
+) -> None:
+    accounting = account_provider_usage(
+        provider_events=[
+            provider_event(
+                input_tokens=2_400,
+                cache_read_tokens=2_000,
+                output_tokens=600,
+                source="openai",
+            )
+        ],
+        profile=openai_profile,
+    )
+
+    assert accounting.status == "known"
+    assert accounting.input_tokens == 2_400
+    assert accounting.cache_hit_input_tokens == 2_000
+    assert accounting.cache_miss_input_tokens == 400
+    assert accounting.output_tokens == 600
+    assert accounting.cost_cny == Decimal("0.00164")
+    assert accounting.blockers == []
 
 
 def test_anthropic_usage_treats_input_as_uncached_and_adds_cache_tokens(

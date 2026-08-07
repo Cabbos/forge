@@ -292,6 +292,33 @@ for the frozen official price, 8 CNY allocation, recovery semantics, offline
 gate, and proof boundary. This is a pinned development baseline, not a frontier
 claim; the sealed holdout remains untouched.
 
+### DeepSeek H2 official transport A/B
+
+H2 pairs that Anthropic H1 control with an OpenAI-compatible Chat Completions
+candidate for the same DeepSeek V4 Flash development cases. The only allowed
+route tuples are `deepseek` + `deepseek-v4-flash` +
+`anthropic_messages` + `https://api.deepseek.com/anthropic`, and
+`deepseek` + `deepseek-v4-flash` + `openai_chat_completions` +
+`https://api.deepseek.com`. The controller derives a typed expected route and
+writes a secret-free profile under the child process's isolated HOME; Rust
+attests the effective profile before session creation. This is an eval-only
+isolated route override: desktop defaults, user settings, and the shared session
+builder remain unchanged.
+
+The candidate campaign is fail-closed. It stops on route identity mismatch,
+provider schema drift, unknown usage or cost, untrusted workspace evidence,
+patch replay failure, or an interrupted paid call; pending paid calls are never
+replayed. H2 does not implement or claim OpenAI Responses for DeepSeek. The
+offline contract is:
+
+```bash
+scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
+```
+
+The paired comparison is development evidence only; it is not a holdout or
+frontier-grade result. See
+[`../../docs/forgebench-h2-transport-ab.md`](../../docs/forgebench-h2-transport-ab.md).
+
 The CLI prints a JSON backtest report:
 
 ```json

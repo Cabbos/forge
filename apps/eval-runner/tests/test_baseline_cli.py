@@ -68,6 +68,31 @@ def test_baseline_commands_require_explicit_campaign_and_profile(
     assert missing_campaign.returncode == 2
 
 
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        [],
+        ["--control-campaign", "control"],
+        ["--control-campaign", "control", "--control-profile", "control.json"],
+        [
+            "--control-campaign",
+            "control",
+            "--control-profile",
+            "control.json",
+            "--candidate-campaign",
+            "candidate",
+            "--candidate-profile",
+            "candidate.json",
+        ],
+    ],
+)
+def test_baseline_compare_requires_explicit_pair_and_output(arguments: list[str]) -> None:
+    completed = run_baseline_cli("compare", *arguments)
+
+    assert completed.returncode == 2
+    assert completed.stdout == ""
+
+
 def test_baseline_init_rejects_holdout_without_leaking_inputs(tmp_path: Path) -> None:
     campaign = tmp_path / "should-not-exist"
     secret = "sk-this-must-not-appear-123456789"
@@ -244,15 +269,22 @@ import sys
 payload = json.loads(sys.stdin.read())
 if payload.get("mode") == "credential_preflight":
     assert payload["use_provider_credential_store"] is True
+    assert payload["provider_route"] == {
+        "transport": "anthropic_messages",
+        "base_url": "https://api.deepseek.com/anthropic",
+    }
     json.dump(
         {
-            "credential_preflight": {
-                "ok": True,
-                "provider": "deepseek",
-                "model": "deepseek-v4-flash",
-                "provider_call_started": False,
-                "error": None,
-            }
+                "credential_preflight": {
+                    "ok": True,
+                    "provider": "deepseek",
+                    "model": "deepseek-v4-flash",
+                    "transport": "anthropic_messages",
+                    "endpoint_family": "anthropic",
+                    "base_url": "https://api.deepseek.com/anthropic",
+                    "provider_call_started": False,
+                    "error": None,
+                }
         },
         sys.stdout,
     )

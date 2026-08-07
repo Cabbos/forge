@@ -11,6 +11,7 @@ from app.baseline import (
     run_baseline_campaign,
     verify_baseline_campaign,
 )
+from app.baseline_comparison import compare_baseline_campaigns, write_baseline_comparison
 from app.baseline_models import BaselineCampaignMetadata
 from app.config import get_settings
 from app.harness_profiles import (
@@ -45,6 +46,8 @@ def baseline_main(argv: list[str]) -> int:
             payload, exit_code = _report(args)
         elif args.command == "verify":
             payload, exit_code = _verify(args)
+        elif args.command == "compare":
+            payload, exit_code = _compare(args)
         else:
             raise ValueError("unknown baseline command")
     except _AlreadyReportedError:
@@ -75,6 +78,17 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("status", "recover", "report", "verify"):
         command = commands.add_parser(name)
         _add_campaign_inputs(command)
+    compare = commands.add_parser(
+        "compare",
+        help="Compare two explicitly named, complete and trusted 30-attempt campaigns.",
+    )
+    compare.add_argument("--control-campaign", type=Path, required=True)
+    compare.add_argument("--control-profile", type=Path, required=True)
+    compare.add_argument("--candidate-campaign", type=Path, required=True)
+    compare.add_argument("--candidate-profile", type=Path, required=True)
+    compare.add_argument("--output", type=Path, required=True)
+    compare.add_argument("--cases", type=Path, default=DEFAULT_CASES)
+    compare.add_argument("--dataset-lock", type=Path, default=DEFAULT_DATASET_LOCK)
     return parser
 
 
@@ -129,6 +143,8 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         agent_provider=profile.provider,
         agent_model=profile.model,
         agent_transport=profile.transport,
+        agent_endpoint_family=profile.endpoint_family,
+        agent_base_url=profile.resolved_base_url,
         harness_fingerprint=harness_profile_fingerprint(profile),
         max_model_rounds=profile.max_model_rounds,
         max_repair_attempts=profile.repair_attempt_limit,
@@ -214,6 +230,22 @@ def _verify(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         profile_path=args.profile,
     )
     return result.model_dump(mode="json"), 0 if result.ok else 1
+
+
+def _compare(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
+    comparison = compare_baseline_campaigns(
+        control_campaign_root=args.control_campaign,
+        candidate_campaign_root=args.candidate_campaign,
+        repository_root=REPOSITORY_ROOT,
+        cases_path=args.cases,
+        dataset_lock_path=args.dataset_lock,
+        control_profile_path=args.control_profile,
+        candidate_profile_path=args.candidate_profile,
+    )
+    digest = write_baseline_comparison(args.output, comparison)
+    payload = comparison.model_dump(mode="json")
+    payload["comparison_sha256"] = digest
+    return payload, 0
 
 
 def _load_campaign_metadata(campaign: Path) -> BaselineCampaignMetadata:

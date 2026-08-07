@@ -26,6 +26,42 @@ pub enum EvalHeadlessMode {
     CredentialPreflight,
 }
 
+/// The small, closed set of provider routes that an eval run may attest.
+///
+/// This is intentionally separate from the desktop provider registry.  An eval
+/// campaign can opt into one of the two official DeepSeek V4 Flash endpoints,
+/// while ordinary desktop requests continue using their configured provider
+/// profile without an implicit override.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalProviderTransport {
+    AnthropicMessages,
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+}
+
+impl EvalProviderTransport {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::OpenAiChatCompletions => "openai_chat_completions",
+        }
+    }
+
+    pub(crate) const fn endpoint_family(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic",
+            Self::OpenAiChatCompletions => "openai",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct EvalProviderRoute {
+    pub transport: EvalProviderTransport,
+    pub base_url: String,
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalHeadlessRequest {
     #[serde(default)]
@@ -38,6 +74,12 @@ pub struct EvalHeadlessRequest {
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional eval-only expected provider route.  When present, Rust
+    /// validates it against the isolated provider settings before credential
+    /// resolution or session construction.  When absent, desktop defaults are
+    /// unchanged for backwards compatibility.
+    #[serde(default)]
+    pub provider_route: Option<EvalProviderRoute>,
     /// Optional profile id for future runtime profile selection.
     /// Not yet wired to agent session creation; stored for forward-compat.
     #[serde(default)]

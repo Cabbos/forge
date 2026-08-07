@@ -21,6 +21,12 @@ PROFILE_PATH = (
     / "profiles"
     / "deepseek-v4-flash-anthropic-baseline-v1.json"
 )
+CONTROL_PROFILE_PATH = (
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-openai-chat-control-v1.json"
+)
 
 
 def valid_profile_payload() -> dict[str, object]:
@@ -31,6 +37,7 @@ def valid_profile_payload() -> dict[str, object]:
         "model": "deepseek-v4-flash",
         "transport": "anthropic_messages",
         "endpoint_family": "anthropic",
+        "base_url": "https://api.deepseek.com/anthropic",
         "reasoning_effort": "provider_default",
         "thinking_mode": "enabled_default",
         "prompt_mode": "current_product_v1",
@@ -60,6 +67,165 @@ def valid_profile_payload() -> dict[str, object]:
     }
 
 
+def valid_control_profile_payload() -> dict[str, object]:
+    return {
+        **valid_profile_payload(),
+        "profile_id": "deepseek-v4-flash-openai-chat-control-v1",
+        "transport": "openai_chat_completions",
+        "endpoint_family": "openai",
+        "base_url": "https://api.deepseek.com",
+    }
+
+
+def test_h2_committed_profiles_are_canonical_distinct_and_route_only() -> None:
+    baseline = load_harness_profile(PROFILE_PATH)
+    control = load_harness_profile(CONTROL_PROFILE_PATH)
+
+    assert PROFILE_PATH.read_bytes() == harness_profile_bytes(baseline) + b"\n"
+    assert CONTROL_PROFILE_PATH.read_bytes() == harness_profile_bytes(control) + b"\n"
+    assert baseline.base_url is None
+    assert control.base_url == "https://api.deepseek.com"
+    assert harness_profile_fingerprint(baseline) != harness_profile_fingerprint(control)
+
+    route_fields = {"profile_id", "transport", "endpoint_family", "base_url"}
+    baseline_dimensions = baseline.model_dump(exclude=route_fields)
+    control_dimensions = control.model_dump(exclude=route_fields)
+    assert control_dimensions == baseline_dimensions
+
+
+def test_h2_preserves_legacy_h1_profile_bytes_and_fingerprint(tmp_path: Path) -> None:
+    legacy_payload = valid_profile_payload()
+    legacy_payload.pop("base_url")
+    legacy_bytes = json.dumps(
+        legacy_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    path = tmp_path / "legacy-h1-profile.json"
+    path.write_bytes(legacy_bytes + b"\n")
+
+    profile = load_harness_profile(path)
+
+    assert profile.base_url is None
+    assert harness_profile_bytes(profile) == legacy_bytes
+    assert (
+        harness_profile_fingerprint(profile)
+        == "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66"
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        valid_profile_payload(),
+        valid_control_profile_payload(),
+    ],
+)
+def test_h2_profile_accepts_only_the_two_committed_route_tuples(
+    payload: dict[str, object],
+) -> None:
+    profile = HarnessProfileV1.model_validate(payload)
+
+    assert (
+        profile.profile_id,
+        profile.transport,
+        profile.endpoint_family,
+        profile.base_url,
+    ) in {
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "anthropic_messages",
+            "anthropic",
+            "https://api.deepseek.com/anthropic",
+        ),
+        (
+            "deepseek-v4-flash-openai-chat-control-v1",
+            "openai_chat_completions",
+            "openai",
+            "https://api.deepseek.com",
+        ),
+    }
+
+
+@pytest.mark.parametrize(
+    ("profile_id", "transport", "endpoint_family", "base_url"),
+    [
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "openai_chat_completions",
+            "openai",
+            "https://api.deepseek.com",
+        ),
+        (
+            "deepseek-v4-flash-openai-chat-control-v1",
+            "anthropic_messages",
+            "anthropic",
+            "https://api.deepseek.com/anthropic",
+        ),
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "anthropic_messages",
+            "openai",
+            "https://api.deepseek.com/anthropic",
+        ),
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "anthropic_messages",
+            "anthropic",
+            "https://api.deepseek.com",
+        ),
+        (
+            "deepseek-v4-flash-openai-chat-control-v1",
+            "openai_responses",
+            "openai",
+            "https://api.deepseek.com",
+        ),
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "anthropic_messages",
+            "anthropic",
+            "http://api.deepseek.com/anthropic",
+        ),
+        (
+            "deepseek-v4-flash-anthropic-baseline-v1",
+            "anthropic_messages",
+            "anthropic",
+            "https://example.com/anthropic",
+        ),
+        (
+            "deepseek-v4-flash-openai-chat-control-v1",
+            "openai_chat_completions",
+            "openai",
+            "https://api.deepseek.com/v1",
+        ),
+    ],
+)
+def test_h2_profile_rejects_crossed_or_untrusted_routes(
+    profile_id: str,
+    transport: str,
+    endpoint_family: str,
+    base_url: str,
+) -> None:
+    payload = {
+        **valid_profile_payload(),
+        "profile_id": profile_id,
+        "transport": transport,
+        "endpoint_family": endpoint_family,
+        "base_url": base_url,
+    }
+
+    with pytest.raises(ValidationError):
+        HarnessProfileV1.model_validate(payload)
+
+
+def test_h2_candidate_profile_requires_explicit_base_url() -> None:
+    payload = valid_control_profile_payload()
+    payload.pop("base_url")
+
+    with pytest.raises(ValidationError):
+        HarnessProfileV1.model_validate(payload)
+
+
 def test_h1_profile_is_strict_canonical_and_development_only() -> None:
     profile = load_harness_profile(PROFILE_PATH)
 
@@ -68,13 +234,17 @@ def test_h1_profile_is_strict_canonical_and_development_only() -> None:
     assert profile.provider == "deepseek"
     assert profile.model == "deepseek-v4-flash"
     assert profile.transport == "anthropic_messages"
+    assert profile.base_url is None
     assert profile.dataset_split == DatasetSplit.DEVELOPMENT
     assert profile.repetitions == 3
     assert profile.max_attempts == 30
     assert profile.max_cost_cny_per_task == Decimal("1")
     assert profile.campaign_budget_cny == Decimal("8")
     assert profile.global_budget_cny == Decimal("100")
-    assert len(harness_profile_fingerprint(profile)) == 64
+    assert (
+        harness_profile_fingerprint(profile)
+        == "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66"
+    )
     assert PROFILE_PATH.read_bytes() == harness_profile_bytes(profile) + b"\n"
 
 

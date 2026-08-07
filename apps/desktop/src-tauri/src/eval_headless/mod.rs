@@ -19,7 +19,8 @@ use crate::ipc::session_builder::{
 use crate::settings;
 
 pub use types::{
-    EvalHeadlessMode, EvalHeadlessRequest, EvalHeadlessTask, HeadlessFileDiff, TracePayloadInput,
+    EvalHeadlessMode, EvalHeadlessRequest, EvalHeadlessTask, EvalProviderRoute,
+    EvalProviderTransport, HeadlessFileDiff, TracePayloadInput,
 };
 
 pub use trace::{build_trace_payload, insert_agent_identity, insert_failure_fields};
@@ -83,9 +84,14 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         request.provider.as_deref().unwrap_or("forge"),
         request.model.as_deref().unwrap_or("local-forge"),
     );
+    let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
+
+    if let Some(route) = request.provider_route.as_ref() {
+        resolve::validate_expected_provider_route(route, &agent_provider, &effective_model)?;
+        resolve::validate_configured_provider_route(route, &agent_provider, &effective_model)?;
+    }
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
-    let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
     let credential_resolver = settings::CredentialResolver::new(credential_store);
     let credentials_result = if request.use_provider_credential_store {
         credential_resolver
@@ -108,13 +114,30 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         let available = credentials
             .as_ref()
             .is_some_and(|credentials| !credentials.api_key.trim().is_empty());
+        let route_error = request.provider_route.as_ref().and_then(|route| {
+            if agent_model != resolve::DEEPSEEK_EVAL_MODEL {
+                return Some("provider_route_model_mismatch");
+            }
+            credentials.as_ref().and_then(|credentials| {
+                credentials
+                    .api_base
+                    .as_deref()
+                    .filter(|api_base| *api_base != route.base_url)
+                    .map(|_| "provider_route_base_url_mismatch")
+            })
+        });
         return Ok(serde_json::json!({
             "credential_preflight": {
-                "ok": available,
+                "ok": available && route_error.is_none(),
                 "provider": agent_provider,
                 "model": agent_model,
+                "transport": request.provider_route.as_ref().map(|route| route.transport.as_str()),
+                "endpoint_family": request.provider_route.as_ref().map(|route| route.transport.endpoint_family()),
+                "base_url": request.provider_route.as_ref().map(|route| route.base_url.as_str()),
                 "provider_call_started": false,
-                "error": if available {
+                "error": if let Some(route_error) = route_error {
+                    serde_json::Value::String(route_error.to_string())
+                } else if available {
                     serde_json::Value::Null
                 } else {
                     serde_json::Value::String(
@@ -130,6 +153,51 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         credentials.model.as_deref(),
         &agent_provider,
     );
+
+    if let Some(route) = request.provider_route.as_ref() {
+        if agent_model != resolve::DEEPSEEK_EVAL_MODEL {
+            return Ok(trace::build_setup_error_payload(
+                types::SetupErrorPayloadInput {
+                    task_id,
+                    prompt,
+                    display_provider,
+                    display_model,
+                    agent_provider,
+                    agent_model: agent_model.clone(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    error: "provider_route_model_mismatch".to_string(),
+                    failure_reason: format!(
+                        "Forge eval route expected model {}, got {}.",
+                        resolve::DEEPSEEK_EVAL_MODEL,
+                        agent_model
+                    ),
+                },
+            ));
+        }
+        if credentials
+            .api_base
+            .as_deref()
+            .is_some_and(|api_base| api_base != route.base_url)
+        {
+            return Ok(trace::build_setup_error_payload(
+                types::SetupErrorPayloadInput {
+                    task_id,
+                    prompt,
+                    display_provider,
+                    display_model,
+                    agent_provider,
+                    agent_model: agent_model.clone(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    error: "provider_route_base_url_mismatch".to_string(),
+                    failure_reason: format!(
+                        "Forge eval route expected base URL {}, got {}.",
+                        route.base_url,
+                        credentials.api_base.as_deref().unwrap_or_default()
+                    ),
+                },
+            ));
+        }
+    }
 
     if credentials.api_key.trim().is_empty() {
         return Ok(trace::build_setup_error_payload(
@@ -482,7 +550,7 @@ mod tests {
     use crate::protocol::events::StreamEvent;
     use std::time::Duration;
 
-    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
@@ -1169,6 +1237,68 @@ deleted file mode 100644\n\
         );
         assert!(payload.get("forge_run_evidence").is_none());
         assert!(!payload.to_string().contains("fake-key-for-preflight"));
+    }
+
+    #[tokio::test]
+    async fn credential_preflight_attests_isolated_openai_route_without_provider_call() {
+        let _guard = ENV_LOCK.lock().await;
+        let previous_home = std::env::var("HOME").ok();
+        let previous_key = std::env::var("DEEPSEEK_API_KEY").ok();
+        let home = tempfile::tempdir().expect("home");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let forge_dir = home.path().join(".forge");
+        std::fs::create_dir_all(&forge_dir).expect("forge config directory");
+        std::fs::write(
+            forge_dir.join("config.json"),
+            serde_json::json!({
+                "providers": [{
+                    "id": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "default_model": "deepseek-v4-flash",
+                    "transport": "openai_chat_completions"
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write isolated settings");
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("DEEPSEEK_API_KEY", "fake-key-for-route-preflight");
+
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provider_route": {
+                "transport": "openai_chat_completions",
+                "base_url": "https://api.deepseek.com"
+            },
+            "workspace_path": workspace.path(),
+            "use_provider_credential_store": false
+        }))
+        .expect("route preflight request");
+        let payload = super::run_request(request)
+            .await
+            .expect("route credential preflight payload");
+
+        restore_env("HOME", previous_home);
+        restore_env("DEEPSEEK_API_KEY", previous_key);
+
+        assert_eq!(payload["credential_preflight"]["ok"], true);
+        assert_eq!(
+            payload["credential_preflight"]["transport"],
+            "openai_chat_completions"
+        );
+        assert_eq!(payload["credential_preflight"]["endpoint_family"], "openai");
+        assert_eq!(
+            payload["credential_preflight"]["base_url"],
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            payload["credential_preflight"]["provider_call_started"],
+            false
+        );
+        assert!(!payload.to_string().contains("fake-key-for-route-preflight"));
     }
 
     #[test]

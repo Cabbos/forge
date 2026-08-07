@@ -402,6 +402,7 @@ impl AiAdapter for OpenAiCompatibleAdapter {
         let mut active_text_block_id: Option<String> = None;
         let mut parser = OpenAiStreamParser::default();
         let mut saw_usage = false;
+        let mut saw_done = false;
 
         loop {
             let chunk = tokio::select! {
@@ -417,7 +418,9 @@ impl AiAdapter for OpenAiCompatibleAdapter {
             };
             let chunk = chunk.map_err(|e| AdapterError::Stream(e.to_string()))?;
             let text = String::from_utf8_lossy(&chunk);
-            for data in drain_openai_sse_data(&mut buffer, &text) {
+            let (events, done) = drain_openai_sse_data_with_terminal(&mut buffer, &text);
+            saw_done |= done;
+            for data in events {
                 let parsed: serde_json::Value = match serde_json::from_str(&data) {
                     Ok(v) => v,
                     Err(_) => continue,
@@ -457,11 +460,21 @@ impl AiAdapter for OpenAiCompatibleAdapter {
                     emitter.emit(StreamEvent::Error {
                         session_id: session.clone(),
                         block_id: BlockId::new().to_string(),
-                        message: msg,
+                        message: msg.clone(),
                         code: "api_error".to_string(),
+                    });
+                    return Err(AdapterError::Api {
+                        code: "api_error".to_string(),
+                        message: msg,
                     });
                 }
             }
+        }
+
+        if !saw_done {
+            return Err(AdapterError::Stream(
+                "OpenAI stream ended before [DONE]".to_string(),
+            ));
         }
 
         // Flush remaining text — reuse the active block_id for continuity
@@ -656,8 +669,13 @@ impl OpenAiStreamParser {
 }
 
 fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
+    drain_openai_sse_data_with_terminal(buffer, chunk).0
+}
+
+fn drain_openai_sse_data_with_terminal(buffer: &mut String, chunk: &str) -> (Vec<String>, bool) {
     buffer.push_str(chunk);
     let mut events = Vec::new();
+    let mut saw_done = false;
 
     while let Some(event_end) = buffer.find("\n\n") {
         let event_data = buffer[..event_end].to_string();
@@ -669,12 +687,14 @@ fn drain_openai_sse_data(buffer: &mut String, chunk: &str) -> Vec<String> {
             .collect::<Vec<_>>()
             .join("");
 
-        if !data.is_empty() && data != "[DONE]" {
+        if data == "[DONE]" {
+            saw_done = true;
+        } else if !data.is_empty() {
             events.push(data);
         }
     }
 
-    events
+    (events, saw_done)
 }
 
 fn openai_usage_from_response(parsed: &serde_json::Value) -> Option<ProviderTokenUsage> {
@@ -1368,6 +1388,95 @@ mod tests {
     }
 
     #[test]
+    fn parses_streaming_parallel_tool_calls_with_keep_alive_comments() {
+        let first_delta = serde_json::json!({
+            "choices": [{
+                "delta": {
+                    "tool_calls": [
+                        {
+                            "index": 0,
+                            "id": "call_a",
+                            "type": "function",
+                            "function": {
+                                "name": "read_file",
+                                "arguments": "{\"path\":\"a.rs\"}"
+                            }
+                        },
+                        {
+                            "index": 1,
+                            "id": "call_b",
+                            "type": "function",
+                            "function": {
+                                "name": "run_shell",
+                                "arguments": "{\"command\":\"ls"
+                            }
+                        }
+                    ]
+                }
+            }]
+        });
+        let second_delta = serde_json::json!({
+            "choices": [{
+                "finish_reason": "tool_calls",
+                "delta": {
+                    "tool_calls": [{
+                        "index": 1,
+                        "function": { "arguments": "\"}" }
+                    }]
+                }
+            }]
+        });
+
+        let result = parse_openai_stream_chunks(&[
+            ": keep-alive\n\n",
+            &format!("data: {first_delta}\n\n"),
+            &format!("data: {second_delta}\n\n"),
+            "data: [DONE]\n\n",
+        ]);
+
+        assert_eq!(result.stop_reason.as_deref(), Some("tool_calls"));
+        assert_eq!(
+            result
+                .tool_calls
+                .iter()
+                .map(|call| (call.id.as_str(), call.name.as_str()))
+                .collect::<Vec<_>>(),
+            vec![("call_a", "read_file"), ("call_b", "run_shell")]
+        );
+        assert_eq!(
+            result.tool_calls[1].input,
+            serde_json::json!({ "command": "ls" })
+        );
+    }
+
+    #[test]
+    fn streaming_error_json_is_exposed_as_api_error_update() {
+        let mut parser = OpenAiStreamParser::default();
+        let update = parser.apply_event(&serde_json::json!({
+            "error": {
+                "type": "invalid_request_error",
+                "message": "invalid model"
+            }
+        }));
+
+        assert_eq!(update.error.as_deref(), Some("invalid model"));
+    }
+
+    #[test]
+    fn sse_terminal_marker_is_tracked_across_network_chunks() {
+        let mut buffer = String::new();
+
+        let (events, saw_done) = drain_openai_sse_data_with_terminal(&mut buffer, "data: [DO");
+        assert!(events.is_empty());
+        assert!(!saw_done);
+
+        let (events, saw_done) = drain_openai_sse_data_with_terminal(&mut buffer, "NE]\n\n");
+        assert!(events.is_empty());
+        assert!(saw_done);
+        assert!(buffer.is_empty());
+    }
+
+    #[test]
     fn provider_conformance_openai_streaming_fixture_captures_text_tool_usage_and_reasoning() {
         let text_delta = serde_json::json!({
             "choices": [{
@@ -1551,6 +1660,62 @@ mod tests {
         assert!(matches!(
             result,
             Err(AdapterError::Stream(message)) if message == "Cancelled"
+        ));
+    }
+
+    #[tokio::test]
+    async fn streaming_error_json_returns_typed_api_error() {
+        let base_url = spawn_sse_response_server(
+            "data: {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"invalid model\"}}\n\ndata: [DONE]\n\n",
+        );
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .expect("adapter")
+            .with_base_url(&base_url);
+        let emitter = CaptureEmitter::default();
+
+        let result = adapter
+            .stream_message_with_emitter(
+                "error-stream",
+                &[ChatMessage::user("inspect")],
+                &emitter,
+                Arc::new(Notify::new()),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::Api { code, message })
+                if code == "api_error" && message == "invalid model"
+        ));
+        assert!(emitter.events().iter().any(|event| matches!(
+            event,
+            StreamEvent::Error { message, code, .. }
+                if message == "invalid model" && code == "api_error"
+        )));
+    }
+
+    #[tokio::test]
+    async fn streaming_response_without_done_returns_truncated_stream_error() {
+        let base_url = spawn_sse_response_server(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n",
+        );
+        let adapter = OpenAiCompatibleAdapter::new("test-key".to_string())
+            .expect("adapter")
+            .with_base_url(&base_url);
+
+        let result = adapter
+            .stream_message_with_emitter(
+                "truncated-stream",
+                &[ChatMessage::user("inspect")],
+                &CaptureEmitter::default(),
+                Arc::new(Notify::new()),
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(AdapterError::Stream(message))
+                if message == "OpenAI stream ended before [DONE]"
         ));
     }
 
@@ -1864,6 +2029,26 @@ mod tests {
         });
 
         (base_url, rx)
+    }
+
+    fn spawn_sse_response_server(response_body: &str) -> String {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test server");
+        let base_url = format!("http://{}", listener.local_addr().expect("local addr"));
+        let response_body = response_body.to_string();
+
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept request");
+            let _ = read_http_json_body(&mut stream);
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .expect("write SSE response");
+        });
+
+        base_url
     }
 
     fn read_http_json_body(stream: &mut std::net::TcpStream) -> serde_json::Value {

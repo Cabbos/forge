@@ -51,8 +51,9 @@ The current repository also exposes the gap this design must close:
   even though the eval-runner's 252 Python tests pass independently;
 - the built-in DeepSeek profile defaults to V4 Flash over the Anthropic
   Messages-compatible endpoint;
-- `ProviderTransport::OpenAiResponses` is represented in configuration and
-  probes but does not have a runnable `AiAdapter` implementation;
+- DeepSeek officially exposes V4 Flash through OpenAI Chat Completions and
+  Anthropic Messages, but the eval harness cannot yet select the existing
+  OpenAI-compatible adapter without changing product provider configuration;
 - the true macOS Tauri force-quit/reopen harness remains unavailable.
 
 The control plane is therefore ahead of the execution plane. This project
@@ -119,18 +120,19 @@ This is the shortest path to better numbers. It would isolate runtime state,
 clean workspace observation, simplify context, and tune the current loop while
 leaving DeepSeek transport unchanged.
 
-Trade-off: it gives fast signal but cannot determine whether Forge is leaving
-V4 Flash's Responses-native agent behavior unused. It also risks tuning the
-whole harness around one compatibility endpoint.
+Trade-off: it gives fast signal but cannot determine whether the official
+OpenAI Chat Completions route behaves better than the Anthropic-compatible
+route. It also risks tuning the whole harness around one compatibility
+endpoint.
 
 ### Approach B: Responses-first adapter rewrite
 
-This would implement the official Responses protocol immediately and make it
-the new default before repairing the eval environment.
+This would implement OpenAI Responses semantics and make it the new default
+before repairing the eval environment.
 
-Trade-off: transport defects, workspace pollution, and loop defects would be
-mixed together. API budget would be spent diagnosing several moving layers,
-and a regression could not be assigned confidently.
+Trade-off: DeepSeek's official V4 documentation does not list a Responses
+endpoint. Implementing it would create an ungrounded compatibility claim while
+mixing transport defects, workspace pollution, and loop defects.
 
 ### Approach C: Evidence-led dual-track convergence
 
@@ -138,7 +140,8 @@ This is the selected approach.
 
 1. Restore harness trust and isolated state without spending model budget.
 2. Freeze a baseline dataset and run the existing Anthropic path.
-3. Implement a separate Responses adapter behind an experiment profile.
+3. Route the existing OpenAI Chat Completions adapter behind an eval-only
+   experiment profile.
 4. Run paired A/B trials with identical task, model, budget, and tool policy.
 5. Optimize the winning transport through one-variable experiments.
 6. Freeze the winner and run the untouched holdout gate.
@@ -158,10 +161,10 @@ Conceptual shape:
 ```json
 {
   "schema_version": 1,
-  "profile_id": "deepseek-v4-flash-responses-minimal-v1",
+  "profile_id": "deepseek-v4-flash-openai-chat-minimal-v1",
   "provider": "deepseek",
   "model": "deepseek-v4-flash",
-  "transport": "openai_responses",
+  "transport": "openai_chat_completions",
   "reasoning_effort": "high",
   "prompt_mode": "minimal",
   "context_policy": "task_local_v1",
@@ -179,16 +182,20 @@ The canonical JSON hash becomes `harness_fingerprint`. Reports group and
 compare only runs with exact matching fingerprints unless a comparison
 explicitly names the differing field.
 
-### 5.2 DeepSeek Responses adapter
+### 5.2 DeepSeek official transport routing
 
-Create a dedicated Responses adapter implementing the existing `AiAdapter`
-trait. It must not be implemented as conditional branches spread across
-`openai_compatible.rs`.
+Keep the existing Anthropic and OpenAI-compatible adapters separate behind the
+existing `AiAdapter` trait. Add a typed eval-only route override so the same
+DeepSeek provider and model can select either official endpoint without
+changing desktop defaults or user settings.
 
 Responsibilities:
 
-- translate internal chat messages into Responses input items;
-- translate Forge tool definitions into Responses tools;
+- validate the exact provider, model, transport, and official base URL before a
+  provider call;
+- route Anthropic Messages and OpenAI Chat Completions through their existing
+  adapters;
+- translate Forge tool definitions into the selected protocol;
 - preserve tool call identifiers and tool-result adjacency;
 - support streaming text, reasoning summaries when present, and parallel tool
   calls;
@@ -196,9 +203,9 @@ Responsibilities:
   existing provider usage evidence;
 - map provider errors into the existing retry/recovery taxonomy;
 - honor cancellation without leaving an untracked in-flight request;
-- expose conformance fixtures for text-only, one tool call, parallel tool calls,
-  malformed arguments, usage, provider error, cancellation, and truncated
-  streams.
+- expose Chat Completions conformance fixtures for text-only, one tool call,
+  parallel tool calls, malformed arguments, usage, provider error,
+  cancellation, keep-alive comments, and truncated streams.
 
 Provider routing selects the adapter from `ProviderTransport`; it does not infer
 transport from the model name. The current Anthropic-compatible DeepSeek
@@ -462,7 +469,7 @@ artifact outside the agent-visible workspace:
   "agent": "forge",
   "provider": "deepseek",
   "model": "deepseek-v4-flash",
-  "transport": "openai_responses",
+  "transport": "openai_chat_completions",
   "input_commit": "...",
   "patch_sha256": "...",
   "output_commit": "...",
@@ -595,9 +602,9 @@ expected edit produces no scope violation.
 
 Exit: every attempt is attributable even if the task fails.
 
-### Phase H2: Native Responses transport
+### Phase H2: Official transport A/B
 
-- implement the Responses adapter and fixtures;
+- add eval-only DeepSeek Chat Completions routing and fixtures;
 - extend probe and conformance coverage;
 - add experiment-profile routing without changing product defaults;
 - run paired development A/B.
@@ -633,7 +640,7 @@ Exit: all headline thresholds and trust requirements pass inside budget.
 
 - experiment profile canonicalization and hashing;
 - budget accounting and hard stops;
-- Responses request/stream parsing fixtures;
+- OpenAI Chat Completions request/stream parsing fixtures;
 - parallel tool calls and tool-result adjacency;
 - usage/cache/cost normalization;
 - cancellation and malformed stream recovery;
@@ -647,7 +654,7 @@ Exit: all headline thresholds and trust requirements pass inside budget.
 
 ### Integration tests
 
-- fake Responses server through a real `AgentSession`;
+- fake Chat Completions server through a real `AgentSession`;
 - one read/edit/verify loop;
 - parallel reads followed by serialized mutation;
 - provider error and retry;

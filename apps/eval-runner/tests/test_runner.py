@@ -245,6 +245,101 @@ def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
     assert result.error is None
 
 
+def test_forge_runner_writes_secret_free_route_config_and_payload(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "route_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, pathlib, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['provider_route'] == {\n"
+            "    'transport': 'openai_chat_completions',\n"
+            "    'base_url': 'https://api.deepseek.com',\n"
+            "}\n"
+            "config = pathlib.Path(os.environ['HOME']) / '.forge' / 'config.json'\n"
+            "config_payload = json.loads(config.read_text())\n"
+            "assert 'DEEPSEEK_API_KEY' in config.read_text()\n"
+            "assert 'sk-secret-value' not in config.read_text()\n"
+            "assert config_payload['providers'][0]['transport'] == 'openai_chat_completions'\n"
+            "assert config_payload['providers'][0]['base_url'] == 'https://api.deepseek.com'\n"
+            "assert config_payload['providers'][0]['default_model'] == 'deepseek-v4-flash'\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'deepseek', 'model': 'deepseek-v4-flash',\n"
+            "'transport': 'openai_chat_completions', 'endpoint_family': 'openai',\n"
+            "'base_url': 'https://api.deepseek.com',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+        use_provider_credential_store=True,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.transport == "openai_chat_completions"
+    assert result.endpoint_family == "openai"
+    assert result.base_url == "https://api.deepseek.com"
+
+
+def test_forge_runner_rejects_route_identity_mismatch_in_preflight(tmp_path: Path) -> None:
+    agent = tmp_path / "mismatched_route_preflight.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "json.load(sys.stdin)\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'deepseek', 'model': 'deepseek-v4-flash',\n"
+            "'transport': 'anthropic_messages', 'endpoint_family': 'anthropic',\n"
+            "'base_url': 'https://api.deepseek.com/anthropic',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.error == "credential_preflight_identity_mismatch"
+
+
+def test_forge_runner_rejects_partial_route_identity_before_spawn(tmp_path: Path) -> None:
+    marker = tmp_path / "spawned"
+    agent = tmp_path / "must_not_spawn.py"
+    agent.write_text(
+        f"import pathlib\npathlib.Path({str(marker)!r}).write_text('spawned')\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.error == "isolated_provider_config_failed"
+    assert not marker.exists()
+
+
 def test_forge_runner_credential_preflight_contains_process_spawn_failure(
     tmp_path: Path,
 ) -> None:
@@ -1871,6 +1966,8 @@ json.dump(
         agent_provider="deepseek",
         agent_model="deepseek-v4-flash",
         agent_transport="anthropic_messages",
+        agent_endpoint_family="anthropic",
+        agent_base_url="https://api.deepseek.com/anthropic",
         harness_fingerprint="sha256:harness-profile",
         max_model_rounds=12,
         max_repair_attempts=1,
@@ -1886,6 +1983,8 @@ json.dump(
         "provider": "deepseek",
         "model": "deepseek-v4-flash",
         "transport": "anthropic_messages",
+        "endpoint_family": "anthropic",
+        "base_url": "https://api.deepseek.com/anthropic",
         "harness_fingerprint": "sha256:harness-profile",
         "identity_matches_profile": True,
     }
@@ -1924,6 +2023,8 @@ json.dump(
         agent_provider="deepseek",
         agent_model="deepseek-v4-flash",
         agent_transport="anthropic_messages",
+        agent_endpoint_family="anthropic",
+        agent_base_url="https://api.deepseek.com/anthropic",
         harness_fingerprint="sha256:harness-profile",
     ).run_task(task)
 

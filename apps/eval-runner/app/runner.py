@@ -42,6 +42,9 @@ class ForgeCredentialPreflight(EvalModel):
     ok: bool
     provider: str
     model: str
+    transport: str | None = None
+    endpoint_family: str | None = None
+    base_url: str | None = None
     provider_call_started: Literal[False]
     error: str | None = None
 
@@ -261,6 +264,8 @@ class ForgeAgentRunner:
         agent_provider: str | None = None,
         agent_model: str | None = None,
         agent_transport: str | None = None,
+        agent_endpoint_family: str | None = None,
+        agent_base_url: str | None = None,
         harness_fingerprint: str | None = None,
         max_model_rounds: int | None = None,
         max_repair_attempts: int | None = None,
@@ -275,6 +280,8 @@ class ForgeAgentRunner:
         self.agent_provider = agent_provider or self.provider.value
         self.agent_model = agent_model or model
         self.agent_transport = agent_transport
+        self.agent_endpoint_family = agent_endpoint_family
+        self.agent_base_url = agent_base_url
         self.harness_fingerprint = harness_fingerprint
         self.max_model_rounds = max_model_rounds
         self.max_repair_attempts = max_repair_attempts
@@ -292,6 +299,10 @@ class ForgeAgentRunner:
             runtime_home = runtime_state / "home"
             runtime_home.mkdir(parents=True)
             continuity_database_path = runtime_state / "continuity.db"
+            try:
+                self._write_isolated_provider_config(runtime_home)
+            except (OSError, ValueError):
+                return self._credential_preflight_error("isolated_provider_config_failed")
             child_env = os.environ.copy()
             original_home = child_env.get("HOME") or child_env.get("USERPROFILE")
             if original_home:
@@ -313,6 +324,9 @@ class ForgeAgentRunner:
                 "runtime_state_path": str(runtime_state),
                 "continuity_database_path": str(continuity_database_path),
             }
+            provider_route = self._provider_route_payload()
+            if provider_route is not None:
+                payload["provider_route"] = provider_route
             try:
                 completed = run_bounded_process(
                     self.command,
@@ -338,7 +352,16 @@ class ForgeAgentRunner:
                 )
             except (KeyError, TypeError, ValidationError, ValueError, json.JSONDecodeError):
                 return self._credential_preflight_error("credential_preflight_invalid_response")
-            if result.provider != self.agent_provider or result.model != self.agent_model:
+            if (
+                result.provider != self.agent_provider
+                or result.model != self.agent_model
+                or (self.agent_transport is not None and result.transport != self.agent_transport)
+                or (
+                    self.agent_endpoint_family is not None
+                    and result.endpoint_family != self.agent_endpoint_family
+                )
+                or (self.agent_base_url is not None and result.base_url != self.agent_base_url)
+            ):
                 return self._credential_preflight_error("credential_preflight_identity_mismatch")
             return result
 
@@ -349,6 +372,45 @@ class ForgeAgentRunner:
             model=self.agent_model,
             provider_call_started=False,
             error=error,
+        )
+
+    def _provider_route_payload(self) -> dict[str, str] | None:
+        route_values = (
+            self.agent_transport,
+            self.agent_endpoint_family,
+            self.agent_base_url,
+        )
+        if all(value is None for value in route_values):
+            return None
+        if any(value is None for value in route_values):
+            raise ValueError("provider route identity is incomplete")
+        transport = self.agent_transport
+        base_url = self.agent_base_url
+        assert transport is not None and base_url is not None
+        return {"transport": transport, "base_url": base_url}
+
+    def _write_isolated_provider_config(self, runtime_home: Path) -> None:
+        route = self._provider_route_payload()
+        if route is None:
+            return
+        config = {
+            "providers": [
+                {
+                    "id": self.agent_provider,
+                    "label": "Forge eval isolated provider",
+                    "base_url": route["base_url"],
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "default_model": self.agent_model,
+                    "transport": route["transport"],
+                    "supports_tools": True,
+                    "supports_streaming": True,
+                }
+            ]
+        }
+        config_path = runtime_home / ".forge" / "config.json"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_bytes(
+            (json.dumps(config, sort_keys=True, separators=(",", ":")) + "\n").encode()
         )
 
     def run_task(
@@ -395,6 +457,16 @@ class ForgeAgentRunner:
             runtime_home = runtime_state / "home"
             runtime_home.mkdir(parents=True, exist_ok=True)
             continuity_database_path = runtime_state / "continuity.db"
+            try:
+                self._write_isolated_provider_config(runtime_home)
+            except (OSError, ValueError):
+                return self._error_trace(
+                    task=task,
+                    started_at=started_at,
+                    error="isolated_provider_config_failed",
+                    failure_reason="Forge eval provider config could not be written.",
+                    failure_category=FailureCategory.RUNNER_ERROR,
+                )
             child_env = os.environ.copy()
             original_home = child_env.get("HOME") or child_env.get("USERPROFILE")
             if original_home:
@@ -500,6 +572,9 @@ class ForgeAgentRunner:
                 "runtime_state_path": str(runtime_state),
                 "continuity_database_path": str(continuity_database_path),
             }
+            provider_route = self._provider_route_payload()
+            if provider_route is not None:
+                payload["provider_route"] = provider_route
             completed = run_bounded_process(
                 self.command,
                 input_text=json.dumps(payload),
@@ -709,19 +784,39 @@ class ForgeAgentRunner:
             )
         changed_files = workspace_observation.changed_files
         raw_events = list(payload.get("raw_events", []))
+        identity_event = {
+            "event_type": "eval_agent_identity",
+            "provider": payload.get("forge_agent_provider"),
+            "model": payload.get("forge_agent_model"),
+            "transport": self.agent_transport,
+            "harness_fingerprint": self.harness_fingerprint,
+            "identity_matches_profile": (
+                payload.get("forge_agent_provider") == self.agent_provider
+                and payload.get("forge_agent_model") == self.agent_model
+                and (
+                    self.agent_transport is None
+                    or payload.get("forge_agent_transport", self.agent_transport)
+                    == self.agent_transport
+                )
+                and (
+                    self.agent_endpoint_family is None
+                    or payload.get("forge_agent_endpoint_family", self.agent_endpoint_family)
+                    == self.agent_endpoint_family
+                )
+                and (
+                    self.agent_base_url is None
+                    or payload.get("forge_agent_base_url", self.agent_base_url)
+                    == self.agent_base_url
+                )
+            ),
+        }
+        if self.agent_endpoint_family is not None:
+            identity_event["endpoint_family"] = self.agent_endpoint_family
+        if self.agent_base_url is not None:
+            identity_event["base_url"] = self.agent_base_url
         raw_events.extend(
             [
-                {
-                    "event_type": "eval_agent_identity",
-                    "provider": payload.get("forge_agent_provider"),
-                    "model": payload.get("forge_agent_model"),
-                    "transport": self.agent_transport,
-                    "harness_fingerprint": self.harness_fingerprint,
-                    "identity_matches_profile": (
-                        payload.get("forge_agent_provider") == self.agent_provider
-                        and payload.get("forge_agent_model") == self.agent_model
-                    ),
-                },
+                identity_event,
                 {
                     "event_type": "eval_workspace_observation",
                     **workspace_observation.model_dump(mode="json"),

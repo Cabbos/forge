@@ -1,8 +1,13 @@
 use crate::agent::event_sink::EventEmitter;
 use crate::protocol::events::{ProviderUsageReason, StreamEvent};
 
-use super::provider_registry::get_provider_definition;
-use super::{adapter_family, anthropic, resolve_adapter_route, AdapterFamily};
+use super::provider_registry::{
+    get_provider_definition, load_provider_profiles, EnvVarList, ProviderProfileConfig,
+};
+use super::{
+    adapter_family, anthropic, resolve_adapter_route, resolve_adapter_route_with_profiles,
+    AdapterFamily,
+};
 
 #[derive(Debug, Clone, Copy)]
 struct ProviderConformance {
@@ -163,6 +168,31 @@ fn provider_conformance_unknown_usage_is_explicit_null_for_all_fixture_families(
             "{source} omitted usage must not emit billing-grade usage facts"
         );
     }
+}
+
+#[test]
+fn provider_conformance_deepseek_openai_control_uses_chat_completions_route() {
+    let profiles = load_provider_profiles(&[ProviderProfileConfig {
+        id: "deepseek".to_string(),
+        label: Some("DeepSeek V4 Flash OpenAI control".to_string()),
+        base_url: Some("https://api.deepseek.com".to_string()),
+        api_key_env: Some(EnvVarList::One("DEEPSEEK_API_KEY".to_string())),
+        base_url_env: None,
+        default_model: Some("deepseek-v4-flash".to_string()),
+        transport: Some("openai_chat_completions".to_string()),
+        supports_tools: Some(true),
+        supports_streaming: Some(true),
+        max_output_tokens_default: None,
+        aliases: vec![],
+    }])
+    .expect("load DeepSeek OpenAI control profile");
+
+    let route = resolve_adapter_route_with_profiles("deepseek", None, &profiles)
+        .expect("resolve DeepSeek OpenAI control route");
+
+    assert_eq!(route.provider_id, "deepseek");
+    assert_eq!(route.family, AdapterFamily::OpenAiCompatible);
+    assert_eq!(route.base_url.as_deref(), Some("https://api.deepseek.com"));
 }
 
 fn provider_conformance_cases() -> &'static [ProviderConformance] {

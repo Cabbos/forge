@@ -20,6 +20,7 @@ from app.baseline_models import (
     BaselineAttemptArtifact,
     BaselineBudgetEntry,
     BaselinePendingAttempt,
+    BaselineReport,
 )
 from app.cases import load_cases
 from app.harness_profiles import (
@@ -79,27 +80,29 @@ def make_trace(
     harness_fingerprint_value: str = "0" * 64,
     workspace_available: bool = True,
     patch_replay_ok: bool = True,
+    identity_overrides: dict[str, Any] | None = None,
 ) -> AgentTrace:
     now = datetime.now(UTC)
     usage_event = event or provider_event()
     provider = "deepseek" if identity_matches else "unexpected-provider"
     model = "deepseek-v4-flash" if identity_matches else "unexpected-model"
+    identity_event = {
+        "event_type": "eval_agent_identity",
+        "provider": provider,
+        "model": model,
+        "transport": "anthropic_messages",
+        "harness_fingerprint": harness_fingerprint_value,
+        "identity_matches_profile": identity_matches,
+    }
+    if identity_overrides:
+        identity_event.update(identity_overrides)
     return AgentTrace(
         task_id=task.id,
         user_prompt=task.prompt,
         model="deepseek-v4-flash-anthropic-baseline-v1",
         provider=EvalProvider.FORGE,
         required_scores=task.required_scores,
-        raw_events=[
-            {
-                "event_type": "eval_agent_identity",
-                "provider": provider,
-                "model": model,
-                "transport": "anthropic_messages",
-                "harness_fingerprint": harness_fingerprint_value,
-                "identity_matches_profile": identity_matches,
-            }
-        ],
+        raw_events=[identity_event],
         changed_files=[],
         final_answer="Done.",
         verification_result=VerificationResult(
@@ -132,6 +135,7 @@ class FakeRunner:
         workspace_available: bool = True,
         patch_replay_ok: bool = True,
         fail_after_pending: bool = False,
+        identity_overrides: dict[str, Any] | None = None,
     ) -> None:
         self.campaign_root = campaign_root
         self.event = event
@@ -139,6 +143,7 @@ class FakeRunner:
         self.workspace_available = workspace_available
         self.patch_replay_ok = patch_replay_ok
         self.fail_after_pending = fail_after_pending
+        self.identity_overrides = identity_overrides
         self.calls: list[str] = []
 
     def run_task(self, task: EvaluationTask) -> AgentTrace:
@@ -160,6 +165,7 @@ class FakeRunner:
             harness_fingerprint_value=harness_fingerprint_value,
             workspace_available=self.workspace_available,
             patch_replay_ok=self.patch_replay_ok,
+            identity_overrides=self.identity_overrides,
         )
 
 
@@ -334,6 +340,40 @@ def test_initialize_freezes_exact_development_catalog_and_source(tmp_path: Path)
     assert verify_baseline_campaign(**campaign_kwargs(campaign)).ok is True
 
 
+def test_legacy_h1_profile_remains_canonical_in_campaign_evidence(tmp_path: Path) -> None:
+    legacy_payload = json.loads(PROFILE_PATH.read_bytes())
+    legacy_payload.pop("base_url", None)
+    legacy_bytes = canonical_json_bytes(legacy_payload)
+    legacy_profile_path = tmp_path / "legacy-h1-profile.json"
+    legacy_profile_path.write_bytes(legacy_bytes + b"\n")
+
+    profile = load_harness_profile(legacy_profile_path)
+    assert (
+        harness_profile_fingerprint(profile)
+        == "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66"
+    )
+
+    campaign = initialize(
+        tmp_path / "campaign-root",
+        profile_path=legacy_profile_path,
+    )
+    assert b'"base_url"' not in (campaign / "campaign.json").read_bytes()
+    assert (campaign / "locks" / "profile.json").read_bytes() == legacy_bytes + b"\n"
+
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign, profile_path=legacy_profile_path),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+
+    assert result.status == "paused"
+    attempt_path = next((campaign / "attempts").glob("*.json"))
+    assert b'"base_url"' not in attempt_path.read_bytes()
+    assert verify_baseline_campaign(
+        **campaign_kwargs(campaign, profile_path=legacy_profile_path)
+    ).ok
+
+
 def test_initialize_rejects_holdout_cases_without_partial_campaign(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="development"):
         initialize(tmp_path, cases_path=HOLDOUT_CASES)
@@ -445,6 +485,15 @@ def test_interrupted_paid_attempt_blocks_resume_and_recovery_never_reissues(
             "provider_usage_unknown",
         ),
         ({"identity_matches": False}, "agent_identity_mismatch"),
+        (
+            {
+                "identity_overrides": {
+                    "endpoint_family": "openai",
+                    "base_url": "https://api.deepseek.com",
+                }
+            },
+            "agent_identity_mismatch",
+        ),
         ({"workspace_available": False}, "trust_result_untrusted"),
         ({"patch_replay_ok": False}, "trust_result_untrusted"),
         (
@@ -648,6 +697,26 @@ def test_report_has_deterministic_percentiles_and_flaky_per_task_results(
     assert regenerated == report
     assert (campaign / "baseline-report.json").read_bytes() == report_bytes
     assert (campaign / "artifact-index.json").read_bytes() == index_bytes
+
+
+def test_baseline_report_accepts_both_h2_transports_and_rejects_responses(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+    report_payload = generate_baseline_report(**campaign_kwargs(campaign)).model_dump(mode="json")
+
+    for transport in ("anthropic_messages", "openai_chat_completions"):
+        report_payload["transport"] = transport
+        assert BaselineReport.model_validate(report_payload).transport == transport
+
+    report_payload["transport"] = "openai_responses"
+    with pytest.raises(ValidationError):
+        BaselineReport.model_validate(report_payload)
 
 
 def test_report_is_blocked_for_unknown_cost_and_counts_blockers(tmp_path: Path) -> None:

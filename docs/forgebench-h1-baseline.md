@@ -122,3 +122,13 @@ No baseline result is claimed until a subsequent clean-source campaign has
 completed, `baseline verify` returns `ok: true`, and the compact report plus
 SHA-256 artifact index are published. H1 does not open, score, or make any
 statement about the sealed holdout split.
+
+## Relationship to H2
+
+H1 remains the immutable Anthropic control: its profile bytes, fingerprint,
+transport, and published attempt evidence are not rewritten when H2 adds the
+OpenAI-compatible Chat Completions candidate. H2 uses an eval-only isolated
+route override and compares the two official DeepSeek paths; it does not change
+the desktop default route, does not add a Responses claim, and inherits H1's
+fail-closed stop boundary for unknown usage/cost, trust drift, patch replay
+failure, route mismatch, provider errors, or interrupted paid calls.

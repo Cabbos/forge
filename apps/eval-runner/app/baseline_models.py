@@ -209,7 +209,7 @@ class BaselineReport(EvalModel):
     harness_fingerprint: Sha256
     provider: Literal["deepseek"]
     model: Literal["deepseek-v4-flash"]
-    transport: Literal["anthropic_messages"]
+    transport: Literal["anthropic_messages", "openai_chat_completions"]
     expected_attempts: Literal[30]
     completed_attempts: int = Field(ge=0, le=30)
     trusted_attempts: int = Field(ge=0, le=30)
@@ -252,6 +252,73 @@ class BaselineReport(EvalModel):
             raise ValueError("failure category counts must be nonnegative")
         if any(not key.strip() or value < 1 for key, value in self.trust_blockers.items()):
             raise ValueError("trust blocker counts must be positive")
+        _reject_secret_material(self.model_dump(mode="json"))
+        return self
+
+
+class BaselineComparisonMetrics(EvalModel):
+    """Aggregate metrics for one independently verified baseline arm."""
+
+    attempts: Literal[30] = 30
+    trusted_attempts: int = Field(ge=0, le=30)
+    trusted_success_rate: float = Field(ge=0, le=1)
+    verification_pass_rate: float = Field(ge=0, le=1)
+    scope_violation_rate: float = Field(ge=0, le=1)
+    median_model_rounds: float = Field(ge=0)
+    p95_model_rounds: float = Field(ge=0)
+    median_cost_cny: Decimal = Field(ge=0, allow_inf_nan=False)
+    p95_cost_cny: Decimal = Field(ge=0, allow_inf_nan=False)
+    median_duration_ms: float = Field(ge=0)
+    p95_duration_ms: float = Field(ge=0)
+    failure_categories: dict[str, int]
+    provider_errors: dict[str, int]
+    trust_blockers: dict[str, int]
+
+    @model_validator(mode="after")
+    def validate_comparison_metrics(self) -> "BaselineComparisonMetrics":
+        if any(not key.strip() or value < 0 for key, value in self.failure_categories.items()):
+            raise ValueError("comparison failure category counts must be nonnegative")
+        if any(not key.strip() or value < 0 for key, value in self.provider_errors.items()):
+            raise ValueError("comparison provider error counts must be nonnegative")
+        if any(not key.strip() or value < 1 for key, value in self.trust_blockers.items()):
+            raise ValueError("comparison trust blocker counts must be positive")
+        _reject_secret_material(self.model_dump(mode="json"))
+        return self
+
+
+class BaselineComparison(EvalModel):
+    """Fail-closed paired comparison of two complete 30-attempt campaigns."""
+
+    schema_version: Literal[1] = 1
+    control_campaign_id: str
+    candidate_campaign_id: str
+    dataset_fingerprint: Sha256
+    model: Literal["deepseek-v4-flash"]
+    control_transport: Literal["anthropic_messages"]
+    candidate_transport: Literal["openai_chat_completions"]
+    paired_attempts: Literal[30] = 30
+    outcome_changes: dict[str, str]
+    control_metrics: BaselineComparisonMetrics
+    candidate_metrics: BaselineComparisonMetrics
+    winner: Literal["control", "candidate", "no_material_difference"]
+    blockers: list[str] = Field(default_factory=list)
+    control_profile_id: str | None = None
+    candidate_profile_id: str | None = None
+    control_harness_fingerprint: Sha256 | None = None
+    candidate_harness_fingerprint: Sha256 | None = None
+    source_commit: GitSha1 | None = None
+
+    @model_validator(mode="after")
+    def validate_comparison(self) -> "BaselineComparison":
+        _validate_safe_ids(self.control_campaign_id, self.candidate_campaign_id)
+        if self.control_campaign_id == self.candidate_campaign_id:
+            raise ValueError("comparison campaigns must be distinct")
+        if self.control_metrics.trusted_attempts != self.paired_attempts:
+            raise ValueError("control campaign must have all attempts trusted")
+        if self.candidate_metrics.trusted_attempts != self.paired_attempts:
+            raise ValueError("candidate campaign must have all attempts trusted")
+        if any(not key.strip() or not value.strip() for key, value in self.outcome_changes.items()):
+            raise ValueError("comparison outcomes must contain nonblank keys and values")
         _reject_secret_material(self.model_dump(mode="json"))
         return self
 
