@@ -28,7 +28,7 @@ enter a post-baseline product history; see
 | H1 | DeepSeek Anthropic control, budget ledger, unknown-cost recovery | development paid baseline machinery; no complete 30-case arm |
 | H2 | official Anthropic vs OpenAI Chat Completions route attestation and conformance | complete v6 development comparison (`no_material_difference`); no Responses or holdout claim |
 | H3 | minimal context manifest, bounded tool envelopes, typed stagnation policy | offline convergence evidence; no paid score improvement |
-| H4 | locked 60-attempt holdout report/decision gate plus provenance campaign contract | release decision boundary and auditable monorepo packaging; an actual holdout result still requires paid evidence and finalized campaign history |
+| H4 | sealed 60-attempt holdout campaign runner, locked report/decision gate, and provenance campaign contract | resumable release boundary and auditable monorepo packaging; an actual holdout result still requires paid evidence and finalized campaign history |
 
 ## Reproducible gates
 
@@ -41,10 +41,11 @@ scripts/acceptance.sh --only "DeepSeek H1 paid-baseline contract"
 scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
 scripts/acceptance.sh --only "frontier harness contract evidence"
 scripts/acceptance.sh --only "ForgeBench frozen holdout release gate"
+scripts/acceptance.sh --only "ForgeBench sealed holdout campaign runner"
 scripts/acceptance.sh --list-json
 ```
 
-The matrix currently contains 85 executable gates. `--list-json` is the
+The matrix currently contains 86 executable gates. `--list-json` is the
 machine-readable source for release tooling; `--results-json` binds executed
 results to the current commit. The H3 and H4 contract gates are intentionally
 offline and safe to run without a provider key; they prove decision boundaries,

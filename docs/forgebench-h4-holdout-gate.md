@@ -26,6 +26,31 @@ cd apps/eval-runner
 uv run python -m app.cli holdout verify --report /path/to/holdout-report.json
 ```
 
+The paid campaign boundary is explicit and resumable. Initialize it only from
+the pinned development comparison and the checked-in sealed split:
+
+```bash
+uv run python -m app.cli holdout init \
+  --campaign /private/tmp/forge-h4/arm \
+  --campaign-id deepseek-h4-v1 \
+  --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json \
+  --development-comparison /private/tmp/forge-h2-campaigns-v6/comparison-v1.json
+uv run python -m app.cli holdout run --campaign /private/tmp/forge-h4/arm \
+  --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json
+uv run python -m app.cli holdout recover --campaign /private/tmp/forge-h4/arm \
+  --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json
+uv run python -m app.cli holdout report --campaign /private/tmp/forge-h4/arm \
+  --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json
+```
+
+`holdout run` writes `pending/<attempt>.json` before invoking Forge and appends
+an fsynced hash-chained budget entry before deleting it. A crash or unknown
+usage closes that attempt as terminal unknown-cost evidence; it is never
+replayed. A complete campaign publishes `holdout-artifact-index.json`, the
+canonical report, and its SHA-256 sidecar. Raw campaign directories remain
+outside the repository; only code, tests, dataset locks, and provenance
+documents are checked in.
+
 The verifier rejects non-canonical JSON, incomplete attempts, trust gaps,
 missing evidence, budget overruns, and threshold failures. A failing or missing
 report does not authorize another holdout attempt; improvements must return to
