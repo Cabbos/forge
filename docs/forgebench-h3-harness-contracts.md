@@ -109,3 +109,10 @@ tests, and a Forge runner integration test.
 This is development-split harness evidence only. H4 holdout execution remains
 closed until a complete, trusted development A/B comparison exists and all
 paid interruptions have a known charge or an explicit unknown-cost blocker.
+
+The development comparison now has two fail-closed modes: the default
+`transport_ab_v1` keeps policy constant while comparing the two official
+DeepSeek routes, and `policy_ab_v1` keeps the route constant while allowing only
+the `minimal_v1` ↔ `planning_v1` prompt-mode change. Paid planning evidence and
+its `no_material_difference` result are recorded in
+[`forgebench-h3-planning-ab.md`](forgebench-h3-planning-ab.md).

@@ -9,6 +9,7 @@
 - Added a controller-owned task execution contract to Forge eval prompts and traces. Multi-file, no-op, single-file, and shell-heavy tasks now expose bounded inspection/validation/stop facts before editing; optional agent `task_plan` evidence is strictly checked for required inspection, in-scope edits, and verification without weakening the independent workspace/replay gates.
 - Task-contract traces now include advisory observed phase coverage from tool commands, changed files, and controller verification, explicitly separate from the authoritative filesystem/replay evidence.
 - Added separate development-only plan-first profiles for both official DeepSeek routes. Their fingerprints isolate planning/convergence A/B experiments from the existing H1/H2/H3 control profiles; holdout publication remains restricted to the approved holdout profile set.
+- Added fail-closed baseline `policy_ab_v1` comparisons and recorded the first paid planning-policy evidence; both route and policy experiments remain `no_material_difference` and do not change the default or holdout profile.
 
 - Added the sealed ForgeBench H4 campaign runner. A canonical development comparison is required before holdout initialization; each 20-case × 3-repetition call has durable pending, recovery, usage, trust, budget-chain, artifact-index, and canonical-report evidence, with interrupted calls closed as unknown-cost and never replayed. Added the corresponding offline acceptance gate and explicit no-frontier-claim boundary.
 
