@@ -42,10 +42,9 @@ Before any pending marker, attempt artifact, or budget record is created,
 `baseline run` executes a typed credential preflight against the exact pinned
 Forge headless command, provider, and model. The headless preflight resolves
 credentials only: it does not create an agent session, does not start a
-provider call, and never serializes the credential. H1 explicitly opts into the
-canonical provider's system credential reference so that an isolated eval HOME
-does not hide the desktop-managed key, but credential resolution checks the
-controller environment first. The local paid campaign uses
+provider call, and never serializes the credential. H1 resolves credentials
+from the controller environment only; it never consults the desktop system
+credential store or a machine-local Forge config. The local paid campaign uses
 `DEEPSEEK_API_KEY` from `apps/eval-runner/.env`; that file is Git-ignored,
 permissioned `600`, and must be explicitly exported with
 `set -a; source .env; set +a` before invoking the CLI. The child HOME, profiles,

@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.execution_identity import default_execution_identity
 from app.harness_contracts import HarnessPolicyV1
 from app.models import (
     AgentTrace,
@@ -414,6 +415,7 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
             "    'transport': 'openai_chat_completions',\n"
             "    'base_url': 'https://api.deepseek.com',\n"
             "}\n"
+            "assert payload['execution_identity']['max_output_tokens'] == 8192\n"
             "config = pathlib.Path(os.environ['HOME']) / '.forge' / 'config.json'\n"
             "config_payload = json.loads(config.read_text())\n"
             "assert 'DEEPSEEK_API_KEY' in config.read_text()\n"
@@ -421,6 +423,7 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
             "assert config_payload['providers'][0]['transport'] == 'openai_chat_completions'\n"
             "assert config_payload['providers'][0]['base_url'] == 'https://api.deepseek.com'\n"
             "assert config_payload['providers'][0]['default_model'] == 'deepseek-v4-flash'\n"
+            "assert config_payload['providers'][0]['max_output_tokens_default'] == 8192\n"
             "json.dump({'credential_preflight': {\n"
             "'ok': True, 'provider': 'deepseek', 'model': 'deepseek-v4-flash',\n"
             "'transport': 'openai_chat_completions', 'endpoint_family': 'openai',\n"
@@ -428,6 +431,12 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
             "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
         ),
         encoding="utf-8",
+    )
+    identity = default_execution_identity(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="openai_chat_completions",
+        base_url="https://api.deepseek.com",
     )
     runner = ForgeAgentRunner(
         command=[sys.executable, str(agent)],
@@ -437,6 +446,7 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
         agent_endpoint_family="openai",
         agent_base_url="https://api.deepseek.com",
         use_provider_credential_store=True,
+        execution_identity=identity,
     )
 
     result = runner.credential_preflight()
@@ -445,6 +455,26 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
     assert result.transport == "openai_chat_completions"
     assert result.endpoint_family == "openai"
     assert result.base_url == "https://api.deepseek.com"
+
+
+def test_forge_runner_rejects_execution_identity_route_mismatch(tmp_path: Path) -> None:
+    identity = default_execution_identity(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="anthropic_messages",
+        base_url="https://api.deepseek.com/anthropic",
+    )
+
+    with pytest.raises(ValueError, match="execution identity does not match runner route"):
+        ForgeAgentRunner(
+            command=[sys.executable, "-c", ""],
+            agent_provider="deepseek",
+            agent_model="deepseek-v4-flash",
+            agent_transport="openai_chat_completions",
+            agent_endpoint_family="openai",
+            agent_base_url="https://api.deepseek.com",
+            execution_identity=identity,
+        )
 
 
 def test_forge_runner_rejects_route_identity_mismatch_in_preflight(tmp_path: Path) -> None:

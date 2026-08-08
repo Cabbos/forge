@@ -54,6 +54,13 @@ impl EvalProviderTransport {
             Self::OpenAiChatCompletions => "openai",
         }
     }
+
+    pub(crate) const fn max_output_tokens(self) -> u32 {
+        match self {
+            Self::AnthropicMessages => 384_000,
+            Self::OpenAiChatCompletions => 8_192,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
@@ -79,11 +86,17 @@ pub struct EvalExecutionIdentity {
 }
 
 impl EvalExecutionIdentity {
-    pub(crate) fn validate(&self) -> Result<(), String> {
+    pub(crate) fn validate_for_transport(
+        &self,
+        transport: EvalProviderTransport,
+    ) -> Result<(), String> {
         if !matches!(
             self.temperature_policy.as_str(),
             "explicit" | "omitted" | "provider_default"
         ) {
+            return Err("execution_identity_temperature_policy_invalid".to_string());
+        }
+        if self.temperature_policy != "omitted" {
             return Err("execution_identity_temperature_policy_invalid".to_string());
         }
         if self.temperature_policy == "explicit" && self.temperature.is_none() {
@@ -95,7 +108,10 @@ impl EvalExecutionIdentity {
         if self.reasoning_effort.trim().is_empty() {
             return Err("execution_identity_reasoning_effort_missing".to_string());
         }
-        if self.max_output_tokens == 0 {
+        if self.reasoning_effort != "provider_default" {
+            return Err("execution_identity_reasoning_effort_invalid".to_string());
+        }
+        if self.max_output_tokens != transport.max_output_tokens() {
             return Err("execution_identity_output_limit_invalid".to_string());
         }
         if self.tool_catalog_format != "tool_names_v1"

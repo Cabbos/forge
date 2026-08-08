@@ -173,7 +173,10 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             repair_attempt_limit=profile.repair_attempt_limit,
             parallel_read_tools=profile.parallel_read_tools,
         ),
-        use_provider_credential_store=True,
+        # Paid benchmark runs are intentionally env-only. The desktop
+        # credential store remains an ordinary product fallback, but allowing
+        # it here would make a reproducible eval depend on machine-local state.
+        use_provider_credential_store=False,
         execution_identity=default_execution_identity(
             provider=profile.provider,
             model=profile.model,

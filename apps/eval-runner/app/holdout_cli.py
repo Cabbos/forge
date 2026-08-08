@@ -122,7 +122,9 @@ def holdout_main(argv: list[str]) -> int:
                     repair_attempt_limit=profile.repair_attempt_limit,
                     parallel_read_tools=profile.parallel_read_tools,
                 ),
-                use_provider_credential_store=True,
+                # Holdout credentials are inherited from the controller
+                # environment only; never consult a machine-local store.
+                use_provider_credential_store=False,
                 execution_identity=default_execution_identity(
                     provider=profile.provider,
                     model=profile.model,

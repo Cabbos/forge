@@ -93,7 +93,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
             .execution_identity
             .as_ref()
             .ok_or_else(|| "provider_route_requires_execution_identity".to_string())?;
-        execution_identity.validate()?;
+        execution_identity.validate_for_transport(route.transport)?;
     }
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
@@ -947,7 +947,15 @@ mod tests {
             "runtime_versions": {"rust": "test"}
         }))
         .expect("execution identity");
-        identity.validate().expect("identity validates");
+        identity
+            .validate_for_transport(route.transport)
+            .expect("identity validates");
+        let mut invalid_identity = identity.clone();
+        invalid_identity.max_output_tokens = 384_000;
+        assert_eq!(
+            invalid_identity.validate_for_transport(route.transport),
+            Err("execution_identity_output_limit_invalid".to_string())
+        );
 
         trace::insert_execution_identity(
             &mut payload,

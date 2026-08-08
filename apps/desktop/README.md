@@ -193,7 +193,9 @@ fail-closed 校验；这不是桌面设置覆盖，桌面默认 DeepSeek 仍走 
 漂移、unknown usage/cost、不可信 workspace、patch replay 失败或中断调用
 时停止并且不重放 pending call。该实验不实现也不声称 DeepSeek OpenAI
 Responses 支持；H2 结果仅是 development split 的 transport/harness 证据，
-不是 holdout 或 frontier 成绩。
+不是 holdout 或 frontier 成绩。route-bound attempt 还会把固定的
+Anthropic 384,000 / OpenAI Chat Completions 8,192 输出上限写进隔离 profile，
+由 Rust route contract 和 Python artifact verifier 双重校验。
 
 设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema、`/models`、Anthropic-compatible `/v1/models`、Gemini `/v1beta/models` 或 Ollama `/api/tags` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
 

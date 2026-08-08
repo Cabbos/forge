@@ -308,6 +308,23 @@ class ForgeAgentRunner:
             if execution_identity is not None
             else None
         )
+        if self.execution_identity is not None:
+            identity_route = (
+                self.execution_identity.transport,
+                self.execution_identity.endpoint_family,
+                self.execution_identity.base_url,
+            )
+            runner_route = (
+                self.agent_transport,
+                self.agent_endpoint_family,
+                self.agent_base_url,
+            )
+            if (
+                self.execution_identity.provider != self.agent_provider
+                or self.execution_identity.model != self.agent_model
+                or identity_route != runner_route
+            ):
+                raise ValueError("execution identity does not match runner route")
 
     def credential_preflight(self) -> ForgeCredentialPreflight:
         if self.command is None:
@@ -435,6 +452,11 @@ class ForgeAgentRunner:
                     "transport": route["transport"],
                     "supports_tools": True,
                     "supports_streaming": True,
+                    **(
+                        {"max_output_tokens_default": self.execution_identity.max_output_tokens}
+                        if self.execution_identity is not None
+                        else {}
+                    ),
                 }
             ]
         }

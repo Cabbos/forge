@@ -268,7 +268,7 @@ import sys
 
 payload = json.loads(sys.stdin.read())
 if payload.get("mode") == "credential_preflight":
-    assert payload["use_provider_credential_store"] is True
+    assert payload["use_provider_credential_store"] is False
     assert payload["provider_route"] == {
         "transport": "anthropic_messages",
         "base_url": "https://api.deepseek.com/anthropic",

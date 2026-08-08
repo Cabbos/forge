@@ -1,5 +1,14 @@
 # Changelog
 
+- Tightened the eval execution identity contract: route-bound runs now write
+  the route-specific output limit into the isolated provider profile and Rust
+  rejects a mismatched limit before session creation. Python runner, baseline,
+  and campaign verification also bind the identity to the configured route;
+  ordinary desktop requests remain unchanged.
+- Made paid ForgeBench baseline and holdout controllers environment-only for
+  credentials: they fail closed when the inherited provider key is absent and
+  never fall back to a machine-local Forge config or system Keychain. Desktop
+  product credential storage remains unchanged.
 - Recorded the first real ForgeBench H4 control campaign: all 60 sealed attempts closed with known usage and complete evidence coverage, while the locked gate correctly rejected 0.7000 trusted success, 0.2333 scope violations, and 31.5 median rounds. The result is diagnostic only and does not claim frontier quality.
 - Added a frozen post-publication verification mode for sealed H4 artifacts. Active runs still require the current source and dirty-state digest; `holdout verify --campaign ... --frozen` skips only that live-worktree comparison while retaining sealed identity, trust, usage, ledger, report, artifact-index, and threshold checks without starting a provider call.
 - Eval Forge prompts now include controller-owned allowed/forbidden file scope and a bounded targeted-validation stop instruction before the first edit; independent filesystem snapshots remain the authoritative scope gate.

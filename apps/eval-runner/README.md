@@ -283,9 +283,10 @@ reissues an interrupted paid attempt, and emits a compact report plus
 content-addressed artifact index. Before any pending marker or attempt is
 created, `baseline run` sends a typed credential preflight to the exact Forge
 headless command and frozen provider/model. The preflight creates no agent
-session and starts no provider call; it may resolve the canonical provider key
-from the inherited `DEEPSEEK_API_KEY` before consulting the optional system
-credential-store fallback. For local paid runs, keep the value in this
+session and starts no provider call; paid benchmark commands resolve the
+canonical provider key from the inherited `DEEPSEEK_API_KEY` only and never
+consult the optional system credential-store fallback. For local paid runs,
+keep the value in this
 directory's Git-ignored `.env` with file mode `600`, then explicitly export it
 into the controller process (`set -a; source .env; set +a`). The child HOME
 remains isolated, Python bytecode and pytest caches are routed into the
@@ -342,11 +343,13 @@ Every route-bound attempt also carries an additive `eval_execution_identity`
 trace event owned by the controller. It binds the exact provider/model/route to
 temperature policy, reasoning policy, output limit, the frozen controller-visible
 tool-name catalog digest (`tool_names_v1`), controller version, and runtime
-versions. The Python runner checks that the event matches the request sent to
-Rust, while baseline/campaign verification rejects missing or malformed
-candidate identity evidence. This leaves the frozen H1 profile JSON bytes and
-fingerprint unchanged; legacy H1 artifacts without a candidate route remain
-verifiable.
+versions. The OpenAI candidate's 8,192-token output limit is written into the
+isolated provider profile and checked against the Rust route contract, so this
+is an effective adapter control rather than a report-only claim. The Python
+runner checks that the event matches the request sent to Rust, while
+baseline/campaign verification rejects missing or malformed candidate identity
+evidence. This leaves the frozen H1 profile JSON bytes and fingerprint
+unchanged; legacy H1 artifacts without a candidate route remain verifiable.
 
 The v6 paired comparison is development evidence only; it selected
 `no_material_difference` and is not a holdout or frontier-grade result. See
@@ -633,7 +636,7 @@ uv run python -m app.worker --once
 | `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Use an absolute manifest path because the controller runs the command from an isolated temporary workspace. |
 | `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider for the headless agent (e.g. `anthropic`, `openai`, `deepseek`). Defaults to `deepseek`. |
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | Model ID for the headless agent. Defaults to `deepseek-v4-flash`. |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key for the chosen provider. Stored in `~/.forge/config.json` via Forge settings. |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key inherited by the eval controller. Paid baseline/holdout commands are env-only and never read `~/.forge/config.json` or a system credential store. |
 | `FORGE_EVAL_RUNNER_PATH` | Optional | Override the default eval-runner directory. Defaults to the sibling `eval-runner` of `apps/desktop/`. |
 | `FORGE_EVAL_API_BIND_HOST` | Exposed API | Declared API bind host. Defaults to `127.0.0.1`; a non-loopback value requires `FORGE_EVAL_API_TOKEN`. |
 | `FORGE_EVAL_API_TOKEN` | Authenticated API | Bearer token for every product endpoint except `/health`. Required for non-loopback binds and Docker Compose. |

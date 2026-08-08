@@ -13,7 +13,7 @@ import json
 import platform
 from typing import Any, Literal
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, ValidationError, field_validator, model_validator
 
 from app.models import EvalModel
 
@@ -104,6 +104,16 @@ class ExecutionIdentityV1(EvalModel):
             raise ValueError("explicit temperature policy requires temperature")
         if self.temperature_policy != "explicit" and self.temperature is not None:
             raise ValueError("non-explicit temperature policy must omit temperature")
+        if self.temperature_policy != "omitted":
+            raise ValueError("temperature policy is not supported by the frozen route contract")
+        if self.reasoning_effort != "provider_default":
+            raise ValueError("reasoning effort is not supported by the frozen route contract")
+        expected_max_output_tokens = {
+            "anthropic_messages": 384_000,
+            "openai_chat_completions": 8_192,
+        }[self.transport]
+        if self.max_output_tokens != expected_max_output_tokens:
+            raise ValueError("output limit does not match the frozen route contract")
         if self.tool_catalog_sha256 != tool_catalog_sha256(self.transport):
             raise ValueError("tool catalog fingerprint does not match the frozen route catalog")
         return self
@@ -145,8 +155,11 @@ def validate_execution_identity_event(
 
     if not isinstance(event, dict):
         raise ValueError("execution_identity_missing")
-    actual = ExecutionIdentityV1.model_validate(
-        {key: value for key, value in event.items() if key != "event_type"}
-    )
+    try:
+        actual = ExecutionIdentityV1.model_validate(
+            {key: value for key, value in event.items() if key != "event_type"}
+        )
+    except ValidationError as exc:
+        raise ValueError("execution_identity_mismatch") from exc
     if actual != expected:
         raise ValueError("execution_identity_mismatch")

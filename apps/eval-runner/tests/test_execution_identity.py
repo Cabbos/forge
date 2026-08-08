@@ -48,6 +48,11 @@ def test_execution_identity_rejects_wrong_catalog_or_route() -> None:
     with pytest.raises(ValueError, match="endpoint family"):
         ExecutionIdentityV1.model_validate(payload)
 
+    payload = identity.model_dump(mode="json")
+    payload["max_output_tokens"] = 8192
+    with pytest.raises(ValueError, match="output limit"):
+        ExecutionIdentityV1.model_validate(payload)
+
 
 def test_trace_execution_identity_must_match_controller_expectation() -> None:
     identity = default_execution_identity(
@@ -74,6 +79,23 @@ def test_explicit_temperature_requires_value() -> None:
     payload = identity.model_dump(mode="json")
     payload["temperature_policy"] = "explicit"
     with pytest.raises(ValueError, match="temperature"):
+        ExecutionIdentityV1.model_validate(payload)
+
+    payload["temperature"] = 0.2
+    with pytest.raises(ValueError, match="frozen route contract"):
+        ExecutionIdentityV1.model_validate(payload)
+
+
+def test_unwired_reasoning_effort_is_rejected() -> None:
+    identity = default_execution_identity(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="openai_chat_completions",
+        base_url="https://api.deepseek.com",
+    )
+    payload = identity.model_dump(mode="json")
+    payload["reasoning_effort"] = "high"
+    with pytest.raises(ValueError, match="frozen route contract"):
         ExecutionIdentityV1.model_validate(payload)
 
 

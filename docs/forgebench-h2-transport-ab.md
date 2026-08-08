@@ -39,7 +39,9 @@ versions. The runner compares the event to the request it sent; baseline and
 campaign verification reject missing, malformed, or mismatched candidate
 identity evidence. This additive event deliberately leaves the frozen H1
 profile bytes and fingerprint unchanged, including H1's legacy omitted
-`base_url` form.
+`base_url` form. The route contract also pins the effective output limit to
+384,000 for Anthropic and 8,192 for OpenAI Chat Completions; the latter is
+written into the isolated provider profile before Rust builds the adapter.
 
 ## Trust and spend boundary
 
