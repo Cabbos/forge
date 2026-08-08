@@ -6,6 +6,7 @@ import pytest
 import app.holdout_campaign as holdout_campaign
 from app.baseline_models import BaselineComparison, BaselineComparisonMetrics
 from app.harness_profiles import load_harness_profile
+from app.harness_contracts import resolve_typed_failure_category
 from app.holdout_campaign import (
     HoldoutRunResult,
     generate_holdout_report,
@@ -98,7 +99,7 @@ def _kwargs(campaign: Path) -> dict[str, Path]:
 def test_holdout_evidence_prefers_typed_failure_taxonomy_and_keeps_legacy_fallback() -> None:
     task = EvaluationTask(id="taxonomy-case", title="Taxonomy", prompt="Run the task.")
     legacy_trace = make_trace(task)
-    assert holdout_campaign._terminal_failure_category(legacy_trace, "none") == "none"
+    assert resolve_typed_failure_category(legacy_trace.raw_events, "none") == "none"
 
     typed_trace = legacy_trace.model_copy(
         update={
@@ -110,7 +111,7 @@ def test_holdout_evidence_prefers_typed_failure_taxonomy_and_keeps_legacy_fallba
             ]
         }
     )
-    assert holdout_campaign._terminal_failure_category(typed_trace, "none") == "passed"
+    assert resolve_typed_failure_category(typed_trace.raw_events, "none") == "passed"
 
 
 def test_holdout_init_locks_sealed_split_and_development_comparison(tmp_path: Path) -> None:

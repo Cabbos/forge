@@ -24,6 +24,7 @@ from app.baseline_models import (
 )
 from app.harness_profiles import HarnessProfileV1, harness_profile_fingerprint, load_harness_profile
 from app.harness_telemetry import summarize_harness_telemetry
+from app.harness_contracts import resolve_typed_failure_category
 from app.metrics import trace_passed
 from app.models import EvalModel
 from app.provenance import canonical_json_bytes, sha256_bytes
@@ -325,6 +326,7 @@ def _build_metrics(
     rounds = [artifact.trace.model_rounds for artifact in ordered]
     durations = [artifact.trace.duration_ms for artifact in ordered]
     provider_errors: Counter[str] = Counter()
+    failure_categories: Counter[str] = Counter()
     trust_blockers: Counter[str] = Counter()
     provider_error_types = {
         "provider_error",
@@ -333,6 +335,11 @@ def _build_metrics(
         "api_error",
     }
     for artifact in ordered:
+        category = resolve_typed_failure_category(
+            artifact.trace.raw_events, artifact.primary_failure_category
+        )
+        if category is not None:
+            failure_categories[category] += 1
         trust_blockers.update(artifact.trust_result.blockers)
         for event in artifact.trace.raw_events:
             event_type = str(event.get("event_type", "")).lower()
@@ -356,7 +363,7 @@ def _build_metrics(
         p95_cost_cny=_nearest_rank(cost_values),
         median_duration_ms=float(median(durations)),
         p95_duration_ms=float(_nearest_rank(durations)),
-        failure_categories=dict(sorted(report.failure_categories.items())),
+        failure_categories=dict(sorted(failure_categories.items())),
         provider_errors=dict(sorted(provider_errors.items())),
         trust_blockers=dict(sorted(trust_blockers.items())),
         harness_telemetry=summarize_harness_telemetry([artifact.trace for artifact in ordered]),

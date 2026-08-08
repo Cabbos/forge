@@ -1,5 +1,7 @@
 import json
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -10,13 +12,15 @@ from app.baseline import (
 )
 from app.baseline_comparison import (
     BaselineComparisonError,
+    _build_metrics,
     _select_winner,
     compare_baseline_campaigns,
     write_baseline_comparison,
 )
 from app.baseline_models import BaselineComparisonMetrics, BootstrapInterval
 from app.harness_profiles import harness_profile_bytes, load_harness_profile
-from tests.test_baseline import FakeRunner
+from app.models import EvaluationTask
+from tests.test_baseline import FakeRunner, make_trace
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 FORGEBENCH_ROOT = Path(__file__).resolve().parents[1] / "forgebench"
@@ -147,6 +151,45 @@ def test_selection_is_uncertainty_gated_and_fail_closed() -> None:
     assert _select_winner(metrics, metrics, intervals) == "candidate"
     intervals["scope_violation_rate_delta"] = interval(0.1, 0.01, 0.2)
     assert _select_winner(metrics, metrics, intervals) == "control"
+
+
+def test_comparison_metrics_use_typed_failure_taxonomy() -> None:
+    task = EvaluationTask(id="taxonomy-case", title="Taxonomy", prompt="Run the task.")
+    trace = make_trace(task).model_copy(
+        update={
+            "raw_events": [
+                {
+                    "event_type": "harness_contract_evidence",
+                    "failure_taxonomy": {"primary": "passed"},
+                }
+            ]
+        }
+    )
+    report = SimpleNamespace(
+        trusted_attempts=30,
+        trusted_success_rate=1.0,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        failure_categories={"none": 30},
+    )
+    artifact = SimpleNamespace(
+        repetition=1,
+        task_id=task.id,
+        trace=trace,
+        usage=SimpleNamespace(cost_cny=Decimal("0.1")),
+        trust_result=SimpleNamespace(blockers=[]),
+        primary_failure_category="none",
+    )
+
+    metrics = _build_metrics(
+        report,
+        {
+            f"attempt-{index}": artifact
+            for index in range(30)
+        },
+    )
+
+    assert metrics.failure_categories == {"passed": 30}
 
 
 def test_compare_rejects_same_transport_and_incomplete_campaign(tmp_path: Path) -> None:

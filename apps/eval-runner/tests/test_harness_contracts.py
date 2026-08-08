@@ -20,6 +20,7 @@ from app.harness_contracts import (
     evaluate_stagnation,
     harness_contract_evidence,
     observed_task_execution_evidence,
+    resolve_typed_failure_category,
     task_plan_evidence,
 )
 
@@ -157,6 +158,18 @@ def test_harness_contract_evidence_marks_missing_progress_explicitly(tmp_path: P
     assert evidence["progress"]["source"] == "missing"
     assert evidence["progress"]["stagnation"]["action"] == "continue"
     assert evidence["failure_taxonomy"]["primary"] == "model_incomplete"
+
+
+def test_typed_failure_category_preserves_legacy_artifacts_and_rejects_bad_taxonomy() -> None:
+    assert resolve_typed_failure_category([], "none") == "none"
+    assert resolve_typed_failure_category(
+        [{"event_type": "harness_contract_evidence", "failure_taxonomy": {"primary": "passed"}}],
+        "none",
+    ) == "passed"
+    assert resolve_typed_failure_category(
+        [{"event_type": "harness_contract_evidence", "failure_taxonomy": {"primary": "nope"}}],
+        "none",
+    ) == "harness_contract_error"
 
 
 def test_task_execution_contract_requires_all_multi_file_inspection_and_verification() -> None:

@@ -506,6 +506,29 @@ def classify_failure(
     )
 
 
+def resolve_typed_failure_category(
+    raw_events: Iterable[dict[str, Any]], legacy_category: str | None
+) -> str | None:
+    """Read the controller taxonomy while preserving pre-H3 artifact compatibility."""
+
+    taxonomy_event = next(
+        (
+            event
+            for event in reversed(list(raw_events))
+            if event.get("event_type") == "harness_contract_evidence"
+        ),
+        None,
+    )
+    if taxonomy_event is None:
+        return legacy_category.strip() if legacy_category and legacy_category.strip() else None
+    taxonomy = taxonomy_event.get("failure_taxonomy")
+    primary = taxonomy.get("primary") if isinstance(taxonomy, dict) else None
+    try:
+        return PrimaryFailureCategory(primary).value
+    except (TypeError, ValueError):
+        return PrimaryFailureCategory.HARNESS_CONTRACT_ERROR.value
+
+
 def evaluate_stagnation(
     signals: Iterable[ProgressSignal],
     *,
