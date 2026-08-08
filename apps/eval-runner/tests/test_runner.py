@@ -325,6 +325,9 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "assert payload['harness_policy']['prompt_mode'] == 'minimal_v1'\n"
             "assert payload['harness_policy']['context_policy'] == 'task_local_v1'\n"
             "assert payload['task']['stagnation_policy'] == 'semantic_progress_v1'\n"
+            "assert payload['context_manifest']['mode'] == 'task_local_v1'\n"
+            "assert len(payload['context_manifest']['items']) == 16\n"
+            "assert len(payload['context_manifest_fingerprint']) == 64\n"
             "assert payload['prompt'].startswith('Outcome: Fix the bug.')\n"
             "assert 'Allowed changed files: src/app.py' in payload['prompt']\n"
             "assert 'Forbidden changed paths: package.json, .forge/**' in payload['prompt']\n"
@@ -365,6 +368,38 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
     )
     assert policy_event["policy"]["prompt_mode"] == "minimal_v1"
     assert len(policy_event["prepared_context_files"]) == 16
+
+
+def test_forge_runner_exposes_context_conflicts_before_provider_call(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "a").mkdir(parents=True)
+    (fixture / "b").mkdir()
+    (fixture / "a" / "README.md").write_text("left\n", encoding="utf-8")
+    (fixture / "b" / "README.md").write_text("right\n", encoding="utf-8")
+    agent = tmp_path / "context_conflict_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['context_manifest']['conflict_groups'] == "
+            "[['a/README.md', 'b/README.md']]\n"
+            "assert len(payload['context_manifest_fingerprint']) == 64\n"
+            "json.dump({'final_answer': 'context conflict recorded', "
+            "'changed_files': [], 'file_diffs': []}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="context-conflict-before-provider",
+        title="Context conflict",
+        prompt="Inspect the task-local context.",
+        fixture_path=str(fixture),
+        context_files=["a/README.md", "b/README.md"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
 
 
 def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(

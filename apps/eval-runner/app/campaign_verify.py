@@ -298,8 +298,13 @@ def _verify_campaign(
             worktree,
             manifest.final_verification.command,
         )
-        full_verification_passed = output.exit_code == 0
-        if not full_verification_passed:
+        verification = manifest.final_verification
+        exit_code_matches = True
+        if output.exit_code != verification.exit_code:
+            blockers.append("final_verification_exit_code_mismatch")
+            exit_code_matches = False
+        full_verification_passed = output.exit_code == 0 and exit_code_matches
+        if output.exit_code != 0:
             blockers.append("full_verification_failed")
 
     return CampaignVerification(

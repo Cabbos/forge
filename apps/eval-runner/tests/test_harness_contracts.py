@@ -16,6 +16,7 @@ from app.harness_contracts import (
     build_context_manifest,
     build_task_execution_contract,
     classify_failure,
+    context_manifest_fingerprint,
     envelope_from_shell_output,
     evaluate_stagnation,
     harness_contract_evidence,
@@ -101,6 +102,7 @@ def test_context_manifest_is_minimal_and_detects_duplicates_and_conflicts(
     assert manifest.total_token_estimate > 0
     assert manifest.duplicate_groups == [["a/same.txt", "b/same.txt"]]
     assert manifest.conflict_groups == [["a/diff.txt", "b/diff.txt"]]
+    assert len(context_manifest_fingerprint(manifest)) == 64
     assert all(item.tier == ContextTier.TASK_LOCAL for item in manifest.items)
     assert all("content" not in item.model_dump() for item in manifest.items)
 
@@ -154,6 +156,7 @@ def test_harness_contract_evidence_marks_missing_progress_explicitly(tmp_path: P
     )
 
     assert evidence["event_type"] == "harness_contract_evidence"
+    assert len(evidence["context_manifest_fingerprint"]) == 64
     assert evidence["tool_results"]["source"] == "derived_shell_output"
     assert evidence["progress"]["source"] == "missing"
     assert evidence["progress"]["stagnation"]["action"] == "continue"

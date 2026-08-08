@@ -156,7 +156,10 @@ class HarnessProfileV1(EvalModel):
             or self.profile_id != expected_profile
             or (self.prompt_mode in {"minimal_v1", "planning_v1"} and not minimal_policy)
             or (self.prompt_mode == "current_product_v1" and not current_policy)
-            or (self.endpoint_family == "openai" and self.base_url is None)
+            or (
+                self.base_url is None
+                and self.profile_id != "deepseek-v4-flash-anthropic-baseline-v1"
+            )
             or (self.base_url is not None and self.base_url != expected)
         ):
             raise ValueError("profile identity must match an approved route")

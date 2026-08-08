@@ -10,6 +10,7 @@ from pydantic import ValidationError
 
 from app.baseline import (
     BaselineCrashInjected,
+    _attempt_blockers,
     generate_baseline_report,
     initialize_baseline_campaign,
     recover_baseline_campaign,
@@ -23,6 +24,7 @@ from app.baseline_models import (
     BaselineReport,
 )
 from app.cases import load_cases
+from app.harness_contracts import HarnessPolicyV1
 from app.harness_profiles import (
     harness_profile_bytes,
     harness_profile_fingerprint,
@@ -81,6 +83,7 @@ def make_trace(
     workspace_available: bool = True,
     patch_replay_ok: bool = True,
     identity_overrides: dict[str, Any] | None = None,
+    harness_policy_event: dict[str, Any] | None = None,
 ) -> AgentTrace:
     now = datetime.now(UTC)
     usage_event = event or provider_event()
@@ -97,6 +100,8 @@ def make_trace(
     if identity_overrides:
         identity_event.update(identity_overrides)
     raw_events = [identity_event]
+    if harness_policy_event is not None:
+        raw_events.append(harness_policy_event)
     if (
         identity_overrides
         and identity_overrides.get("base_url") is not None
@@ -196,6 +201,41 @@ class FakeRunner:
             raise RuntimeError("simulated provider interruption")
         if self.crash_before_runner:
             raise BaselineCrashInjected("simulated abrupt runner interruption")
+        identity_overrides = self.identity_overrides
+        profile_payload: dict[str, Any] | None = None
+        if identity_overrides is None and self.campaign_root is not None:
+            profile_payload = json.loads(
+                (self.campaign_root / "locks" / "profile.json").read_text()
+            )
+            if profile_payload.get("base_url") is not None:
+                identity_overrides = {
+                    "transport": profile_payload["transport"],
+                    "endpoint_family": profile_payload["endpoint_family"],
+                    "base_url": profile_payload["base_url"],
+                }
+        if profile_payload is None and self.campaign_root is not None:
+            profile_payload = json.loads(
+                (self.campaign_root / "locks" / "profile.json").read_text()
+            )
+        harness_policy_event = None
+        if profile_payload is not None and (
+            profile_payload.get("base_url") is not None
+            or profile_payload.get("prompt_mode") != "current_product_v1"
+        ):
+            policy = HarnessPolicyV1(
+                prompt_mode=profile_payload["prompt_mode"],
+                context_policy=profile_payload["context_policy"],
+                tool_result_policy=profile_payload["tool_result_policy"],
+                stagnation_policy=profile_payload["stagnation_policy"],
+                verification_policy=profile_payload["verification_policy"],
+                repair_attempt_limit=profile_payload["repair_attempt_limit"],
+                parallel_read_tools=profile_payload["parallel_read_tools"],
+            )
+            harness_policy_event = {
+                "event_type": "eval_harness_policy",
+                "policy": policy.model_dump(mode="json"),
+                "policy_fingerprint": policy.fingerprint(),
+            }
         return make_trace(
             task,
             event=self.event,
@@ -203,7 +243,8 @@ class FakeRunner:
             harness_fingerprint_value=harness_fingerprint_value,
             workspace_available=self.workspace_available,
             patch_replay_ok=self.patch_replay_ok,
-            identity_overrides=self.identity_overrides,
+            identity_overrides=identity_overrides,
+            harness_policy_event=harness_policy_event,
         )
 
 
@@ -652,6 +693,33 @@ def test_candidate_route_rejects_mutated_execution_controls(tmp_path: Path) -> N
 
     assert result.status == "blocked"
     assert result.blockers == ["execution_identity_mismatch"]
+
+
+def test_route_bound_profile_requires_matching_harness_policy_evidence(tmp_path: Path) -> None:
+    profile_path = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-anthropic-minimal-v1.json"
+    campaign = initialize(tmp_path, profile_path=profile_path)
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign, profile_path=profile_path),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+
+    assert result.status == "paused"
+    attempt_path = next((campaign / "attempts").glob("*.json"))
+    artifact = BaselineAttemptArtifact.model_validate_json(attempt_path.read_bytes())
+    trace = artifact.trace.model_copy(
+        update={
+            "raw_events": [
+                event
+                for event in artifact.trace.raw_events
+                if event.get("event_type") != "eval_harness_policy"
+            ]
+        }
+    )
+
+    assert "harness_policy_mismatch" in _attempt_blockers(
+        artifact.model_copy(update={"trace": trace})
+    )
 
 
 def test_recovery_finishes_ledger_for_already_published_artifact(tmp_path: Path) -> None:

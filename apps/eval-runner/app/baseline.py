@@ -34,6 +34,7 @@ from app.cases import load_cases, validate_case_quality
 from app.datasets import dataset_fingerprint
 from app.execution_identity import ExecutionIdentityV1, default_execution_identity
 from app.harness_checks import run_observer_patch_replay_self_check
+from app.harness_contracts import HarnessPolicyV1
 from app.harness_profiles import (
     HarnessProfileV1,
     harness_profile_bytes,
@@ -1073,6 +1074,32 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
             or execution.tool_catalog_sha256 != expected.tool_catalog_sha256
         ):
             blockers.append("execution_identity_mismatch")
+    if artifact.profile.base_url is not None or artifact.profile.prompt_mode != (
+        "current_product_v1"
+    ):
+        policy_event = next(
+            (
+                event
+                for event in reversed(artifact.trace.raw_events)
+                if event.get("event_type") == "eval_harness_policy"
+            ),
+            None,
+        )
+        expected_policy = HarnessPolicyV1(
+            prompt_mode=artifact.profile.prompt_mode,
+            context_policy=artifact.profile.context_policy,
+            tool_result_policy=artifact.profile.tool_result_policy,
+            stagnation_policy=artifact.profile.stagnation_policy,
+            verification_policy=artifact.profile.verification_policy,
+            repair_attempt_limit=artifact.profile.repair_attempt_limit,
+            parallel_read_tools=artifact.profile.parallel_read_tools,
+        )
+        if (
+            policy_event is None
+            or policy_event.get("policy") != expected_policy.model_dump(mode="json")
+            or policy_event.get("policy_fingerprint") != expected_policy.fingerprint()
+        ):
+            blockers.append("harness_policy_mismatch")
     if artifact.trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR:
         blockers.append("forge_contract_error")
     return sorted(set(blockers))

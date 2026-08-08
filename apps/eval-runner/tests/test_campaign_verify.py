@@ -8,6 +8,7 @@ from test_campaign import accept, initialize, write_acceptance_artifacts
 
 from app.campaign import finalize_campaign
 from app.campaign_verify import verify_campaign
+from app.models import ShellOutput
 from app.provenance import sha256_bytes
 
 
@@ -52,6 +53,28 @@ def test_verify_campaign_recomputes_complete_chain(
     assert result.entry_count == 1
     assert result.full_verification_passed is True
     assert result.manifest_commit == git(finalized_campaign / "worktree", "rev-parse", "HEAD")
+
+
+def test_verify_campaign_rejects_changed_final_verification_exit_code(
+    finalized_campaign: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import app.campaign_verify as campaign_verify
+
+    original = campaign_verify._run_clean_verification
+
+    def changed_output(worktree: Path, command: str) -> ShellOutput:
+        output = original(worktree, command)
+        return output.model_copy(update={"exit_code": 1})
+
+    monkeypatch.setattr(campaign_verify, "_run_clean_verification", changed_output)
+
+    result = verify_campaign(finalized_campaign)
+
+    assert result.ok is False
+    assert result.full_verification_passed is False
+    assert "final_verification_exit_code_mismatch" in result.blockers
+    assert "full_verification_failed" in result.blockers
 
 
 @pytest.mark.parametrize(

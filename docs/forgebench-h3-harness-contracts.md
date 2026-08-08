@@ -13,8 +13,8 @@ needed for frontier tuning explicit and bounded before another paid campaign.
 - The committed minimal profiles are
   `deepseek-v4-flash-anthropic-minimal-v1` and
   `deepseek-v4-flash-openai-chat-minimal-v1`. They are route-bound canonical
-  artifacts; H1 keeps its legacy omitted `base_url`, while H2 records the
-  explicit OpenAI-compatible URL.
+  artifacts with explicit official `base_url` values; only the original H1
+  Anthropic profile keeps its legacy omitted `base_url` for byte compatibility.
 - The planning experiment is isolated in two additional development-only
   profiles: `deepseek-v4-flash-anthropic-planning-v1` and
   `deepseek-v4-flash-openai-chat-planning-v1`. They keep the same official
@@ -61,6 +61,11 @@ progress. The event also reports advisory observed phase coverage (which
 required paths appeared in inspection commands, which files actually changed,
 and whether controller verification passed); this is never substituted for the
 filesystem snapshot or patch-replay authority.
+
+Route-bound profiles also require a controller-owned `eval_harness_policy`
+event whose canonical policy payload and fingerprint match the locked profile.
+Baseline and holdout verification reject a missing or mutated policy event;
+legacy H1 artifacts remain readable under their compatibility rule.
 
 The first post-H4 development probe on the scope prompt guard exposed one
 additional observer false positive: an OpenAI arm created `.uv-cache` inside

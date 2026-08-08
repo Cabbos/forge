@@ -18,7 +18,9 @@ from app.execution_identity import (
 )
 from app.harness_contracts import (
     HarnessPolicyV1,
+    build_context_manifest,
     build_task_execution_contract,
+    context_manifest_fingerprint,
     harness_contract_evidence,
 )
 from app.hidden_verifiers import run_hidden_verifier, verifier_command
@@ -625,6 +627,11 @@ class ForgeAgentRunner:
             task_dict["stagnation_policy"] = self.harness_policy.stagnation_policy
             prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
             task_dict["context_files"] = prepared_context_files
+            context_manifest = build_context_manifest(
+                prepared_context_files,
+                workspace,
+                mode=self.harness_policy.context_policy,
+            )
             task_contract = build_task_execution_contract(
                 expected_files_changed=task.expected_files_changed,
                 forbidden_files_changed=task.forbidden_files_changed,
@@ -645,6 +652,8 @@ class ForgeAgentRunner:
                 "harness_policy": self.harness_policy.model_dump(mode="json"),
                 "harness_policy_fingerprint": self.harness_policy.fingerprint(),
                 "context_mode": self.harness_policy.context_policy,
+                "context_manifest": context_manifest.model_dump(mode="json"),
+                "context_manifest_fingerprint": context_manifest_fingerprint(context_manifest),
                 "task_execution_contract": task_contract.model_dump(mode="json"),
                 "provider": self.agent_provider,
                 "model": self.agent_model,

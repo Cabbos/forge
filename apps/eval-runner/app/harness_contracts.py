@@ -602,6 +602,18 @@ class ContextManifest(HarnessContractModel):
     conflict_groups: list[list[str]] = Field(default_factory=list, max_length=32)
 
 
+def context_manifest_fingerprint(manifest: ContextManifest) -> str:
+    """Return the stable identity sent to the agent before provider execution."""
+
+    payload = json.dumps(
+        manifest.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
+
+
 def build_context_manifest(
     paths: Iterable[str],
     workspace: Path,
@@ -747,6 +759,7 @@ def harness_contract_evidence(
         "event_type": "harness_contract_evidence",
         "schema_version": 1,
         "context_manifest": manifest.model_dump(mode="json"),
+        "context_manifest_fingerprint": context_manifest_fingerprint(manifest),
         "tool_results": {
             "source": envelope_source,
             "bounded_content_chars": MAX_TOOL_CONTENT_CHARS,

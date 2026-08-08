@@ -160,6 +160,10 @@ def test_h3_committed_minimal_profiles_are_canonical_and_policy_bound() -> None:
     assert all(profile.context_policy == "task_local_v1" for profile in profiles)
     assert all(profile.tool_result_policy == "bounded_structured_v1" for profile in profiles)
     assert all(profile.stagnation_policy == "semantic_progress_v1" for profile in profiles)
+    assert [profile.base_url for profile in profiles] == [
+        "https://api.deepseek.com/anthropic",
+        "https://api.deepseek.com",
+    ]
     assert len({harness_profile_fingerprint(profile) for profile in profiles}) == 2
 
 
@@ -174,6 +178,10 @@ def test_h3_committed_planning_profiles_are_canonical_and_policy_bound() -> None
     assert all(profile.context_policy == "task_local_v1" for profile in profiles)
     assert all(profile.tool_result_policy == "bounded_structured_v1" for profile in profiles)
     assert all(profile.stagnation_policy == "semantic_progress_v1" for profile in profiles)
+    assert [profile.base_url for profile in profiles] == [
+        "https://api.deepseek.com/anthropic",
+        "https://api.deepseek.com",
+    ]
     assert len({harness_profile_fingerprint(profile) for profile in profiles}) == 2
 
 
@@ -305,6 +313,19 @@ def test_h2_profile_rejects_crossed_or_untrusted_routes(
 
 def test_h2_candidate_profile_requires_explicit_base_url() -> None:
     payload = valid_control_profile_payload()
+    payload.pop("base_url")
+
+    with pytest.raises(ValidationError):
+        HarnessProfileV1.model_validate(payload)
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [valid_minimal_profile_payload(), valid_planning_profile_payload()],
+)
+def test_nonlegacy_anthropic_profile_requires_explicit_base_url(
+    payload: dict[str, object],
+) -> None:
     payload.pop("base_url")
 
     with pytest.raises(ValidationError):
