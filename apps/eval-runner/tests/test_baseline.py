@@ -126,6 +126,10 @@ def make_trace(
                 "runtime_versions": {"python": "3.11"},
             }
         )
+        execution_event = raw_events[-1]
+        execution_overrides = identity_overrides.get("execution_identity")
+        if isinstance(execution_overrides, dict):
+            execution_event.update(execution_overrides)
     return AgentTrace(
         task_id=task.id,
         user_prompt=task.prompt,
@@ -614,6 +618,29 @@ def test_candidate_route_requires_execution_identity_trace_event(tmp_path: Path)
             "endpoint_family": "openai",
             "base_url": "https://api.deepseek.com",
             "omit_execution_identity": True,
+        },
+    )
+
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign, profile_path=profile_path),
+        runner=runner,
+        max_attempts=1,
+    )
+
+    assert result.status == "blocked"
+    assert result.blockers == ["execution_identity_mismatch"]
+
+
+def test_candidate_route_rejects_mutated_execution_controls(tmp_path: Path) -> None:
+    profile_path = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-openai-chat-control-v1.json"
+    campaign = initialize(tmp_path, profile_path=profile_path)
+    runner = FakeRunner(
+        campaign_root=campaign,
+        identity_overrides={
+            "transport": "openai_chat_completions",
+            "endpoint_family": "openai",
+            "base_url": "https://api.deepseek.com",
+            "execution_identity": {"max_output_tokens": 384000},
         },
     )
 

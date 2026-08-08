@@ -5,6 +5,10 @@
   rejects a mismatched limit before session creation. Python runner, baseline,
   and campaign verification also bind the identity to the configured route;
   ordinary desktop requests remain unchanged.
+- Wired the H3 `semantic_progress_v1` policy into isolated headless execution:
+  eval tasks now carry the policy into Rust, which uses a two-failed-tool-batch
+  stagnation stop while ordinary desktop triggers keep the six-batch default;
+  controller-side typed redirect evidence remains separately auditable.
 - Made paid ForgeBench baseline and holdout controllers environment-only for
   credentials: they fail closed when the inherited provider key is absent and
   never fall back to a machine-local Forge config or system Keychain. Desktop

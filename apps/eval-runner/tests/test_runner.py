@@ -324,6 +324,7 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "payload = json.load(sys.stdin)\n"
             "assert payload['harness_policy']['prompt_mode'] == 'minimal_v1'\n"
             "assert payload['harness_policy']['context_policy'] == 'task_local_v1'\n"
+            "assert payload['task']['stagnation_policy'] == 'semantic_progress_v1'\n"
             "assert payload['prompt'].startswith('Outcome: Fix the bug.')\n"
             "assert 'Allowed changed files: src/app.py' in payload['prompt']\n"
             "assert 'Forbidden changed paths: package.json, .forge/**' in payload['prompt']\n"
@@ -2205,6 +2206,7 @@ assert payload["provider"] == "deepseek"
 assert payload["model"] == "deepseek-v4-flash"
 assert task["max_model_rounds"] == 12
 assert task["max_repair_attempts"] == 1
+assert task["stagnation_policy"] == "current_loop_guard_v1"
 json.dump(
     {
         "changed_files": [],

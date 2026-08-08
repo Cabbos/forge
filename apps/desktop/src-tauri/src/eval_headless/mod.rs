@@ -262,6 +262,8 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     let max_repair_attempts = validation::max_repair_attempts_from_task(request.task.as_ref());
     let timeout_secs = validation::resolve_timeout_secs(request.task.as_ref());
     let max_model_rounds = validation::resolve_max_model_rounds(request.task.as_ref());
+    let max_no_progress_batches =
+        validation::resolve_max_no_progress_batches(request.task.as_ref());
     let mut raw_events = Vec::new();
     let mut agent_error: Option<String> = None;
     let mut validation_result = None;
@@ -278,6 +280,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
             emitter.clone(),
             emitter.model_rounds(),
             max_model_rounds,
+            max_no_progress_batches,
         )
         .await;
         watchdog.abort();
@@ -349,6 +352,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                 emitter.clone(),
                 emitter.model_rounds(),
                 max_model_rounds,
+                max_no_progress_batches,
             )
             .await;
             watchdog.abort();
@@ -1606,6 +1610,7 @@ deleted file mode 100644\n\
             max_repair_attempts: None,
             timeout_secs: None,
             max_model_rounds: None,
+            stagnation_policy: Default::default(),
         };
 
         assert_eq!(
@@ -1621,6 +1626,7 @@ deleted file mode 100644\n\
             max_repair_attempts: None,
             timeout_secs: None,
             max_model_rounds: None,
+            stagnation_policy: Default::default(),
         };
 
         assert_eq!(
@@ -1956,6 +1962,17 @@ deleted file mode 100644\n\
                 ..Default::default()
             })),
             20
+        );
+        assert_eq!(
+            validation::resolve_max_no_progress_batches(None),
+            types::HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES
+        );
+        assert_eq!(
+            validation::resolve_max_no_progress_batches(Some(&EvalHeadlessTask {
+                stagnation_policy: types::EvalStagnationPolicy::SemanticProgressV1,
+                ..Default::default()
+            })),
+            types::HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES
         );
     }
 

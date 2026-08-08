@@ -53,6 +53,16 @@ def test_execution_identity_rejects_wrong_catalog_or_route() -> None:
     with pytest.raises(ValueError, match="output limit"):
         ExecutionIdentityV1.model_validate(payload)
 
+    payload = identity.model_dump(mode="json")
+    payload["base_url"] = "https://foreign.example.invalid"
+    with pytest.raises(ValueError, match="base URL"):
+        ExecutionIdentityV1.model_validate(payload)
+
+    payload = identity.model_dump(mode="json")
+    payload["model"] = "deepseek-v4-pro"
+    with pytest.raises(ValueError, match="provider/model"):
+        ExecutionIdentityV1.model_validate(payload)
+
 
 def test_trace_execution_identity_must_match_controller_expectation() -> None:
     identity = default_execution_identity(

@@ -30,6 +30,12 @@ needed for frontier tuning explicit and bounded before another paid campaign.
 - `ProgressSignal` and `StagnationDecision` make no-progress rounds typed. Two
   consecutive no-progress rounds allow one bounded recovery redirect; a second
   pair stops with an explicit reason.
+- The `semantic_progress_v1` profile is now an effective headless control, not
+  only report metadata: the controller passes it into the eval task and Rust
+  configures the isolated loop guard to stop after two consecutive failed tool
+  batches. Ordinary desktop triggers retain the six-batch default. The richer
+  typed redirect evidence remains controller-side and is still required for
+  report coverage when an adapter emits progress signals.
 - `FailureTaxonomyEvidence` maps legacy runner outcomes to one explicit primary
   category (`passed`, model, provider, tool, permission, verification, scope,
   observer, replay, contract, cancellation, or timeout) so reports never need

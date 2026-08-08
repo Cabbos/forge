@@ -32,7 +32,7 @@ from app.baseline_models import (
 )
 from app.cases import load_cases, validate_case_quality
 from app.datasets import dataset_fingerprint
-from app.execution_identity import ExecutionIdentityV1
+from app.execution_identity import ExecutionIdentityV1, default_execution_identity
 from app.harness_checks import run_observer_patch_replay_self_check
 from app.harness_profiles import (
     HarnessProfileV1,
@@ -1029,15 +1029,15 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
         )
     ):
         blockers.append("agent_identity_mismatch")
-    if artifact.profile.base_url is not None:
-        execution_identity = next(
-            (
-                event
-                for event in reversed(artifact.trace.raw_events)
-                if event.get("event_type") == "eval_execution_identity"
-            ),
-            None,
-        )
+    execution_identity = next(
+        (
+            event
+            for event in reversed(artifact.trace.raw_events)
+            if event.get("event_type") == "eval_execution_identity"
+        ),
+        None,
+    )
+    if execution_identity is not None or artifact.profile.base_url is not None:
         try:
             execution = (
                 ExecutionIdentityV1.model_validate(
@@ -1052,13 +1052,25 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
             )
         except ValidationError:
             execution = None
+        expected = default_execution_identity(
+            provider=artifact.profile.provider,
+            model=artifact.profile.model,
+            transport=artifact.profile.transport,
+            base_url=artifact.profile.resolved_base_url,
+        )
         if (
             execution is None
-            or execution.provider != artifact.profile.provider
-            or execution.model != artifact.profile.model
-            or execution.transport != artifact.profile.transport
-            or execution.endpoint_family != artifact.profile.endpoint_family
-            or execution.base_url != artifact.profile.resolved_base_url
+            or execution.provider != expected.provider
+            or execution.model != expected.model
+            or execution.transport != expected.transport
+            or execution.endpoint_family != expected.endpoint_family
+            or execution.base_url != expected.base_url
+            or execution.temperature_policy != expected.temperature_policy
+            or execution.temperature != expected.temperature
+            or execution.reasoning_effort != expected.reasoning_effort
+            or execution.max_output_tokens != expected.max_output_tokens
+            or execution.tool_catalog_format != expected.tool_catalog_format
+            or execution.tool_catalog_sha256 != expected.tool_catalog_sha256
         ):
             blockers.append("execution_identity_mismatch")
     if artifact.trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR:

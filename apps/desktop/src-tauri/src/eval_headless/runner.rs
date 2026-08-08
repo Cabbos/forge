@@ -103,8 +103,14 @@ pub(crate) async fn send_headless_turn(
     emitter: Arc<HeadlessEventEmitter>,
     model_rounds_used: usize,
     max_model_rounds: usize,
+    max_no_progress_batches: usize,
 ) -> Result<(), String> {
-    configure_headless_model_round_budget(session, model_rounds_used, max_model_rounds);
+    configure_headless_model_round_budget_with_stagnation(
+        session,
+        model_rounds_used,
+        max_model_rounds,
+        max_no_progress_batches,
+    );
     let turn_guard = session.reserve_turn()?;
     session
         .send_message_with_shared_emitter(prompt, emitter, Vec::new(), None, None, turn_guard)
@@ -116,9 +122,24 @@ pub(crate) fn configure_headless_model_round_budget(
     model_rounds_used: usize,
     max_model_rounds: usize,
 ) {
+    configure_headless_model_round_budget_with_stagnation(
+        session,
+        model_rounds_used,
+        max_model_rounds,
+        super::types::HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES,
+    );
+}
+
+pub(crate) fn configure_headless_model_round_budget_with_stagnation(
+    session: &crate::agent::session::AgentSession,
+    model_rounds_used: usize,
+    max_model_rounds: usize,
+    max_no_progress_batches: usize,
+) {
     let remaining = max_model_rounds.saturating_sub(model_rounds_used).max(1);
-    *lock_unpoisoned(&session.loop_guard) =
-        LoopGuard::default_limits().with_max_model_rounds(remaining);
+    *lock_unpoisoned(&session.loop_guard) = LoopGuard::default_limits()
+        .with_max_model_rounds(remaining)
+        .with_max_no_progress_batches(max_no_progress_batches.max(1));
 }
 
 pub(crate) fn headless_reflection_outcome(

@@ -15,6 +15,7 @@ from typing import Any, Literal
 
 from pydantic import Field, ValidationError, field_validator, model_validator
 
+from app.harness_profiles import OFFICIAL_DEEPSEEK_ROUTES
 from app.models import EvalModel
 
 TOOL_CATALOG_FORMAT: Literal["tool_names_v1"] = "tool_names_v1"
@@ -94,12 +95,19 @@ class ExecutionIdentityV1(EvalModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> ExecutionIdentityV1:
+        if self.provider != "deepseek" or self.model != "deepseek-v4-flash":
+            raise ValueError(
+                "execution identity provider/model does not match frozen DeepSeek route"
+            )
         expected_family = {
             "anthropic_messages": "anthropic",
             "openai_chat_completions": "openai",
         }[self.transport]
         if self.endpoint_family != expected_family:
             raise ValueError("execution identity endpoint family does not match transport")
+        expected_base_url = OFFICIAL_DEEPSEEK_ROUTES[(self.transport, self.endpoint_family)]
+        if self.base_url != expected_base_url:
+            raise ValueError("execution identity base URL does not match frozen DeepSeek route")
         if self.temperature_policy == "explicit" and self.temperature is None:
             raise ValueError("explicit temperature policy requires temperature")
         if self.temperature_policy != "explicit" and self.temperature is not None:

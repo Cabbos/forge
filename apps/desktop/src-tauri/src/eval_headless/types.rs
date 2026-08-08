@@ -15,6 +15,8 @@ pub const HEADLESS_DEFAULT_REPAIR_ATTEMPTS: usize = 1;
 pub const HEADLESS_MAX_REPAIR_ATTEMPTS: usize = 3;
 pub const HEADLESS_DEFAULT_TIMEOUT_SECS: u64 = 600;
 pub const HEADLESS_DEFAULT_MAX_MODEL_ROUNDS: usize = 80;
+pub const HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES: usize = 6;
+pub const HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES: usize = 2;
 pub const HEADLESS_VALIDATION_TIMEOUT_SECS: u64 = 120;
 pub const HEADLESS_VALIDATION_OUTPUT_LIMIT: usize = 12_000;
 
@@ -192,6 +194,16 @@ pub struct EvalHeadlessTask {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub max_model_rounds: Option<usize>,
+    #[serde(default)]
+    pub stagnation_policy: EvalStagnationPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalStagnationPolicy {
+    #[default]
+    CurrentLoopGuardV1,
+    SemanticProgressV1,
 }
 
 #[derive(Debug, Clone)]

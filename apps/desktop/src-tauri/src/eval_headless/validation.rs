@@ -7,8 +7,10 @@ use crate::protocol::events::StreamEvent;
 
 use super::types::{
     EvalHeadlessTask, HeadlessValidationResult, HEADLESS_DEFAULT_MAX_MODEL_ROUNDS,
-    HEADLESS_DEFAULT_REPAIR_ATTEMPTS, HEADLESS_DEFAULT_TIMEOUT_SECS, HEADLESS_MAX_REPAIR_ATTEMPTS,
-    HEADLESS_VALIDATION_OUTPUT_LIMIT, HEADLESS_VALIDATION_TIMEOUT_SECS,
+    HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES, HEADLESS_DEFAULT_REPAIR_ATTEMPTS,
+    HEADLESS_DEFAULT_TIMEOUT_SECS, HEADLESS_MAX_REPAIR_ATTEMPTS,
+    HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES, HEADLESS_VALIDATION_OUTPUT_LIMIT,
+    HEADLESS_VALIDATION_TIMEOUT_SECS,
 };
 
 pub(crate) fn validation_commands_from_task(task: Option<&EvalHeadlessTask>) -> Vec<String> {
@@ -47,6 +49,17 @@ pub(crate) fn resolve_timeout_secs(task: Option<&EvalHeadlessTask>) -> u64 {
 pub(crate) fn resolve_max_model_rounds(task: Option<&EvalHeadlessTask>) -> usize {
     task.and_then(|task| task.max_model_rounds)
         .unwrap_or(HEADLESS_DEFAULT_MAX_MODEL_ROUNDS)
+}
+
+pub(crate) fn resolve_max_no_progress_batches(task: Option<&EvalHeadlessTask>) -> usize {
+    match task.map(|task| task.stagnation_policy) {
+        Some(super::types::EvalStagnationPolicy::SemanticProgressV1) => {
+            HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES
+        }
+        Some(super::types::EvalStagnationPolicy::CurrentLoopGuardV1) | None => {
+            HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES
+        }
+    }
 }
 
 pub(crate) async fn run_headless_validation_commands(
