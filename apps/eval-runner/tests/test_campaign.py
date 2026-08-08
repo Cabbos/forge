@@ -591,6 +591,30 @@ def test_accept_rejects_execution_route_drift_against_locked_profile(
     assert (campaign / "ledger.jsonl").read_bytes() == b""
 
 
+def test_accept_rejects_report_statistics_drift_from_trusted_trace(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    campaign = initialize(tmp_path)
+    (
+        trace_path,
+        report_path,
+        patch_path,
+        _trace_payload,
+        report_payload,
+    ) = write_acceptance_artifacts(campaign, tmp_path / "report-inputs")
+    report_payload["report"]["total_cost_usd"] = 999.0
+    report_path.write_text(json.dumps(report_payload, sort_keys=True), encoding="utf-8")
+    monkeypatch.setattr(
+        "app.campaign._run_accept_verification",
+        lambda *_args, **_kwargs: {"passed": True, "checks": []},
+    )
+
+    with pytest.raises(ValueError, match="report does not match trusted trace"):
+        accept(campaign, trace_path, report_path, patch_path)
+    assert (campaign / "ledger.jsonl").read_bytes() == b""
+
+
 def test_accept_rejects_unfrozen_task_definition_and_unsafe_run_id(
     tmp_path: Path,
     monkeypatch,

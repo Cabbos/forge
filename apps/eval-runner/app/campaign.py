@@ -58,6 +58,7 @@ from app.provenance_models import (
     Sha256,
     VerificationDigest,
 )
+from app.reporting import build_report
 from app.runner import run_shell_commands
 
 ARTIFACT_DIRECTORIES = ("traces", "reports", "patches", "verification")
@@ -917,6 +918,10 @@ def _validate_acceptance_evidence(
         raise ValueError("trusted trace reports scope violations")
     if not trace.file_diffs or not patch_bytes:
         raise ValueError("campaign accept requires a non-empty Forge patch")
+
+    expected_report = build_report([trace]).model_copy(update={"trust_result": report.trust_result})
+    if report != expected_report:
+        raise ValueError("campaign report does not match trusted trace")
 
     if report.trust_result.status != TrustStatus.TRUSTED or not report.trust_result.trusted:
         raise ValueError("campaign report is not trusted")
