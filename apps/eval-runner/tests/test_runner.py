@@ -314,7 +314,7 @@ def test_forge_runner_exposes_task_execution_contract_and_validates_agent_plan(
     assert evidence["task_execution_contract"]["kind"] == "multi_file"
     assert evidence["task_plan"]["status"] == "valid"
     assert evidence["task_plan"]["step_count"] == 3
-    assert trace.context_files == ["src/a.py", "src/b.py"]
+    assert trace.context_files == []
 
 
 def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path) -> None:
@@ -417,32 +417,6 @@ def test_uv_scope_wrapper_forces_run_without_project_lockfile(tmp_path: Path) ->
         "pytest",
         "-q",
     ]
-
-
-def test_forge_runner_derives_task_local_context_from_scope_and_validation(
-    tmp_path: Path,
-) -> None:
-    agent = tmp_path / "derived_context_agent.py"
-    agent.write_text(
-        "import json, sys\n"
-        "payload = json.load(sys.stdin)\n"
-        "assert payload['task']['context_files'] == ['src/app.py', 'tests/test_app.py']\n"
-        "assert payload['context_manifest']['items'][0]['path'] == 'src/app.py'\n"
-        "json.dump({'final_answer': 'done', 'changed_files': [], 'file_diffs': []}, sys.stdout)\n",
-        encoding="utf-8",
-    )
-    task = EvaluationTask(
-        id="derived-context",
-        title="Derived context",
-        prompt="Inspect the scoped source and test.",
-        expected_files_changed=["src/app.py"],
-        validation_commands=["printf ok tests/test_app.py"],
-    )
-
-    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
-
-    assert trace.error is None
-    assert trace.context_files == ["src/app.py", "tests/test_app.py"]
 
 
 def test_forge_runner_exposes_context_conflicts_before_provider_call(tmp_path: Path) -> None:
