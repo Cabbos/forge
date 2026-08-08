@@ -54,6 +54,52 @@ DEFAULT_SETUP_TIMEOUT_SECONDS = 300
 DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
 
 
+def _install_uv_scope_wrapper(runtime_state: Path, child_env: dict[str, str]) -> dict[str, str]:
+    """Keep agent-side ``uv run`` commands from mutating the observed workspace.
+
+    Forge cases provide explicit ``--no-project`` validation commands, but an agent
+    may improvise ``uv run pytest`` while exploring.  uv then creates a project
+    lockfile in the fixture.  A runtime-local shim injects ``--no-project`` for
+    unqualified ``uv run`` calls; explicit project selection remains untouched.
+    """
+
+    real_uv = shutil.which("uv", path=child_env.get("PATH"))
+    if real_uv is None:
+        return child_env
+
+    wrapper_dir = runtime_state / "bin"
+    wrapper_dir.mkdir(parents=True, exist_ok=True)
+    wrapper_path = wrapper_dir / "uv"
+    wrapper_path.write_text(
+        "#!/bin/sh\n"
+        "set -eu\n"
+        'if [ "${1:-}" = "run" ]; then\n'
+        '  subcommand="$1"\n'
+        "  shift\n"
+        "  project_mode=0\n"
+        '  for arg in "$@"; do\n'
+        '    case "$arg" in\n'
+        "      --no-project|--project|--project=*) project_mode=1 ;;\n"
+        "    esac\n"
+        "  done\n"
+        '  if [ "$project_mode" -eq 0 ]; then\n'
+        '    set -- "$subcommand" "--no-project" "$@"\n'
+        "  else\n"
+        '    set -- "$subcommand" "$@"\n'
+        "  fi\n"
+        "fi\n"
+        'exec "$FORGE_EVAL_REAL_UV" "$@"\n',
+        encoding="utf-8",
+    )
+    wrapper_path.chmod(0o755)
+    wrapped_env = dict(child_env)
+    wrapped_env["FORGE_EVAL_REAL_UV"] = real_uv
+    wrapped_env["PATH"] = os.pathsep.join(
+        part for part in (str(wrapper_dir), child_env.get("PATH", "")) if part
+    )
+    return wrapped_env
+
+
 class ForgeCredentialPreflight(EvalModel):
     ok: bool
     provider: str
@@ -542,6 +588,7 @@ class ForgeAgentRunner:
                     "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
+            child_env = _install_uv_scope_wrapper(runtime_state, child_env)
             setup_outputs = run_setup_commands(
                 task,
                 workspace,
@@ -751,6 +798,7 @@ class ForgeAgentRunner:
                                     "uv_cache_dir": "runtime-state/uv-cache",
                                 },
                                 "workspace_allowlist": [".bun-cache", ".uv-cache"],
+                                "uv_run_scope_wrapper": True,
                             },
                         ]
                     }

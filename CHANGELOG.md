@@ -1,5 +1,8 @@
 # Changelog
 
+- Forge eval child processes now use a runtime-local `uv` scope shim that adds
+  `--no-project` to unqualified exploratory `uv run` commands, preventing
+  accidental fixture lockfiles while recording the boundary in trace evidence.
 - Forge eval prompts now call out observed helper-file traps (`.cache-*`, repo-local
   `tools/*`, and generated lockfiles) and require cleanup before final verification;
   independent workspace snapshots remain the scope authority.

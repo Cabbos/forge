@@ -26,6 +26,7 @@ from app.models import (
 from app.runner import (
     DeterministicMockRunner,
     ForgeAgentRunner,
+    _install_uv_scope_wrapper,
     continuity_db_diagnostic,
     create_runner,
     prepare_workspace,
@@ -338,7 +339,8 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "assert 'do not create or edit .venv, uv.lock, node_modules, or cache files' "
             "in payload['prompt']\n"
             "assert 'Do not create helper files such as .cache-* or tools/*' in payload['prompt']\n"
-            "assert 'If a command generates a lockfile or temporary helper, remove it before final verification' "
+            "assert 'If a command generates a lockfile or temporary helper, remove it before final "
+            "verification' "
             "in payload['prompt']\n"
             "assert 'Target at most 12 model rounds' in payload['prompt']\n"
             "assert 'Do not repeat an unchanged read-only command' in payload['prompt']\n"
@@ -373,6 +375,45 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
     )
     assert policy_event["policy"]["prompt_mode"] == "minimal_v1"
     assert len(policy_event["prepared_context_files"]) == 16
+
+
+def test_uv_scope_wrapper_forces_run_without_project_lockfile(tmp_path: Path) -> None:
+    fake_uv = tmp_path / "uv"
+    args_file = tmp_path / "uv-args.txt"
+    fake_uv.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$UV_ARGS_FILE"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    child_env = {"PATH": str(tmp_path), "UV_ARGS_FILE": str(args_file)}
+
+    wrapped_env = _install_uv_scope_wrapper(tmp_path / "runtime-state", child_env)
+
+    subprocess.run(
+        ["uv", "run", "pytest", "-q"],
+        cwd=tmp_path,
+        env=wrapped_env,
+        check=True,
+    )
+    assert args_file.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--no-project",
+        "pytest",
+        "-q",
+    ]
+
+    subprocess.run(
+        ["uv", "run", "--no-project", "pytest", "-q"],
+        cwd=tmp_path,
+        env=wrapped_env,
+        check=True,
+    )
+    assert args_file.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--no-project",
+        "pytest",
+        "-q",
+    ]
 
 
 def test_forge_runner_exposes_context_conflicts_before_provider_call(tmp_path: Path) -> None:
@@ -1490,6 +1531,7 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
             "uv_cache_dir": "runtime-state/uv-cache",
         },
         "workspace_allowlist": [".bun-cache", ".uv-cache"],
+        "uv_run_scope_wrapper": True,
     } in trace.raw_events
 
 
