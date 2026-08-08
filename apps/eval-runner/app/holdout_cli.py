@@ -49,6 +49,11 @@ def holdout_main(argv: list[str]) -> int:
         _add_campaign_inputs(subparser)
     verify = commands.add_parser("verify")
     verify.add_argument("--report", type=Path)
+    verify.add_argument(
+        "--frozen",
+        action="store_true",
+        help="verify the sealed campaign without requiring the current worktree digest",
+    )
     _add_campaign_inputs(verify, required=False)
     args = parser.parse_args(argv)
 
@@ -162,7 +167,9 @@ def holdout_main(argv: list[str]) -> int:
         if args.command == "verify":
             if args.campaign is None:
                 raise ValueError("verify requires --report or --campaign")
-            verify_result = verify_holdout_campaign(**_campaign_kwargs(args))
+            verify_result = verify_holdout_campaign(
+                **_campaign_kwargs(args), require_current_source=not args.frozen
+            )
             payload = verify_result.model_dump(mode="json")
             report_path = args.campaign / "holdout-report.json"
             if report_path.exists():
@@ -186,7 +193,7 @@ def _add_campaign_inputs(parser: argparse.ArgumentParser, *, required: bool = Tr
     parser.add_argument("--dataset-lock", type=Path, default=DEFAULT_DATASET_LOCK)
 
 
-def _campaign_kwargs(args: argparse.Namespace) -> dict[str, Path]:
+def _campaign_kwargs(args: argparse.Namespace) -> dict[str, Any]:
     return {
         "campaign_root": args.campaign,
         "repository_root": REPOSITORY_ROOT,

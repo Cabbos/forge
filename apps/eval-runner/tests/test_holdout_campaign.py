@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+import app.holdout_campaign as holdout_campaign
 from app.baseline_models import BaselineComparison, BaselineComparisonMetrics
 from app.harness_profiles import load_harness_profile
 from app.holdout_campaign import (
@@ -149,3 +150,16 @@ def test_holdout_complete_campaign_publishes_index_and_canonical_report(tmp_path
     assert (campaign / "holdout-artifact-index.json").exists()
     verified = verify_holdout_campaign(**_kwargs(campaign))
     assert verified.ok is True
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(holdout_campaign, "_git_text", lambda *args: "0" * 40)
+    monkeypatch.setattr(holdout_campaign, "_dirty_state_sha256", lambda *args: "0" * 64)
+    try:
+        strict = verify_holdout_campaign(**_kwargs(campaign))
+        assert strict.ok is False
+        assert strict.blockers == ["campaign_state_invalid"]
+
+        frozen = verify_holdout_campaign(**_kwargs(campaign), require_current_source=False)
+        assert frozen.ok is True
+    finally:
+        monkeypatch.undo()

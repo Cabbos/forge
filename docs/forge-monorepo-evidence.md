@@ -28,7 +28,7 @@ enter a post-baseline product history; see
 | H1 | DeepSeek Anthropic control, budget ledger, unknown-cost recovery | development paid baseline machinery; no complete 30-case arm |
 | H2 | official Anthropic vs OpenAI Chat Completions route attestation and conformance | complete v6 development comparison (`no_material_difference`); no Responses or holdout claim |
 | H3 | minimal context manifest, bounded tool envelopes, typed stagnation policy | offline convergence evidence; no paid score improvement |
-| H4 | sealed 60-attempt holdout campaign runner, locked report/decision gate, and provenance campaign contract | resumable release boundary and auditable monorepo packaging; an actual holdout result still requires paid evidence and finalized campaign history |
+| H4 | sealed 60-attempt holdout campaign runner, locked report/decision gate, and provenance campaign contract | first real 60-attempt campaign is structurally valid but fails success/scope/round thresholds; no frontier claim |
 
 ## Reproducible gates
 
@@ -103,3 +103,15 @@ baseline was written by Forge, nor does a passing contract gate alone prove
 model authorship or frontier-level quality. Those claims require a finalized
 `FORGE-BUILD-MANIFEST.json` whose ledger and patch chain pass
 `campaign verify`.
+
+The first real H4 control campaign is recorded in
+[`forgebench-h4-paid-result.md`](forgebench-h4-paid-result.md). It closed all
+60 attempts at `1.80125860 CNY` with complete evidence coverage, but the
+canonical gate correctly failed at 0.7000 trusted success, 0.2333 scope
+violations, and 31.5 median rounds. This is diagnostic evidence for the next
+development-split harness iteration, not a passing holdout or frontier result.
+The campaign verifier has a strict live-source mode for active runs and a
+`holdout verify --campaign ... --frozen` mode for published artifacts. The
+frozen mode skips only the now-changed worktree digest while retaining all
+sealed identity, artifact, usage, trust, ledger, report, and threshold checks;
+it cannot trigger a provider call.

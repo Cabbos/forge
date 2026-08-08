@@ -440,6 +440,7 @@ def verify_holdout_campaign(
     cases_path: Path,
     dataset_lock_path: Path,
     profile_path: Path,
+    require_current_source: bool = True,
 ) -> HoldoutVerification:
     blockers: list[str] = []
     attempts = 0
@@ -452,6 +453,7 @@ def verify_holdout_campaign(
             cases_path=cases_path,
             dataset_lock_path=dataset_lock_path,
             profile_path=profile_path,
+            require_current_source=require_current_source,
         )
         profile = load_harness_profile(profile_path)
         tasks, _ = _load_locked_holdout_tasks(cases_path, dataset_lock_path)
@@ -660,6 +662,7 @@ def _verify_campaign_inputs(
     cases_path: Path,
     dataset_lock_path: Path,
     profile_path: Path,
+    require_current_source: bool = True,
 ) -> HoldoutCampaignMetadata:
     metadata = _read_canonical_model(
         campaign_root / _CAMPAIGN_FILE, HoldoutCampaignMetadata, "campaign_metadata_invalid"
@@ -696,10 +699,14 @@ def _verify_campaign_inputs(
         or [task.id for task in tasks] != metadata.case_ids
     ):
         raise CampaignStateError("holdout_dataset_fingerprint_mismatch")
-    if _git_text(repository_root.resolve(), "rev-parse", "HEAD") != metadata.source_commit:
-        raise CampaignStateError("source_commit_mismatch")
-    if _dirty_state_sha256(repository_root.resolve(), campaign_root) != metadata.dirty_state_sha256:
-        raise CampaignStateError("dirty_state_digest_mismatch")
+    if require_current_source:
+        if _git_text(repository_root.resolve(), "rev-parse", "HEAD") != metadata.source_commit:
+            raise CampaignStateError("source_commit_mismatch")
+        if (
+            _dirty_state_sha256(repository_root.resolve(), campaign_root)
+            != metadata.dirty_state_sha256
+        ):
+            raise CampaignStateError("dirty_state_digest_mismatch")
     return metadata
 
 

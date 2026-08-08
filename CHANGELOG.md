@@ -1,5 +1,8 @@
 # Changelog
 
+- Recorded the first real ForgeBench H4 control campaign: all 60 sealed attempts closed with known usage and complete evidence coverage, while the locked gate correctly rejected 0.7000 trusted success, 0.2333 scope violations, and 31.5 median rounds. The result is diagnostic only and does not claim frontier quality.
+- Added a frozen post-publication verification mode for sealed H4 artifacts. Active runs still require the current source and dirty-state digest; `holdout verify --campaign ... --frozen` skips only that live-worktree comparison while retaining sealed identity, trust, usage, ledger, report, artifact-index, and threshold checks without starting a provider call.
+
 - Added the sealed ForgeBench H4 campaign runner. A canonical development comparison is required before holdout initialization; each 20-case × 3-repetition call has durable pending, recovery, usage, trust, budget-chain, artifact-index, and canonical-report evidence, with interrupted calls closed as unknown-cost and never replayed. Added the corresponding offline acceptance gate and explicit no-frontier-claim boundary.
 
 - Isolated eval doctor prechecks and every real Forge attempt from desktop runtime state. Attempts now use sibling `workspace` and `runtime-state` roots, preserve only installed Rust toolchain locations, and require a real observer change plus clean-fixture patch replay before the golden harness can be trusted; this is H0 evidence, not a 20-case holdout or frontier claim.
