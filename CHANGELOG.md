@@ -1,5 +1,9 @@
 # Changelog
 
+- The paid H1 scope-firewall diagnostic now records a runtime-local `uv` shim
+  and exact allowlist boundary reaching 30/30 scope-clean development attempts;
+  the median-round gate remains explicitly unmet and no holdout/frontier claim is
+  made.
 - Forge eval child processes now use a runtime-local `uv` scope shim that adds
   `--no-project` to unqualified exploratory `uv run` commands, preventing
   accidental fixture lockfiles while recording the boundary in trace evidence.

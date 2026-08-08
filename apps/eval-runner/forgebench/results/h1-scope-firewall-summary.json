@@ -1,0 +1,86 @@
+{
+  "schema_version": 1,
+  "dataset_fingerprint": "39ac183a1f3f8e7c0f29dbbe5d4e302765935d94417f8c2adffb984632223dbd",
+  "profile_id": "deepseek-v4-flash-anthropic-baseline-v1",
+  "harness_fingerprint": "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66",
+  "raw_campaign_roots": {
+    "pre_firewall": "/private/tmp/forge-h1-scopefirewall-e289-v3",
+    "uv_firewall": "/private/tmp/forge-h1-uvfirewall-f146",
+    "scope_hard_boundary": "/private/tmp/forge-h1-scopehard-7746",
+    "round_budget_probe": "/private/tmp/forge-h1-roundbudget-34a8"
+  },
+  "campaigns": {
+    "pre_firewall": {
+      "campaign_id": "h1-scopefirewall-e289-v3",
+      "source_commit": "e289a7be56274800b9dd5e410b56553d06305dd4",
+      "report_sha256": "23de3f81553dd1181a476c3cc98ecf48cfa3c7f25c4e95624e1d0c7398766918",
+      "artifact_index_sha256": "d0613294847225c6ed532471139be8e8f16e058a8f6d63ecb4d8f9b69041aa35",
+      "trusted_success_rate": 0.8333333333333334,
+      "verification_pass_rate": 0.9666666666666667,
+      "scope_violation_rate": 0.13333333333333333,
+      "median_model_rounds": 16.0,
+      "p95_model_rounds": 28.0,
+      "median_tool_calls": 26.5,
+      "p95_tool_calls": 47.0,
+      "repeated_tool_call_rate": 0.7819277108433735,
+      "total_cost_cny": "0.71730156"
+    },
+    "uv_firewall": {
+      "campaign_id": "h1-uvfirewall-f146",
+      "source_commit": "f1467900fdba1be432c39b2f5ad8450ea46a0055",
+      "report_sha256": "920d6d3b6433917665751195e6ebab4004957d464a4d0294e7386b7f9ae708da",
+      "artifact_index_sha256": "f324b257d58bde4e479d029685fe565d4e445ee028e386a8466d78368366b71f",
+      "trusted_success_rate": 0.9666666666666667,
+      "verification_pass_rate": 1.0,
+      "scope_violation_rate": 0.03333333333333333,
+      "median_model_rounds": 16.0,
+      "p95_model_rounds": 28.0,
+      "median_tool_calls": 26.0,
+      "p95_tool_calls": 49.0,
+      "repeated_tool_call_rate": 0.7713226205191595,
+      "total_cost_cny": "0.64706196"
+    },
+    "scope_hard_boundary": {
+      "campaign_id": "h1-scopehard-7746",
+      "source_commit": "7746f459fe8a2d3c70d97525df1f7d07d51c0def",
+      "report_sha256": "47e60ed937fc0fdbf699d56e3c6b422f47447dd0860528ec012a529f572e8e7b",
+      "artifact_index_sha256": "a83a951709dc55afec0c557d7ba194793f944bb022be2525c9ed4b2c45e02108",
+      "trusted_success_rate": 1.0,
+      "verification_pass_rate": 1.0,
+      "scope_violation_rate": 0.0,
+      "median_model_rounds": 15.0,
+      "p95_model_rounds": 33.0,
+      "median_tool_calls": 24.0,
+      "p95_tool_calls": 52.0,
+      "repeated_tool_call_rate": 0.7706766917293233,
+      "total_cost_cny": "0.63038252"
+    },
+    "round_budget_probe": {
+      "campaign_id": "h1-roundbudget-34a8",
+      "source_commit": "34a85641da2b41ae4797418ebd0f1c872580ada6",
+      "report_sha256": "e7993f881cfbb2920fa8ca0322bc12f16db9eaf5c943e18e5ccf98b79b134989",
+      "artifact_index_sha256": "17a983bff3ac3550aff9e59e390afa7f7fcdfed8458481b0cf3496c4ba599506",
+      "trusted_success_rate": 0.9666666666666667,
+      "verification_pass_rate": 0.9666666666666667,
+      "scope_violation_rate": 0.0,
+      "median_model_rounds": 16.0,
+      "p95_model_rounds": 35.0,
+      "median_tool_calls": 24.0,
+      "p95_tool_calls": 53.0,
+      "repeated_tool_call_rate": 0.7723785166240409,
+      "total_cost_cny": "0.67849560",
+      "promoted": false,
+      "reverted": true
+    }
+  },
+  "claims": {
+    "development_only": true,
+    "paired_causal_comparison": false,
+    "holdout_accessed": false,
+    "frontier_claim": false,
+    "scope_gate_met": true,
+    "round_gate_met": false,
+    "effective_stack": ["runtime_uv_scope_wrapper", "hard_exact_allowlist_prompt"],
+    "next_focus": "reduce_model_rounds_without_reducing_trusted_success"
+  }
+}
