@@ -390,11 +390,11 @@ class BaselineComparison(EvalModel):
     candidate_metrics: BaselineComparisonMetrics
     winner: Literal["control", "candidate", "no_material_difference"]
     blockers: list[str] = Field(default_factory=list)
-    control_profile_id: str | None = None
-    candidate_profile_id: str | None = None
-    control_harness_fingerprint: Sha256 | None = None
-    candidate_harness_fingerprint: Sha256 | None = None
-    source_commit: GitSha1 | None = None
+    control_profile_id: str
+    candidate_profile_id: str
+    control_harness_fingerprint: Sha256
+    candidate_harness_fingerprint: Sha256
+    source_commit: GitSha1
     bootstrap_intervals: dict[str, BootstrapInterval] = Field(default_factory=dict)
     selection_policy: Literal["paired_bootstrap_quality_gated_v1"] = (
         "paired_bootstrap_quality_gated_v1"
@@ -405,10 +405,42 @@ class BaselineComparison(EvalModel):
         _validate_safe_ids(self.control_campaign_id, self.candidate_campaign_id)
         if self.control_campaign_id == self.candidate_campaign_id:
             raise ValueError("comparison campaigns must be distinct")
+        if self.control_profile_id == self.candidate_profile_id:
+            raise ValueError("comparison profiles must be distinct")
+        if self.control_harness_fingerprint == self.candidate_harness_fingerprint:
+            raise ValueError("comparison harness fingerprints must be distinct")
         if self.control_metrics.trusted_attempts != self.paired_attempts:
             raise ValueError("control campaign must have all attempts trusted")
         if self.candidate_metrics.trusted_attempts != self.paired_attempts:
             raise ValueError("candidate campaign must have all attempts trusted")
+        if self.control_metrics.trust_blockers or self.candidate_metrics.trust_blockers:
+            raise ValueError("trusted comparison metrics cannot contain trust blockers")
+        if len(self.outcome_changes) != self.paired_attempts:
+            raise ValueError("comparison must contain 30 paired outcome records")
+        repetitions: dict[str, int] = {"r1": 0, "r2": 0, "r3": 0}
+        for key, value in self.outcome_changes.items():
+            repetition, separator, task_id = key.partition(":")
+            if (
+                not separator
+                or repetition not in repetitions
+                or SAFE_ID_PATTERN.fullmatch(task_id) is None
+                or not value.strip()
+            ):
+                raise ValueError("comparison outcome keys must bind repetition and task")
+            repetitions[repetition] += 1
+        if set(repetitions.values()) != {10}:
+            raise ValueError("comparison must contain 10 paired outcomes per repetition")
+        expected_intervals = {
+            "trusted_success_rate_delta",
+            "verification_pass_rate_delta",
+            "scope_violation_rate_delta",
+            "median_model_rounds_delta",
+            "median_duration_ms_delta",
+        }
+        if set(self.bootstrap_intervals) != expected_intervals:
+            raise ValueError("comparison bootstrap intervals are incomplete")
+        if any(interval.resamples != 2_000 for interval in self.bootstrap_intervals.values()):
+            raise ValueError("comparison bootstrap intervals must use 2000 resamples")
         if any(not key.strip() or not value.strip() for key, value in self.outcome_changes.items()):
             raise ValueError("comparison outcomes must contain nonblank keys and values")
         if any(not key.strip() for key in self.bootstrap_intervals):

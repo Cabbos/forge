@@ -17,7 +17,7 @@ from app.baseline_comparison import (
     compare_baseline_campaigns,
     write_baseline_comparison,
 )
-from app.baseline_models import BaselineComparisonMetrics, BootstrapInterval
+from app.baseline_models import BaselineComparison, BaselineComparisonMetrics, BootstrapInterval
 from app.harness_profiles import harness_profile_bytes, load_harness_profile
 from app.models import EvaluationTask
 from tests.test_baseline import FakeRunner, make_trace
@@ -151,6 +151,91 @@ def test_selection_is_uncertainty_gated_and_fail_closed() -> None:
     assert _select_winner(metrics, metrics, intervals) == "candidate"
     intervals["scope_violation_rate_delta"] = interval(0.1, 0.01, 0.2)
     assert _select_winner(metrics, metrics, intervals) == "control"
+
+
+def _comparison_fixture() -> BaselineComparison:
+    metrics = BaselineComparisonMetrics(
+        trusted_attempts=30,
+        trusted_success_rate=0.9,
+        verification_pass_rate=1.0,
+        scope_violation_rate=0.0,
+        median_model_rounds=10.0,
+        p95_model_rounds=12.0,
+        median_cost_cny=Decimal("0.1"),
+        p95_cost_cny=Decimal("0.2"),
+        median_duration_ms=1.0,
+        p95_duration_ms=2.0,
+        failure_categories={"none": 30},
+        provider_errors={},
+        trust_blockers={},
+    )
+    intervals = {
+        name: BootstrapInterval(
+            estimate=0.0,
+            low=0.0,
+            high=0.0,
+            resamples=2_000,
+            seed=index,
+        )
+        for index, name in enumerate(
+            (
+                "trusted_success_rate_delta",
+                "verification_pass_rate_delta",
+                "scope_violation_rate_delta",
+                "median_model_rounds_delta",
+                "median_duration_ms_delta",
+            )
+        )
+    }
+    return BaselineComparison(
+        control_campaign_id="control-v6",
+        candidate_campaign_id="candidate-v6",
+        dataset_fingerprint="a" * 64,
+        model="deepseek-v4-flash",
+        control_transport="anthropic_messages",
+        candidate_transport="openai_chat_completions",
+        outcome_changes={
+            f"r{repetition}:case-{index:02d}": "success->success"
+            for repetition in range(1, 4)
+            for index in range(10)
+        },
+        control_metrics=metrics,
+        candidate_metrics=metrics,
+        winner="no_material_difference",
+        control_profile_id="deepseek-v4-flash-anthropic-baseline-v1",
+        candidate_profile_id="deepseek-v4-flash-openai-chat-control-v1",
+        control_harness_fingerprint="b" * 64,
+        candidate_harness_fingerprint="c" * 64,
+        source_commit="d" * 40,
+        bootstrap_intervals=intervals,
+    )
+
+
+def test_comparison_rejects_incomplete_pair_evidence() -> None:
+    fixture = _comparison_fixture()
+
+    with pytest.raises(ValueError, match="30 paired outcome"):
+        BaselineComparison.model_validate(
+            fixture.model_copy(update={"outcome_changes": {"r1:case-00": "success->success"}})
+        )
+
+    with pytest.raises(ValueError, match="bootstrap intervals"):
+        BaselineComparison.model_validate(fixture.model_copy(update={"bootstrap_intervals": {}}))
+
+
+def test_comparison_requires_bound_identity_and_clean_trust_metrics() -> None:
+    fixture = _comparison_fixture()
+
+    with pytest.raises(ValueError, match="string"):
+        payload = fixture.model_dump(mode="json")
+        payload["source_commit"] = None
+        BaselineComparison.model_validate(payload)
+
+    dirty_metrics = fixture.control_metrics.model_copy(update={"trust_blockers": {"x": 1}})
+    with pytest.raises(ValueError, match="trusted comparison"):
+        payload = fixture.model_dump(mode="json")
+        payload["control_metrics"] = dirty_metrics.model_dump(mode="json")
+        BaselineComparison.model_validate(payload)
 
 
 def test_comparison_metrics_use_typed_failure_taxonomy() -> None:

@@ -76,10 +76,12 @@ profile, runner, comparison, and usage contracts. Passing H2 proves the paired
 transport harness is wired and fail-closed on the development split. It does
 not prove a holdout score, frontier KPI, or production certification.
 
-The comparison artifact must show both arms are trusted and complete, verify
-that transport/endpoint family is the only experimental difference, and publish
-per-task success, scope, rounds, cost, latency, provider errors, trust blockers,
-and the selected arm. If the candidate does not materially improve trusted
+The comparison artifact must show both arms are trusted and complete, bind both
+profile IDs/fingerprints and the source commit, contain exactly 30 paired
+outcome records (10 per repetition), and publish all five deterministic paired
+bootstrap intervals. It must verify that transport/endpoint family is the only
+experimental difference and publish per-task success, scope, rounds, cost,
+latency, provider errors, trust blockers, and the selected arm. If the candidate does not materially improve trusted
 success or safety-preserving efficiency, Anthropic remains the default for the
 next phase. The current paid diagnostic boundary is recorded in
 [`forgebench-h2-paid-diagnostic.md`](forgebench-h2-paid-diagnostic.md); it is

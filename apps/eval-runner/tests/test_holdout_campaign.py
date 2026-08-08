@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 import app.holdout_campaign as holdout_campaign
-from app.baseline_models import BaselineComparison, BaselineComparisonMetrics
+from app.baseline_models import BaselineComparison, BaselineComparisonMetrics, BootstrapInterval
 from app.harness_contracts import resolve_typed_failure_category
 from app.harness_profiles import load_harness_profile
 from app.holdout_campaign import (
@@ -53,7 +53,11 @@ def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
         model="deepseek-v4-flash",
         control_transport="anthropic_messages",
         candidate_transport="openai_chat_completions",
-        outcome_changes={"r1:case": "passed->passed"},
+        outcome_changes={
+            f"r{repetition}:case-{index:02d}": "passed->passed"
+            for repetition in range(1, 4)
+            for index in range(10)
+        },
         control_metrics=metrics,
         candidate_metrics=metrics,
         winner="no_material_difference",
@@ -64,6 +68,24 @@ def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
         source_commit=__import__("subprocess")
         .check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, text=True)
         .strip(),
+        bootstrap_intervals={
+            name: BootstrapInterval(
+                estimate=0.0,
+                low=0.0,
+                high=0.0,
+                resamples=2_000,
+                seed=index,
+            )
+            for index, name in enumerate(
+                (
+                    "trusted_success_rate_delta",
+                    "verification_pass_rate_delta",
+                    "scope_violation_rate_delta",
+                    "median_model_rounds_delta",
+                    "median_duration_ms_delta",
+                )
+            )
+        },
     )
     path = tmp_path / "comparison.json"
     raw = canonical_json_bytes(comparison.model_dump(mode="json")) + b"\n"
