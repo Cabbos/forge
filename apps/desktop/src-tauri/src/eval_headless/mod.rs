@@ -1473,6 +1473,39 @@ deleted file mode 100644\n\
     }
 
     #[test]
+    fn summarize_events_counts_model_rounds_not_parallel_tool_calls() {
+        let tool_start = |block_id: &str| StreamEvent::ToolCallStart {
+            session_id: "session-1".to_string(),
+            block_id: block_id.to_string(),
+            tool_name: "read_file".to_string(),
+            tool_input: serde_json::json!({"path": "src/app.py"}),
+        };
+        let tool_result = |block_id: &str| StreamEvent::ToolCallResult {
+            session_id: "session-1".to_string(),
+            block_id: block_id.to_string(),
+            result: "ok".to_string(),
+            is_error: false,
+            duration_ms: 1,
+        };
+        let events = vec![
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            tool_start("tool-1"),
+            tool_start("tool-2"),
+            tool_result("tool-1"),
+            tool_result("tool-2"),
+            agent_turn_event("session-1", AgentTurnStatus::RunningTools),
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            tool_start("tool-3"),
+            tool_result("tool-3"),
+        ];
+
+        let summary = summary::summarize_events(&events);
+
+        assert_eq!(summary.model_rounds, 2);
+        assert_eq!(summary.tool_calls.len(), 3);
+    }
+
+    #[test]
     fn validation_commands_prefer_case_commands_and_fall_back_to_verification_command() {
         let task = EvalHeadlessTask {
             id: Some("case-1".to_string()),

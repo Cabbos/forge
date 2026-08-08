@@ -11,6 +11,8 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
     let mut pending_shells: HashMap<String, PendingShell> = HashMap::new();
     let mut last_turn_was_calling_model = false;
     let mut calling_model_transitions = 0;
+    let mut last_event_was_tool_start = false;
+    let mut tool_batch_starts = 0;
 
     for event in events {
         match event {
@@ -20,7 +22,14 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 tool_input,
                 ..
             } => {
-                summary.model_rounds += 1;
+                // A single model round may request several tools in parallel.
+                // Count the contiguous batch only as a fallback for old or
+                // partial event streams that lack AgentTurnUpdated events;
+                // never count one ToolCallStart as one model round.
+                if !last_event_was_tool_start {
+                    tool_batch_starts += 1;
+                }
+                last_event_was_tool_start = true;
                 pending_tools.insert(
                     block_id.clone(),
                     PendingTool {
@@ -36,6 +45,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 duration_ms,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let pending = pending_tools.remove(block_id).unwrap_or_default();
                 summary.tool_calls.push(serde_json::json!({
                     "command": format_tool_command(&pending.name, &pending.input),
@@ -48,6 +58,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
             StreamEvent::ShellStart {
                 block_id, command, ..
             } => {
+                last_event_was_tool_start = false;
                 pending_shells.insert(
                     block_id.clone(),
                     PendingShell {
@@ -59,6 +70,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
             StreamEvent::ShellOutput {
                 block_id, content, ..
             } => {
+                last_event_was_tool_start = false;
                 pending_shells
                     .entry(block_id.clone())
                     .or_default()
@@ -70,6 +82,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 exit_code,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let pending = pending_shells.remove(block_id).unwrap_or_default();
                 summary.shell_outputs.push(serde_json::json!({
                     "command": pending.command,
@@ -80,6 +93,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 }));
             }
             StreamEvent::ConfirmAsk { .. } => {
+                last_event_was_tool_start = false;
                 summary.confirm_requests += 1;
             }
             StreamEvent::ContextCompacted {
@@ -90,6 +104,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 estimated_tokens_after,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let saved = estimated_tokens_before.saturating_sub(*estimated_tokens_after) as u64;
                 let reduction_percent = if *estimated_tokens_before > 0 {
                     ((*estimated_tokens_before - *estimated_tokens_after) as f64
@@ -116,10 +131,12 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 output_tokens,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 summary.input_tokens = Some(*input_tokens);
                 summary.output_tokens = Some(*output_tokens);
             }
             StreamEvent::AgentTurnUpdated { state, .. } => {
+                last_event_was_tool_start = false;
                 let is_calling_model = state.status == AgentTurnStatus::CallingModel;
                 if is_calling_model && !last_turn_was_calling_model {
                     calling_model_transitions += 1;
@@ -130,9 +147,11 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
         }
     }
 
-    if summary.model_rounds == 0 {
-        summary.model_rounds = calling_model_transitions;
-    }
+    summary.model_rounds = if calling_model_transitions > 0 {
+        calling_model_transitions
+    } else {
+        tool_batch_starts
+    };
 
     summary
 }
