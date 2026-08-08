@@ -36,7 +36,11 @@ from app.patches import replay_patch
 from app.process_control import CancelRequested, never_cancelled, run_bounded_process
 from app.sandbox import scrub_future_repo_state
 from app.trace import duration_ms, utc_now
-from app.workspace_observer import observe_workspace_changes, snapshot_workspace
+from app.workspace_observer import (
+    EPHEMERAL_CACHE_DIRS,
+    observe_workspace_changes,
+    snapshot_workspace,
+)
 
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
 DEFAULT_SETUP_TIMEOUT_SECONDS = 300
@@ -805,7 +809,11 @@ class ForgeAgentRunner:
         shell_outputs = TypeAdapter(list[ShellOutput]).validate_python(
             [*setup_outputs, *payload.get("shell_outputs", []), *all_validation_outputs]
         )
-        file_diffs = TypeAdapter(list[FileDiff]).validate_python(payload.get("file_diffs", []))
+        file_diffs = [
+            diff
+            for diff in TypeAdapter(list[FileDiff]).validate_python(payload.get("file_diffs", []))
+            if not _is_ephemeral_cache_path(diff.path)
+        ]
         verification_result = (
             VerificationResult.model_validate(payload["verification_result"])
             if payload.get("verification_result") is not None
@@ -1276,6 +1284,10 @@ def mock_tool_calls(
             duration_ms=35,
         ),
     ]
+
+
+def _is_ephemeral_cache_path(path: str) -> bool:
+    return any(part in EPHEMERAL_CACHE_DIRS for part in Path(path).parts)
 
 
 def build_mock_file_diffs(changed_files: Sequence[str]) -> list[FileDiff]:

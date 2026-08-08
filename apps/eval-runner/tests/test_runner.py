@@ -1369,6 +1369,7 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
         "sqlite3.connect(continuity_db).close()\n"
         "(workspace/'src'/'app.py').write_text('after\\n')\n"
         "json.dump({'final_answer':'done','changed_files':['src/app.py'],'file_diffs':["
+        "{'path':'.uv-cache/interpreter.msgpack','change_type':'added','diff':'cache'},"
         "{'path':'src/app.py','change_type':'modified','diff':"
         '"diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n'
         '+++ b/src/app.py\\n@@ -1 +1 @@\\n-before\\n+after\\n"}]},sys.stdout)\n',
@@ -1397,6 +1398,7 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
 
     assert trace.changed_files == ["src/app.py"]
     assert trace.scope_violations == []
+    assert [diff.path for diff in trace.file_diffs] == ["src/app.py"]
     assert trace.patch_replay is not None
     assert trace.patch_replay.ok is True
     assert {
