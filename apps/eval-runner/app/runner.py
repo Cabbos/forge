@@ -1851,8 +1851,6 @@ def _render_eval_prompt(
         "- Run the targeted validation, then stop once the task is verified.\n"
         "- Target at most 12 model rounds: inspect early, make the smallest edit, validate, "
         "and stop; do not spend rounds polishing an already verified result.\n"
-        "- Phase budget: inspect by round 3, edit by round 6, verify by round 10, and stop by "
-        "round 12 unless a single evidence-driven repair is required.\n"
         "- Do not repeat an unchanged read-only command; only rerun it after new evidence or "
         "a file change."
     )
