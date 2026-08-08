@@ -1,5 +1,8 @@
 # Changelog
 
+- Forge eval prompts now call out observed helper-file traps (`.cache-*`, repo-local
+  `tools/*`, and generated lockfiles) and require cleanup before final verification;
+  independent workspace snapshots remain the scope authority.
 - Forge eval prompts now carry an explicit twelve-round convergence target and
   forbid repeating unchanged read-only commands, reducing late-loop waste while
   preserving the hard model-round cap and independent terminal evidence gates.
