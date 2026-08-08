@@ -17,10 +17,11 @@ class FileState:
 
 WorkspaceSnapshot = dict[str, FileState]
 
-# These are controller-owned disposable caches, never product source.  Keep the
-# allowlist narrow: only the cache directory that Forge's Bun/uv verification
-# path is known to create is excluded from the observed patch boundary.
-EPHEMERAL_CACHE_DIRS = frozenset({".bun-cache"})
+# These are controller-owned disposable caches, never product source. Keep the
+# allowlist narrow and explicit: Forge's Bun and uv verification paths can both
+# create these directories inside a fixture despite isolated cache environment
+# variables being propagated to child processes.
+EPHEMERAL_CACHE_DIRS = frozenset({".bun-cache", ".uv-cache"})
 
 
 def snapshot_workspace(workspace: Path) -> WorkspaceSnapshot:

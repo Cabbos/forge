@@ -40,6 +40,15 @@ envelopes/signals are validated strictly. Missing progress signals are marked
 `source: missing`; they are never inferred as success or silently treated as
 progress.
 
+The first post-H4 development probe on the scope prompt guard exposed one
+additional observer false positive: an OpenAI arm created `.uv-cache` inside
+the fixture even though `UV_CACHE_DIR` was isolated. The control arm still
+closed 30/30 with 0.9000 trusted success, 0.0333 scope violations, and 26.5
+median rounds; the candidate stopped safely at 23/30 when the cache files made
+patch replay untrusted. `.uv-cache` is now an explicit disposable-cache
+allowlist entry alongside `.bun-cache`; the interrupted candidate is not
+replayed or promoted to a comparison result.
+
 Baseline reports aggregate the event into `harness_telemetry`: contract
 coverage, tool-call histogram and repeated-call rate, context byte/token
 percentiles and tier totals, duplicate/conflict rates, stagnation redirects and

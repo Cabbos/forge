@@ -680,7 +680,7 @@ class ForgeAgentRunner:
                                     "bun_install_cache_dir": "runtime-state/bun-cache",
                                     "uv_cache_dir": "runtime-state/uv-cache",
                                 },
-                                "workspace_allowlist": [".bun-cache"],
+                                "workspace_allowlist": [".bun-cache", ".uv-cache"],
                             },
                         ]
                     }

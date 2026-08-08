@@ -100,6 +100,21 @@ def test_workspace_snapshot_excludes_controller_owned_bun_cache(tmp_path: Path) 
     assert observation.mismatch_files == []
 
 
+def test_workspace_snapshot_excludes_controller_owned_uv_cache(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    cache_file = workspace / ".uv-cache" / "interpreter" / "msgpack"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"ephemeral cache")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == []
+    assert observation.mismatch_files == []
+
+
 def test_workspace_snapshot_still_observes_product_files_next_to_bun_cache(
     tmp_path: Path,
 ) -> None:

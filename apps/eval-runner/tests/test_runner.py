@@ -1361,7 +1361,7 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
             "bun_install_cache_dir": "runtime-state/bun-cache",
             "uv_cache_dir": "runtime-state/uv-cache",
         },
-        "workspace_allowlist": [".bun-cache"],
+        "workspace_allowlist": [".bun-cache", ".uv-cache"],
     } in trace.raw_events
 
 
