@@ -14,8 +14,9 @@ from app.holdout_campaign import (
     run_holdout_campaign,
     verify_holdout_campaign,
 )
+from app.models import EvaluationTask
 from app.provenance import canonical_json_bytes, sha256_bytes
-from tests.test_baseline import FakeRunner
+from tests.test_baseline import FakeRunner, make_trace
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EVAL_ROOT = Path(__file__).resolve().parents[1]
@@ -92,6 +93,24 @@ def _kwargs(campaign: Path) -> dict[str, Path]:
         "dataset_lock_path": DATASET_LOCK,
         "profile_path": PROFILE,
     }
+
+
+def test_holdout_evidence_prefers_typed_failure_taxonomy_and_keeps_legacy_fallback() -> None:
+    task = EvaluationTask(id="taxonomy-case", title="Taxonomy", prompt="Run the task.")
+    legacy_trace = make_trace(task)
+    assert holdout_campaign._terminal_failure_category(legacy_trace, "none") == "none"
+
+    typed_trace = legacy_trace.model_copy(
+        update={
+            "raw_events": [
+                {
+                    "event_type": "harness_contract_evidence",
+                    "failure_taxonomy": {"primary": "passed"},
+                }
+            ]
+        }
+    )
+    assert holdout_campaign._terminal_failure_category(typed_trace, "none") == "passed"
 
 
 def test_holdout_init_locks_sealed_split_and_development_comparison(tmp_path: Path) -> None:

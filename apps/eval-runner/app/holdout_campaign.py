@@ -53,6 +53,7 @@ from app.baseline_models import (
 from app.cases import load_cases, validate_case_quality
 from app.datasets import dataset_fingerprint
 from app.harness_checks import run_observer_patch_replay_self_check
+from app.harness_contracts import PrimaryFailureCategory
 from app.harness_profiles import (
     HarnessProfileV1,
     harness_profile_bytes,
@@ -68,7 +69,7 @@ from app.holdout_gate import (
     summarize_holdout_attempts,
 )
 from app.metrics import trace_passed
-from app.models import DatasetSplit, EvalModel, EvaluationTask
+from app.models import AgentTrace, DatasetSplit, EvalModel, EvaluationTask
 from app.provenance import canonical_json_bytes, sha256_bytes
 from app.provenance_models import SAFE_ID_PATTERN, SECRET_PATTERN, GitSha1, Sha256
 from app.provider_usage import account_provider_usage, provider_events_from_trace
@@ -767,11 +768,34 @@ def _evidence_for_artifact(
         patch_replay=artifact.trace.patch_replay is not None and artifact.trace.patch_replay.ok,
         verification_evidence=artifact.trace.verification_result is not None,
         usage_known=usage_known,
-        terminal_failure_category=artifact.primary_failure_category.strip() or None,
+        terminal_failure_category=_terminal_failure_category(
+            artifact.trace, artifact.primary_failure_category
+        ),
         cost_cny=artifact.usage.cost_cny
         if usage_known and artifact.usage.cost_cny is not None
         else profile.max_cost_cny_per_task,
     )
+
+
+def _terminal_failure_category(trace: AgentTrace, legacy_category: str) -> str | None:
+    """Prefer the typed H3 taxonomy while preserving pre-taxonomy H1 artifacts."""
+
+    taxonomy_event = next(
+        (
+            event
+            for event in reversed(trace.raw_events)
+            if event.get("event_type") == "harness_contract_evidence"
+        ),
+        None,
+    )
+    if taxonomy_event is not None:
+        taxonomy = taxonomy_event.get("failure_taxonomy")
+        primary = taxonomy.get("primary") if isinstance(taxonomy, dict) else None
+        try:
+            return PrimaryFailureCategory(primary).value
+        except (TypeError, ValueError):
+            return PrimaryFailureCategory.HARNESS_CONTRACT_ERROR.value
+    return legacy_category.strip() or None
 
 
 def _build_holdout_report(
