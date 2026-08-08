@@ -93,6 +93,11 @@ def _build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--control-profile", type=Path, required=True)
     compare.add_argument("--candidate-campaign", type=Path, required=True)
     compare.add_argument("--candidate-profile", type=Path, required=True)
+    compare.add_argument(
+        "--comparison-mode",
+        choices=("transport_ab_v1", "policy_ab_v1"),
+        default="transport_ab_v1",
+    )
     compare.add_argument("--output", type=Path, required=True)
     compare.add_argument("--cases", type=Path, default=DEFAULT_CASES)
     compare.add_argument("--dataset-lock", type=Path, default=DEFAULT_DATASET_LOCK)
@@ -258,6 +263,7 @@ def _compare(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         dataset_lock_path=args.dataset_lock,
         control_profile_path=args.control_profile,
         candidate_profile_path=args.candidate_profile,
+        comparison_mode=args.comparison_mode,
     )
     digest = write_baseline_comparison(args.output, comparison)
     payload = comparison.model_dump(mode="json")

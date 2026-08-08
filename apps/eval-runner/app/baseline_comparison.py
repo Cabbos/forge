@@ -9,7 +9,7 @@ from math import ceil
 from pathlib import Path
 from random import Random
 from statistics import median
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 from pydantic import ValidationError
 
@@ -35,6 +35,7 @@ _BUDGET_NAME = "budget.jsonl"
 _ROUTE_FIELDS = {"profile_id", "transport", "endpoint_family", "base_url"}
 _BOOTSTRAP_RESAMPLES = 2_000
 _BOOTSTRAP_SEED = 20260808
+ComparisonMode = Literal["transport_ab_v1", "policy_ab_v1"]
 
 
 class BaselineComparisonError(ValueError):
@@ -54,6 +55,7 @@ def compare_baseline_campaigns(
     dataset_lock_path: Path,
     control_profile_path: Path,
     candidate_profile_path: Path,
+    comparison_mode: ComparisonMode = "transport_ab_v1",
 ) -> BaselineComparison:
     """Verify and compare two explicit campaigns.
 
@@ -77,7 +79,7 @@ def compare_baseline_campaigns(
         profile_path=candidate_profile_path,
         arm="candidate",
     )
-    _validate_pair_alignment(control, candidate)
+    _validate_pair_alignment(control, candidate, comparison_mode=comparison_mode)
 
     control_metadata, control_profile, control_report, control_artifacts, control_order = control
     (
@@ -210,6 +212,8 @@ def _validate_pair_alignment(
         dict[str, BaselineAttemptArtifact],
         list[str],
     ],
+    *,
+    comparison_mode: ComparisonMode,
 ) -> None:
     control_metadata, control_profile, control_report, control_artifacts, control_order = control
     (
@@ -219,12 +223,23 @@ def _validate_pair_alignment(
         candidate_artifacts,
         candidate_order,
     ) = candidate
-    if control_profile.transport == candidate_profile.transport:
-        raise BaselineComparisonError("transport_same")
-    if control_profile.transport != "anthropic_messages":
-        raise BaselineComparisonError("control_transport_invalid")
-    if candidate_profile.transport != "openai_chat_completions":
-        raise BaselineComparisonError("candidate_transport_invalid")
+    if comparison_mode == "transport_ab_v1":
+        if control_profile.transport == candidate_profile.transport:
+            raise BaselineComparisonError("transport_same")
+        if control_profile.transport != "anthropic_messages":
+            raise BaselineComparisonError("control_transport_invalid")
+        if candidate_profile.transport != "openai_chat_completions":
+            raise BaselineComparisonError("candidate_transport_invalid")
+    elif comparison_mode == "policy_ab_v1":
+        if control_profile.transport != candidate_profile.transport:
+            raise BaselineComparisonError("policy_route_mismatch")
+        if (
+            control_profile.endpoint_family != candidate_profile.endpoint_family
+            or control_profile.resolved_base_url != candidate_profile.resolved_base_url
+        ):
+            raise BaselineComparisonError("policy_route_mismatch")
+    else:
+        raise BaselineComparisonError("comparison_mode_invalid")
     if control_profile.provider != candidate_profile.provider:
         raise BaselineComparisonError("provider_mismatch")
     if control_profile.model != candidate_profile.model:
@@ -264,8 +279,23 @@ def _validate_pair_alignment(
     }
     if control_attempt_keys != candidate_attempt_keys:
         raise BaselineComparisonError("attempt_keys_mismatch")
-    if control_profile_dump(control_profile) != control_profile_dump(candidate_profile):
-        raise BaselineComparisonError("profile_policy_mismatch")
+    control_policy = control_profile_dump(control_profile)
+    candidate_policy = control_profile_dump(candidate_profile)
+    if comparison_mode == "transport_ab_v1":
+        if control_policy != candidate_policy:
+            raise BaselineComparisonError("profile_policy_mismatch")
+    elif (
+        control_policy.get("prompt_mode"),
+        candidate_policy.get("prompt_mode"),
+    ) not in {
+        ("minimal_v1", "planning_v1"),
+        ("planning_v1", "minimal_v1"),
+    } or {
+        key
+        for key in set(control_policy) | set(candidate_policy)
+        if control_policy.get(key) != candidate_policy.get(key)
+    } != {"prompt_mode"}:
+        raise BaselineComparisonError("policy_profile_mismatch")
     if harness_profile_fingerprint(control_profile) == harness_profile_fingerprint(
         candidate_profile
     ):

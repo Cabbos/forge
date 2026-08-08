@@ -382,8 +382,8 @@ class BaselineComparison(EvalModel):
     candidate_campaign_id: str
     dataset_fingerprint: Sha256
     model: Literal["deepseek-v4-flash"]
-    control_transport: Literal["anthropic_messages"]
-    candidate_transport: Literal["openai_chat_completions"]
+    control_transport: Literal["anthropic_messages", "openai_chat_completions"]
+    candidate_transport: Literal["anthropic_messages", "openai_chat_completions"]
     paired_attempts: Literal[30] = 30
     outcome_changes: dict[str, str]
     control_metrics: BaselineComparisonMetrics

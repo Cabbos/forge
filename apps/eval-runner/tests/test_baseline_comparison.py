@@ -24,6 +24,8 @@ DEVELOPMENT_CASES = FORGEBENCH_ROOT / "cases" / "development"
 DATASET_LOCK = FORGEBENCH_ROOT / "dataset-lock.json"
 CONTROL_PROFILE = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-anthropic-baseline-v1.json"
 CANDIDATE_PROFILE = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-openai-chat-control-v1.json"
+MINIMAL_PROFILE = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-anthropic-minimal-v1.json"
+PLANNING_PROFILE = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-anthropic-planning-v1.json"
 
 
 def _campaign(
@@ -200,6 +202,44 @@ def test_compare_rejects_non_route_policy_drift(tmp_path: Path) -> None:
             repository_root=REPOSITORY_ROOT,
             cases_path=DEVELOPMENT_CASES,
             dataset_lock_path=DATASET_LOCK,
+        )
+
+
+def test_policy_comparison_allows_only_minimal_to_planning_same_route(tmp_path: Path) -> None:
+    minimal = _campaign(tmp_path, "minimal", MINIMAL_PROFILE)
+    planning = _campaign(tmp_path, "planning", PLANNING_PROFILE)
+
+    result = compare_baseline_campaigns(
+        control_campaign_root=minimal,
+        control_profile_path=MINIMAL_PROFILE,
+        candidate_campaign_root=planning,
+        candidate_profile_path=PLANNING_PROFILE,
+        repository_root=REPOSITORY_ROOT,
+        cases_path=DEVELOPMENT_CASES,
+        dataset_lock_path=DATASET_LOCK,
+        comparison_mode="policy_ab_v1",
+    )
+
+    assert result.control_transport == "anthropic_messages"
+    assert result.candidate_transport == "anthropic_messages"
+    assert result.control_profile_id == "deepseek-v4-flash-anthropic-minimal-v1"
+    assert result.candidate_profile_id == "deepseek-v4-flash-anthropic-planning-v1"
+
+
+def test_policy_comparison_rejects_route_or_unrelated_policy_drift(tmp_path: Path) -> None:
+    minimal = _campaign(tmp_path, "minimal", MINIMAL_PROFILE)
+    candidate = _campaign(tmp_path, "candidate", CANDIDATE_PROFILE)
+
+    with pytest.raises(BaselineComparisonError, match="policy_route_mismatch"):
+        compare_baseline_campaigns(
+            control_campaign_root=minimal,
+            control_profile_path=MINIMAL_PROFILE,
+            candidate_campaign_root=candidate,
+            candidate_profile_path=CANDIDATE_PROFILE,
+            repository_root=REPOSITORY_ROOT,
+            cases_path=DEVELOPMENT_CASES,
+            dataset_lock_path=DATASET_LOCK,
+            comparison_mode="policy_ab_v1",
         )
 
 
