@@ -1836,8 +1836,11 @@ def _render_eval_prompt(
     scope_contract = (
         "\n\nController scope contract:\n"
         f"- Allowed changed files: {expected}\n"
+        "- HARD boundary: edit only the exact allowed paths; do not broaden the patch.\n"
         f"- Forbidden changed paths: {forbidden}\n"
         "- Do not modify any other file; keep the patch minimal.\n"
+        "- Do not edit adjacent implementation or test files to make validation pass; if a "
+        "dependency looks missing, stop and report it.\n"
         "- Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, and build "
         "outputs as read-only; do not create or edit .venv, uv.lock, node_modules, or cache "
         "files.\n"
