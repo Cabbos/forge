@@ -397,6 +397,8 @@ class BaselineComparison(EvalModel):
     candidate_profile_id: str
     control_harness_fingerprint: Sha256
     candidate_harness_fingerprint: Sha256
+    control_evidence_fingerprint: Sha256
+    candidate_evidence_fingerprint: Sha256
     source_commit: GitSha1
     bootstrap_intervals: dict[str, BootstrapInterval] = Field(default_factory=dict)
     selection_policy: Literal["paired_bootstrap_quality_gated_v1"] = (
@@ -412,6 +414,8 @@ class BaselineComparison(EvalModel):
             raise ValueError("comparison profiles must be distinct")
         if self.control_harness_fingerprint == self.candidate_harness_fingerprint:
             raise ValueError("comparison harness fingerprints must be distinct")
+        if self.control_evidence_fingerprint == self.candidate_evidence_fingerprint:
+            raise ValueError("comparison evidence fingerprints must be distinct")
         if self.control_metrics.trusted_attempts != self.paired_attempts:
             raise ValueError("control campaign must have all attempts trusted")
         if self.candidate_metrics.trusted_attempts != self.paired_attempts:

@@ -77,7 +77,9 @@ transport harness is wired and fail-closed on the development split. It does
 not prove a holdout score, frontier KPI, or production certification.
 
 The comparison artifact must show both arms are trusted and complete, bind both
-profile IDs/fingerprints and the source commit, contain exactly 30 paired
+profile IDs/fingerprints, deterministic SHA-256 evidence fingerprints over each
+arm's canonical campaign files and attempt artifacts, and the source commit,
+contain exactly 30 paired
 outcome records (10 per repetition), use the typed success/failure outcome
 vocabulary, and publish all five deterministic paired bootstrap intervals with
 estimates matching the aggregate metrics. It must verify that transport/endpoint family is the only

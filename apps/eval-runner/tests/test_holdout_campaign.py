@@ -69,6 +69,8 @@ def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
         candidate_profile_id="deepseek-v4-flash-openai-chat-control-v1",
         control_harness_fingerprint="b" * 64,
         candidate_harness_fingerprint="c" * 64,
+        control_evidence_fingerprint="e" * 64,
+        candidate_evidence_fingerprint="f" * 64,
         source_commit=__import__("subprocess")
         .check_output(["git", "rev-parse", "HEAD"], cwd=REPOSITORY_ROOT, text=True)
         .strip(),

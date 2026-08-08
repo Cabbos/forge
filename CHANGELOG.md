@@ -1,5 +1,9 @@
 # Changelog
 
+- Comparison artifacts now carry deterministic SHA-256 fingerprints over each
+  arm's canonical campaign metadata, locks, budget, artifact index, report, and
+  all 30 attempt artifacts, so the compared evidence set is replayable and
+  tamper-evident rather than just a hand-authored aggregate.
 - Tightened the baseline comparison artifact contract: both arm identities and
   source commit are now required, exactly 30 paired outcomes (10 per
   repetition) with typed success/failure values and all five deterministic

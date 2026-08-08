@@ -13,6 +13,7 @@ from app.baseline import (
 from app.baseline_comparison import (
     BaselineComparisonError,
     _build_metrics,
+    _campaign_evidence_fingerprint,
     _select_winner,
     compare_baseline_campaigns,
     write_baseline_comparison,
@@ -110,6 +111,9 @@ def test_compare_requires_complete_trusted_orthogonal_h2_arms(tmp_path: Path) ->
         for interval in result.bootstrap_intervals.values()
     )
     assert result.selection_policy == "paired_bootstrap_quality_gated_v1"
+    assert len(result.control_evidence_fingerprint) == 64
+    assert len(result.candidate_evidence_fingerprint) == 64
+    assert result.control_evidence_fingerprint != result.candidate_evidence_fingerprint
     assert set(result.outcome_changes) == {
         f"r{repetition}:{task_id}"
         for repetition in range(1, 4)
@@ -206,6 +210,8 @@ def _comparison_fixture() -> BaselineComparison:
         candidate_profile_id="deepseek-v4-flash-openai-chat-control-v1",
         control_harness_fingerprint="b" * 64,
         candidate_harness_fingerprint="c" * 64,
+        control_evidence_fingerprint="e" * 64,
+        candidate_evidence_fingerprint="f" * 64,
         source_commit="d" * 40,
         bootstrap_intervals=intervals,
     )
@@ -399,3 +405,18 @@ def test_comparison_output_is_canonical_and_hash_bound(tmp_path: Path) -> None:
     assert json.loads(output.read_text()) == result.model_dump(mode="json")
     sidecar = output.with_suffix(output.suffix + ".sha256")
     assert sidecar.read_text() == digest + "\n"
+
+
+def test_campaign_evidence_fingerprint_is_deterministic_and_changes_on_artifact_tamper(
+    tmp_path: Path,
+) -> None:
+    control = _campaign(tmp_path, "control", CONTROL_PROFILE)
+    first = _campaign_evidence_fingerprint(control)
+    assert first == _campaign_evidence_fingerprint(control)
+
+    artifact_path = next((control / "attempts").glob("*.json"))
+    payload = json.loads(artifact_path.read_text())
+    payload["trace"]["final_answer"] = "tampered"
+    artifact_path.write_bytes(json.dumps(payload, sort_keys=True).encode() + b"\n")
+
+    assert _campaign_evidence_fingerprint(control) != first

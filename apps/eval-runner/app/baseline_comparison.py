@@ -33,6 +33,14 @@ _MODEL_T = TypeVar("_MODEL_T", bound=EvalModel)
 _REPORT_NAME = "baseline-report.json"
 _ATTEMPTS_DIR = "attempts"
 _BUDGET_NAME = "budget.jsonl"
+_CAMPAIGN_EVIDENCE_FILES = (
+    "campaign.json",
+    "locks/profile.json",
+    "locks/dataset-lock.json",
+    "budget.jsonl",
+    "artifact-index.json",
+    "baseline-report.json",
+)
 _ROUTE_FIELDS = {"profile_id", "transport", "endpoint_family", "base_url"}
 _BOOTSTRAP_RESAMPLES = 2_000
 _BOOTSTRAP_SEED = 20260808
@@ -82,13 +90,21 @@ def compare_baseline_campaigns(
     )
     _validate_pair_alignment(control, candidate, comparison_mode=comparison_mode)
 
-    control_metadata, control_profile, control_report, control_artifacts, control_order = control
+    (
+        control_metadata,
+        control_profile,
+        control_report,
+        control_artifacts,
+        control_order,
+        control_evidence_fingerprint,
+    ) = control
     (
         candidate_metadata,
         candidate_profile,
         candidate_report,
         candidate_artifacts,
         candidate_order,
+        candidate_evidence_fingerprint,
     ) = candidate
     control_metrics = _build_metrics(control_report, control_artifacts)
     candidate_metrics = _build_metrics(candidate_report, candidate_artifacts)
@@ -117,6 +133,8 @@ def compare_baseline_campaigns(
         candidate_profile_id=candidate_profile.profile_id,
         control_harness_fingerprint=control_metadata.harness_fingerprint,
         candidate_harness_fingerprint=candidate_metadata.harness_fingerprint,
+        control_evidence_fingerprint=control_evidence_fingerprint,
+        candidate_evidence_fingerprint=candidate_evidence_fingerprint,
         source_commit=control_metadata.source_commit,
         bootstrap_intervals=bootstrap_intervals,
     )
@@ -136,6 +154,38 @@ def write_baseline_comparison(output_path: Path, comparison: BaselineComparison)
     return digest
 
 
+def _campaign_evidence_fingerprint(campaign_root: Path) -> str:
+    """Hash the complete set of authoritative campaign evidence files."""
+
+    if not campaign_root.is_dir():
+        raise BaselineComparisonError("campaign_evidence_root_missing")
+    records: list[dict[str, str]] = []
+    for relative_path in _CAMPAIGN_EVIDENCE_FILES:
+        path = campaign_root / relative_path
+        if not path.is_file():
+            raise BaselineComparisonError("campaign_evidence_file_missing")
+        records.append(
+            {
+                "path": relative_path,
+                "sha256": sha256_bytes(path.read_bytes()),
+            }
+        )
+    attempts_dir = campaign_root / _ATTEMPTS_DIR
+    if not attempts_dir.is_dir():
+        raise BaselineComparisonError("campaign_evidence_attempts_missing")
+    attempt_paths = sorted(attempts_dir.glob("*.json"), key=lambda path: path.name)
+    if len(attempt_paths) != 30:
+        raise BaselineComparisonError("campaign_evidence_attempt_count_mismatch")
+    for path in attempt_paths:
+        records.append(
+            {
+                "path": f"{_ATTEMPTS_DIR}/{path.name}",
+                "sha256": sha256_bytes(path.read_bytes()),
+            }
+        )
+    return sha256_bytes(canonical_json_bytes({"schema_version": 1, "files": records}))
+
+
 def _load_verified_arm(
     campaign_root: Path,
     *,
@@ -150,6 +200,7 @@ def _load_verified_arm(
     BaselineReport,
     dict[str, BaselineAttemptArtifact],
     list[str],
+    str,
 ]:
     verification = verify_baseline_campaign(
         campaign_root,
@@ -195,7 +246,12 @@ def _load_verified_arm(
         _raise_arm_blocker(arm, "attempt_keys_mismatch")
     if any(not artifact.trust_result.trusted for artifact in artifacts.values()):
         _raise_arm_blocker(arm, "campaign_not_fully_trusted")
-    return metadata, profile, report, artifacts, order
+    try:
+        evidence_fingerprint = _campaign_evidence_fingerprint(campaign_root)
+    except (BaselineComparisonError, OSError, ValueError) as exc:
+        _raise_arm_blocker(arm, "campaign_evidence_invalid")
+        raise AssertionError("unreachable") from exc
+    return metadata, profile, report, artifacts, order, evidence_fingerprint
 
 
 def _validate_pair_alignment(
@@ -205,6 +261,7 @@ def _validate_pair_alignment(
         BaselineReport,
         dict[str, BaselineAttemptArtifact],
         list[str],
+        str,
     ],
     candidate: tuple[
         BaselineCampaignMetadata,
@@ -212,17 +269,26 @@ def _validate_pair_alignment(
         BaselineReport,
         dict[str, BaselineAttemptArtifact],
         list[str],
+        str,
     ],
     *,
     comparison_mode: ComparisonMode,
 ) -> None:
-    control_metadata, control_profile, control_report, control_artifacts, control_order = control
+    (
+        control_metadata,
+        control_profile,
+        control_report,
+        control_artifacts,
+        control_order,
+        _control_evidence_fingerprint,
+    ) = control
     (
         candidate_metadata,
         candidate_profile,
         candidate_report,
         candidate_artifacts,
         candidate_order,
+        _candidate_evidence_fingerprint,
     ) = candidate
     if comparison_mode == "transport_ab_v1":
         if control_profile.transport == candidate_profile.transport:
