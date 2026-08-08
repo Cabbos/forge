@@ -1002,6 +1002,7 @@ class ForgeAgentRunner:
             scope_violation=bool(scope_violations),
             task_contract=task_contract,
             provided_plan=payload.get("task_plan"),
+            changed_files=changed_files,
         )
         raw_events.append(harness_evidence)
 

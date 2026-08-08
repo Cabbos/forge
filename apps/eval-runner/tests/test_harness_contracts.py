@@ -19,6 +19,7 @@ from app.harness_contracts import (
     envelope_from_shell_output,
     evaluate_stagnation,
     harness_contract_evidence,
+    observed_task_execution_evidence,
     task_plan_evidence,
 )
 
@@ -200,3 +201,29 @@ def test_task_plan_evidence_rejects_out_of_scope_edit_and_missing_verification()
                 "steps": [{"id": "inspect", "action": "inspect", "files": ["src/a.py"]}],
             },
         )
+
+
+def test_observed_task_execution_evidence_reports_phase_coverage() -> None:
+    contract = build_task_execution_contract(
+        expected_files_changed=["src/a.py", "src/b.py"],
+        forbidden_files_changed=[],
+        context_files=[],
+        validation_commands=["pytest tests/test_ab.py"],
+        verification_command=None,
+        tags=["multi-file"],
+    )
+
+    observed = observed_task_execution_evidence(
+        contract,
+        tool_calls=[
+            ("read_file src/a.py", "", "", 0),
+            ("read_file src/b.py", "", "", 0),
+            ("pytest tests/test_ab.py", "ok", "", 0),
+        ],
+        changed_files=["src/a.py", "src/b.py"],
+        verification_passed=True,
+    )
+
+    assert observed["status"] == "complete"
+    assert observed["missing_inspection_files"] == []
+    assert observed["unexpected_changed_files"] == []

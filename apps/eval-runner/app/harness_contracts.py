@@ -264,6 +264,54 @@ def task_plan_evidence(
     }
 
 
+def observed_task_execution_evidence(
+    contract: TaskExecutionContract,
+    *,
+    tool_calls: Iterable[tuple[str, str, str, int]],
+    changed_files: Iterable[str],
+    verification_passed: bool | None,
+) -> dict[str, Any]:
+    """Summarize observable phase coverage without pretending it is a plan."""
+
+    calls = [str(command) for command, _stdout, _stderr, _exit_code in tool_calls]
+    inspection_commands = (
+        "read",
+        "inspect",
+        "cat",
+        "grep",
+        "rg ",
+        "git diff",
+        "list",
+    )
+    inspected = sorted(
+        {
+            path
+            for path in contract.required_inspection_files
+            if any(
+                path in command and any(token in command.lower() for token in inspection_commands)
+                for command in calls
+            )
+        }
+    )
+    changed = _dedupe_nonblank(changed_files, limit=MAX_TASK_PLAN_FILES)
+    unexpected = sorted(set(changed) - set(contract.allowed_changed_files))
+    missing_inspection = sorted(set(contract.required_inspection_files) - set(inspected))
+    complete = (
+        verification_passed is True
+        and not missing_inspection
+        and not unexpected
+        and (contract.kind != TaskContractKind.NO_CHANGE or not changed)
+    )
+    return {
+        "status": "complete" if complete else "incomplete",
+        "inspected_files": inspected,
+        "missing_inspection_files": missing_inspection,
+        "changed_files": changed,
+        "unexpected_changed_files": unexpected,
+        "verification_passed": verification_passed,
+    }
+
+
 def _dedupe_nonblank(values: Iterable[str], *, limit: int) -> list[str]:
     result: list[str] = []
     for value in values:
@@ -618,11 +666,13 @@ def harness_contract_evidence(
     scope_violation: bool = False,
     task_contract: TaskExecutionContract | None = None,
     provided_plan: Any = None,
+    changed_files: Iterable[str] = (),
 ) -> dict[str, Any]:
     """Build a JSON-safe evidence event without retaining unbounded output."""
 
+    call_values = list(tool_calls)
     if provided_envelopes is None:
-        envelopes = [envelope_from_shell_output(*call) for call in tool_calls]
+        envelopes = [envelope_from_shell_output(*call) for call in call_values]
         envelope_source = "derived_shell_output"
     else:
         envelopes = [ToolResultEnvelope.model_validate(value) for value in provided_envelopes]
@@ -673,4 +723,10 @@ def harness_contract_evidence(
         "failure_taxonomy": failure.model_dump(mode="json"),
         "task_execution_contract": resolved_contract.model_dump(mode="json"),
         "task_plan": task_plan_evidence(resolved_contract, provided_plan),
+        "task_execution_observed": observed_task_execution_evidence(
+            resolved_contract,
+            tool_calls=call_values,
+            changed_files=changed_files,
+            verification_passed=verification_passed,
+        ),
     }

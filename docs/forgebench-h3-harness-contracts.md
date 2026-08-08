@@ -45,7 +45,10 @@ Every Forge trace now emits one `harness_contract_evidence` raw event. Legacy
 shell tool calls are converted into bounded envelopes, while agent-provided
 envelopes/signals are validated strictly. Missing progress signals are marked
 `source: missing`; they are never inferred as success or silently treated as
-progress.
+progress. The event also reports advisory observed phase coverage (which
+required paths appeared in inspection commands, which files actually changed,
+and whether controller verification passed); this is never substituted for the
+filesystem snapshot or patch-replay authority.
 
 The first post-H4 development probe on the scope prompt guard exposed one
 additional observer false positive: an OpenAI arm created `.uv-cache` inside
