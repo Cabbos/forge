@@ -426,7 +426,7 @@ def test_forge_runner_derives_task_local_context_from_scope_and_validation(
     agent.write_text(
         "import json, sys\n"
         "payload = json.load(sys.stdin)\n"
-        "assert payload['task']['context_files'] == ['src/app.py', 'tests/test_app.py']\n"
+        "assert payload['task']['context_files'] == ['src/app.py']\n"
         "assert payload['context_manifest']['items'][0]['path'] == 'src/app.py'\n"
         "json.dump({'final_answer': 'done', 'changed_files': [], 'file_diffs': []}, sys.stdout)\n",
         encoding="utf-8",
@@ -442,7 +442,7 @@ def test_forge_runner_derives_task_local_context_from_scope_and_validation(
     trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
 
     assert trace.error is None
-    assert trace.context_files == ["src/app.py", "tests/test_app.py"]
+    assert trace.context_files == ["src/app.py"]
 
 
 def test_forge_runner_exposes_context_conflicts_before_provider_call(tmp_path: Path) -> None:

@@ -1819,34 +1819,15 @@ def _derive_eval_context_files(task: EvaluationTask) -> list[str]:
     ForgeBench case JSON intentionally keeps context_files optional so the
     dataset fingerprint does not encode a tuning hint. At execution time the
     controller can still avoid repository-wide reconnaissance by deriving a
-    bounded, non-secret context from the exact edit allowlist and public targeted
-    validation command. Explicit case context remains authoritative.
+    bounded, non-secret context from the exact edit allowlist. Validation remains
+    an executable contract, not an editable context file. Explicit case context
+    remains authoritative.
     """
 
     if task.context_files:
         return list(dict.fromkeys(task.context_files))
 
-    paths: list[str] = list(task.expected_files_changed)
-    source_suffixes = {".js", ".jsx", ".json", ".md", ".py", ".ts", ".tsx"}
-    for command in task.validation_commands:
-        try:
-            tokens = shlex.split(command)
-        except ValueError:
-            continue
-        for token in tokens:
-            candidate = token.strip()
-            if (
-                not candidate
-                or candidate.startswith(("-", "$", "/"))
-                or Path(candidate).suffix not in source_suffixes
-                or ("/" not in candidate and not candidate.startswith("."))
-            ):
-                continue
-            normalized = candidate.removeprefix("./")
-            if ".." in Path(normalized).parts:
-                continue
-            paths.append(normalized)
-    return list(dict.fromkeys(paths))
+    return list(dict.fromkeys(task.expected_files_changed))
 
 
 def _render_eval_prompt(
