@@ -7,7 +7,9 @@
     "pre_firewall": "/private/tmp/forge-h1-scopefirewall-e289-v3",
     "uv_firewall": "/private/tmp/forge-h1-uvfirewall-f146",
     "scope_hard_boundary": "/private/tmp/forge-h1-scopehard-7746",
-    "round_budget_probe": "/private/tmp/forge-h1-roundbudget-34a8"
+    "round_budget_probe": "/private/tmp/forge-h1-roundbudget-34a8",
+    "derived_context_full": "/private/tmp/forge-h1-derived-context-e531",
+    "derived_context_allowlist_only": "/private/tmp/forge-h1-derived-scope-8fe6-v2"
   },
   "campaigns": {
     "pre_firewall": {
@@ -69,6 +71,40 @@
       "p95_tool_calls": 53.0,
       "repeated_tool_call_rate": 0.7723785166240409,
       "total_cost_cny": "0.67849560",
+      "promoted": false,
+      "reverted": true
+    },
+    "derived_context_full": {
+      "campaign_id": "h1-derived-context-e531",
+      "source_commit": "e5318c0a560b66cf1cbb3eb2f70564866fd93269",
+      "report_sha256": "2b2a838155173e8f634dcfddc63ea7f76678f4e75e26a20bb0c4bae7ec734e99",
+      "artifact_index_sha256": "ec5350028861152b8321ad706aac1c9ec626e8ac1bcb68dfe00757ae3bb5aed8",
+      "trusted_success_rate": 0.9333333333333333,
+      "verification_pass_rate": 1.0,
+      "scope_violation_rate": 0.06666666666666667,
+      "median_model_rounds": 14.0,
+      "p95_model_rounds": 31.0,
+      "median_tool_calls": 22.5,
+      "p95_tool_calls": 51.0,
+      "repeated_tool_call_rate": 0.7529880478087649,
+      "total_cost_cny": "0.60173544",
+      "promoted": false,
+      "reverted": true
+    },
+    "derived_context_allowlist_only": {
+      "campaign_id": "h1-derived-scope-8fe6-v2",
+      "source_commit": "8fe6cff11d3084b521caf6dee135c52a83aefc12",
+      "report_sha256": "ae96eb8f6993a8e7259913b5c7f290522073312b1877f22c5c0560b24d68f941",
+      "artifact_index_sha256": "dfd041679e8152bfb129697fea72ee888a7a5bcba5ebbd643294ad41b5f10f5c",
+      "trusted_success_rate": 0.9666666666666667,
+      "verification_pass_rate": 1.0,
+      "scope_violation_rate": 0.03333333333333333,
+      "median_model_rounds": 16.5,
+      "p95_model_rounds": 29.0,
+      "median_tool_calls": 27.5,
+      "p95_tool_calls": 48.0,
+      "repeated_tool_call_rate": 0.7810304449648712,
+      "total_cost_cny": "0.65286468",
       "promoted": false,
       "reverted": true
     }

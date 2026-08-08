@@ -14,6 +14,8 @@ source commit. No holdout was opened and no frontier-quality claim is made.
 | `h1-uvfirewall-f146` | runtime `uv` scope shim | 0.9667 | 1.0000 | 0.0333 | 16 | 0.64706196 |
 | `h1-scopehard-7746` | shim + exact allowlist hard boundary | 1.0000 | 1.0000 | **0.0000** | 15 | 0.63038252 |
 | `h1-roundbudget-34a8` | temporary phase-budget prompt | 0.9667 | 0.9667 | 0.0000 | 16 | 0.67849560 |
+| `h1-derived-context-e531` | runtime-derived context (scope + validation files) | 0.9333 | 1.0000 | 0.0667 | 14 | 0.60173544 |
+| `h1-derived-scope-8fe6-v2` | runtime-derived context (edit allowlist only) | 0.9667 | 1.0000 | 0.0333 | 16.5 | 0.65286468 |
 
 The runtime shim removed the repeated `uv.lock` false-positive class. The hard
 allowlist wording then eliminated the remaining adjacent-file violation in the
@@ -26,6 +28,14 @@ and trusted/verification success fell to 29/30, so it was reverted. The current
 stack is therefore the runtime `uv` scope wrapper plus the exact allowlist hard
 boundary; the round gate remains open because the best observed median is 15,
 above the locked ≤12 target.
+
+Two runtime-derived-context probes were also run and then reverted. The broad
+probe reduced median tool calls to 22.5 and median rounds to 14, but introduced
+2/30 scope violations and lowered trusted success to 28/30. Restricting the
+derived context to edit-allowlisted files removed one violation, but still left
+1/30 scope violation and regressed median rounds to 16.5. These negative probes
+are retained in the machine-readable record so the harness history is
+auditable; neither is part of the effective stack.
 
 The secret-free machine-readable record, including report and artifact-index
 hashes, is [`h1-scope-firewall-summary.json`](../apps/eval-runner/forgebench/results/h1-scope-firewall-summary.json).
