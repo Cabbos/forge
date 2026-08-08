@@ -328,6 +328,9 @@ json.dump(
         "final_answer": "Done.",
         "forge_agent_provider": "deepseek",
         "forge_agent_model": "deepseek-v4-flash",
+        "forge_agent_transport": "anthropic_messages",
+        "forge_agent_endpoint_family": "anthropic",
+        "forge_agent_base_url": "https://api.deepseek.com/anthropic",
         "model_rounds": 2,
         "forge_run_evidence": {
             "provider_usage": {

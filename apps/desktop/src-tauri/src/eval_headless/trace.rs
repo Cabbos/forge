@@ -571,6 +571,26 @@ pub fn insert_agent_identity(payload: &mut serde_json::Value, provider: &str, mo
     }
 }
 
+pub fn insert_agent_route_identity(
+    payload: &mut serde_json::Value,
+    route: &super::types::EvalProviderRoute,
+) {
+    if let Some(object) = payload.as_object_mut() {
+        object.insert(
+            "forge_agent_transport".to_string(),
+            serde_json::Value::String(route.transport.as_str().to_string()),
+        );
+        object.insert(
+            "forge_agent_endpoint_family".to_string(),
+            serde_json::Value::String(route.transport.endpoint_family().to_string()),
+        );
+        object.insert(
+            "forge_agent_base_url".to_string(),
+            serde_json::Value::String(route.base_url.clone()),
+        );
+    }
+}
+
 pub fn insert_failure_fields(
     payload: &mut serde_json::Value,
     error: &str,

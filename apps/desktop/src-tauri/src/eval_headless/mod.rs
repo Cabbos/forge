@@ -418,6 +418,9 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         validation_attempts,
     });
     trace::insert_agent_identity(&mut payload, &agent_provider, &agent_model);
+    if let Some(route) = request.provider_route.as_ref() {
+        trace::insert_agent_route_identity(&mut payload, route);
+    }
     if let Some(error) = snapshot_error {
         if let Some(object) = payload.as_object_mut() {
             object.insert(
@@ -896,6 +899,21 @@ mod tests {
             payload["forge_run_evidence"]["a2a_child_capsules"][0]["runtime_events"][3]["kind"],
             "file_fact"
         );
+    }
+
+    #[test]
+    fn route_identity_is_written_to_headless_trace_payload() {
+        let mut payload = serde_json::json!({"forge_agent_provider": "deepseek"});
+        let route = EvalProviderRoute {
+            transport: EvalProviderTransport::OpenAiChatCompletions,
+            base_url: "https://api.deepseek.com".to_string(),
+        };
+
+        trace::insert_agent_route_identity(&mut payload, &route);
+
+        assert_eq!(payload["forge_agent_transport"], "openai_chat_completions");
+        assert_eq!(payload["forge_agent_endpoint_family"], "openai");
+        assert_eq!(payload["forge_agent_base_url"], "https://api.deepseek.com");
     }
 
     #[test]

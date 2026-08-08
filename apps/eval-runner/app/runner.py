@@ -863,18 +863,15 @@ class ForgeAgentRunner:
                 and payload.get("forge_agent_model") == self.agent_model
                 and (
                     self.agent_transport is None
-                    or payload.get("forge_agent_transport", self.agent_transport)
-                    == self.agent_transport
+                    or payload.get("forge_agent_transport") == self.agent_transport
                 )
                 and (
                     self.agent_endpoint_family is None
-                    or payload.get("forge_agent_endpoint_family", self.agent_endpoint_family)
-                    == self.agent_endpoint_family
+                    or payload.get("forge_agent_endpoint_family") == self.agent_endpoint_family
                 )
                 and (
                     self.agent_base_url is None
-                    or payload.get("forge_agent_base_url", self.agent_base_url)
-                    == self.agent_base_url
+                    or payload.get("forge_agent_base_url") == self.agent_base_url
                 )
             ),
         }

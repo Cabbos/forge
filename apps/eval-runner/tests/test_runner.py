@@ -2181,6 +2181,9 @@ json.dump(
         "final_answer": "Done.",
         "forge_agent_provider": "deepseek",
         "forge_agent_model": "deepseek-v4-flash",
+        "forge_agent_transport": "anthropic_messages",
+        "forge_agent_endpoint_family": "anthropic",
+        "forge_agent_base_url": "https://api.deepseek.com/anthropic",
     },
     sys.stdout,
 )
@@ -2268,6 +2271,50 @@ json.dump(
     )
     assert identity_event["provider"] == "unexpected-provider"
     assert identity_event["model"] == "unexpected-model"
+    assert identity_event["identity_matches_profile"] is False
+
+
+def test_forge_runner_rejects_missing_route_identity_for_profiled_agent(tmp_path: Path) -> None:
+    script = tmp_path / "fake_missing_route_identity.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.loads(sys.stdin.read())
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "deepseek",
+        "forge_agent_model": "deepseek-v4-flash",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-route-missing",
+        title="Profiled agent route missing",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+        harness_fingerprint="sha256:harness-profile",
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
     assert identity_event["identity_matches_profile"] is False
 
 
