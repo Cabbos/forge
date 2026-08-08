@@ -2353,6 +2353,45 @@ print(json.dumps({
     assert trace.final_answer == "done"
 
 
+def test_forge_runner_rejects_model_round_summary_mismatch(tmp_path: Path) -> None:
+    script = tmp_path / "fake_round_mismatch.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "final_answer": "done",
+        "model_rounds": 1,
+        "raw_events": [
+            {"event_type": "agent_turn_updated", "state": {"status": "calling_model"}},
+            {"event_type": "agent_turn_updated", "state": {"status": "waiting_for_tool"}},
+            {"event_type": "agent_turn_updated", "state": {"status": "calling_model"}},
+        ],
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="round-summary-mismatch",
+        title="Round summary mismatch",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "model_rounds" in (trace.failure_reason or "")
+
+
 def test_forge_runner_reports_missing_final_answer_as_contract_error(
     tmp_path: Path,
 ) -> None:

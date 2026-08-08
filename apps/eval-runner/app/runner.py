@@ -819,6 +819,13 @@ class ForgeAgentRunner:
             for diff in TypeAdapter(list[FileDiff]).validate_python(payload.get("file_diffs", []))
             if not _is_ephemeral_cache_path(diff.path)
         ]
+        raw_events = list(payload.get("raw_events", []))
+        model_rounds = _reported_model_rounds(payload)
+        derived_model_rounds = _model_rounds_from_agent_turn_events(raw_events)
+        if derived_model_rounds is not None and model_rounds != derived_model_rounds:
+            raise ValueError(
+                "model_rounds does not match authoritative agent_turn_updated events"
+            )
         verification_result = (
             VerificationResult.model_validate(payload["verification_result"])
             if payload.get("verification_result") is not None
@@ -842,7 +849,6 @@ class ForgeAgentRunner:
                 duration_ms=last_validation.duration_ms,
             )
         changed_files = workspace_observation.changed_files
-        raw_events = list(payload.get("raw_events", []))
         prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
         task_contract = build_task_execution_contract(
             expected_files_changed=task.expected_files_changed,
@@ -1036,7 +1042,7 @@ class ForgeAgentRunner:
             error=error,
             failure_reason=failure_reason,
             failure_category=failure_category,
-            model_rounds=payload.get("model_rounds", 0),
+            model_rounds=model_rounds,
             confirm_requests=payload.get("confirm_requests", 0),
             repair_attempts_used=repair_attempts_used,
             validation_attempts=payload.get("validation_attempts", 0),
@@ -1201,6 +1207,41 @@ def parse_forge_stdout(stdout: str) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         raise TypeError("Forge command stdout must contain a JSON object.")
     return parsed
+
+
+def _reported_model_rounds(payload: dict[str, Any]) -> int:
+    value = payload.get("model_rounds", 0)
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError("model_rounds must be a nonnegative integer")
+    return value
+
+
+def _model_rounds_from_agent_turn_events(
+    raw_events: Sequence[dict[str, Any]],
+) -> int | None:
+    """Rebuild rounds when the canonical headless event stream is present.
+
+    External runners and legacy fixtures may only provide a summary, so this
+    remains an optional cross-check.  Forge's headless trace emits
+    ``agent_turn_updated`` projections with a ``calling_model`` status; those
+    transitions are the authoritative round boundaries and must agree with the
+    summary field used by the release gate.
+    """
+
+    saw_turn_projection = False
+    transitions = 0
+    previous_calling_model = False
+    for event in raw_events:
+        if not isinstance(event, dict) or event.get("event_type") != "agent_turn_updated":
+            continue
+        saw_turn_projection = True
+        state = event.get("state")
+        status = state.get("status") if isinstance(state, dict) else None
+        calling_model = status == "calling_model"
+        if calling_model and not previous_calling_model:
+            transitions += 1
+        previous_calling_model = calling_model
+    return transitions if saw_turn_projection else None
 
 
 def reported_changed_files_from_payload(payload: dict[str, Any]) -> list[str]:
