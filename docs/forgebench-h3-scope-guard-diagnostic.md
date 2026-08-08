@@ -4,6 +4,13 @@ This document records a development-only paid diagnostic after the workspace
 scope and environment-isolation hardening. It is not a holdout result and does
 not establish a frontier-quality claim.
 
+The campaign artifacts below were produced before commit
+`76d7822c6e4faf1ed402cc16c5b6c4e265c34d61`, which corrected the Rust event
+summary to count model-request transitions instead of counting individual
+parallel tool starts. The stored round metrics remain immutable historical
+evidence, but they are not authoritative for the current round threshold;
+future paid campaigns must be run from the corrected source.
+
 ## Locked inputs
 
 - Source commit for both arms: `05bfc6c83eda52d6f6f699497dd84a158856c966`;
