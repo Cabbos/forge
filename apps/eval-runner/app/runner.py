@@ -327,6 +327,7 @@ class ForgeAgentRunner:
                     "XDG_CACHE_HOME": str(runtime_state / "cache"),
                     "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
                     "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
+                    "UV_NO_CONFIG": "1",
                     "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
@@ -500,6 +501,7 @@ class ForgeAgentRunner:
                     "XDG_CACHE_HOME": str(runtime_state / "cache"),
                     "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
                     "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
+                    "UV_NO_CONFIG": "1",
                     "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
