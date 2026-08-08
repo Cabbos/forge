@@ -23,6 +23,8 @@ REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
 EVAL_ROOT = Path(__file__).resolve().parents[1]
 HOLDOUT_CASES = EVAL_ROOT / "forgebench" / "cases" / "holdout"
 DATASET_LOCK = EVAL_ROOT / "forgebench" / "dataset-lock.json"
+DEVELOPMENT_CASES = EVAL_ROOT / "forgebench" / "cases" / "development"
+DEVELOPMENT_DATASET_LOCK = EVAL_ROOT / "forgebench" / "dataset-lock.json"
 PROFILE = EVAL_ROOT / "forgebench" / "profiles" / "deepseek-v4-flash-anthropic-baseline-v1.json"
 PLANNING_PROFILE = (
     EVAL_ROOT / "forgebench" / "profiles" / "deepseek-v4-flash-anthropic-planning-v1.json"
@@ -96,15 +98,28 @@ def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
 
 def _initialize(tmp_path: Path) -> Path:
     campaign = tmp_path / "holdout"
-    initialize_holdout_campaign(
-        campaign,
-        campaign_id="h4-test",
-        repository_root=REPOSITORY_ROOT,
-        cases_path=HOLDOUT_CASES,
-        dataset_lock_path=DATASET_LOCK,
-        profile_path=PROFILE,
-        development_comparison_path=_comparison(tmp_path),
-    )
+    comparison_path = _comparison(tmp_path)
+    comparison = BaselineComparison.model_validate_json(comparison_path.read_bytes())
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(holdout_campaign, "compare_baseline_campaigns", lambda **kwargs: comparison)
+    try:
+        initialize_holdout_campaign(
+            campaign,
+            campaign_id="h4-test",
+            repository_root=REPOSITORY_ROOT,
+            cases_path=HOLDOUT_CASES,
+            dataset_lock_path=DATASET_LOCK,
+            development_cases_path=DEVELOPMENT_CASES,
+            development_dataset_lock_path=DEVELOPMENT_DATASET_LOCK,
+            profile_path=PROFILE,
+            development_comparison_path=comparison_path,
+            control_campaign_root=tmp_path / "control",
+            control_profile_path=PROFILE,
+            candidate_campaign_root=tmp_path / "candidate",
+            candidate_profile_path=PROFILE,
+        )
+    finally:
+        monkeypatch.undo()
     return campaign
 
 
@@ -149,15 +164,127 @@ def test_holdout_init_locks_sealed_split_and_development_comparison(tmp_path: Pa
 
 
 def test_holdout_init_rejects_planning_only_profile(tmp_path: Path) -> None:
+    comparison_path = _comparison(tmp_path, PLANNING_PROFILE)
+    comparison = BaselineComparison.model_validate_json(comparison_path.read_bytes())
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(holdout_campaign, "compare_baseline_campaigns", lambda **kwargs: comparison)
     with pytest.raises(ValueError, match="planning-only profile"):
+        try:
+            initialize_holdout_campaign(
+                tmp_path / "planning-holdout",
+                campaign_id="h4-planning-rejected",
+                repository_root=REPOSITORY_ROOT,
+                cases_path=HOLDOUT_CASES,
+                dataset_lock_path=DATASET_LOCK,
+                development_cases_path=DEVELOPMENT_CASES,
+                development_dataset_lock_path=DEVELOPMENT_DATASET_LOCK,
+                profile_path=PLANNING_PROFILE,
+                development_comparison_path=comparison_path,
+                control_campaign_root=tmp_path / "control",
+                control_profile_path=PLANNING_PROFILE,
+                candidate_campaign_root=tmp_path / "candidate",
+                candidate_profile_path=PLANNING_PROFILE,
+            )
+        finally:
+            monkeypatch.undo()
+
+
+def test_holdout_init_recomputes_comparison_from_explicit_development_arms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    comparison_path = _comparison(tmp_path)
+    comparison = BaselineComparison.model_validate_json(comparison_path.read_bytes())
+    calls: dict[str, Path] = {}
+
+    def fake_compare(**kwargs: object) -> BaselineComparison:
+        for key in (
+            "control_campaign_root",
+            "candidate_campaign_root",
+            "control_profile_path",
+            "candidate_profile_path",
+            "cases_path",
+            "dataset_lock_path",
+            "comparison_mode",
+        ):
+            value = kwargs[key]
+            if key == "comparison_mode":
+                assert value == "transport_ab_v1"
+            else:
+                assert isinstance(value, Path)
+                calls[key] = value
+        return comparison
+
+    monkeypatch.setattr(holdout_campaign, "compare_baseline_campaigns", fake_compare, raising=False)
+    initialize_holdout_campaign(
+        tmp_path / "bound-holdout",
+        campaign_id="h4-bound",
+        repository_root=REPOSITORY_ROOT,
+        cases_path=HOLDOUT_CASES,
+        dataset_lock_path=DATASET_LOCK,
+        development_cases_path=DEVELOPMENT_CASES,
+        development_dataset_lock_path=DEVELOPMENT_DATASET_LOCK,
+        profile_path=PROFILE,
+        development_comparison_path=comparison_path,
+        control_campaign_root=tmp_path / "control",
+        control_profile_path=PROFILE,
+        candidate_campaign_root=tmp_path / "candidate",
+        candidate_profile_path=PROFILE,
+    )
+    assert calls == {
+        "control_campaign_root": tmp_path / "control",
+        "candidate_campaign_root": tmp_path / "candidate",
+        "control_profile_path": PROFILE,
+        "candidate_profile_path": PROFILE,
+        "cases_path": DEVELOPMENT_CASES,
+        "dataset_lock_path": DEVELOPMENT_DATASET_LOCK,
+    }
+
+
+def test_holdout_initializer_requires_development_arm_binding(tmp_path: Path) -> None:
+    with pytest.raises(TypeError, match="control_campaign_root"):
         initialize_holdout_campaign(
-            tmp_path / "planning-holdout",
-            campaign_id="h4-planning-rejected",
+            tmp_path / "unbound-holdout",
+            campaign_id="h4-unbound",
             repository_root=REPOSITORY_ROOT,
             cases_path=HOLDOUT_CASES,
             dataset_lock_path=DATASET_LOCK,
-            profile_path=PLANNING_PROFILE,
-            development_comparison_path=_comparison(tmp_path, PLANNING_PROFILE),
+            development_cases_path=DEVELOPMENT_CASES,
+            development_dataset_lock_path=DEVELOPMENT_DATASET_LOCK,
+            profile_path=PROFILE,
+            development_comparison_path=_comparison(tmp_path),
+        )
+
+
+def test_holdout_init_rejects_comparison_drift_from_verified_development_arms(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    comparison_path = _comparison(tmp_path)
+    comparison = BaselineComparison.model_validate_json(comparison_path.read_bytes())
+    drift_payload = comparison.model_dump(mode="json")
+    drift_payload["candidate_campaign_id"] = "candidate-drift"
+    drifted = BaselineComparison.model_validate(drift_payload)
+    monkeypatch.setattr(
+        holdout_campaign,
+        "compare_baseline_campaigns",
+        lambda **kwargs: drifted,
+        raising=False,
+    )
+
+    with pytest.raises(ValueError, match="does not match verified development arms"):
+        initialize_holdout_campaign(
+            tmp_path / "drifted-holdout",
+            campaign_id="h4-drifted",
+            repository_root=REPOSITORY_ROOT,
+            cases_path=HOLDOUT_CASES,
+            dataset_lock_path=DATASET_LOCK,
+            development_cases_path=DEVELOPMENT_CASES,
+            development_dataset_lock_path=DEVELOPMENT_DATASET_LOCK,
+            profile_path=PROFILE,
+            development_comparison_path=comparison_path,
+            control_campaign_root=tmp_path / "control",
+            control_profile_path=PROFILE,
+            candidate_campaign_root=tmp_path / "candidate",
+            candidate_profile_path=PROFILE,
         )
 
 

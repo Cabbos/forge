@@ -1,7 +1,10 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from app.cli import main
+from app.holdout_cli import holdout_main
 from app.holdout_gate import HoldoutGateReportV1, holdout_report_bytes
 
 
@@ -61,3 +64,21 @@ def test_holdout_cli_rejects_noncanonical_report(tmp_path: Path, capsys) -> None
 
     captured = capsys.readouterr()
     assert "error: holdout_verify_failed" in captured.err
+
+
+def test_holdout_init_requires_explicit_development_arm_paths() -> None:
+    with pytest.raises(SystemExit) as error:
+        holdout_main(
+            [
+                "init",
+                "--campaign",
+                "/tmp/holdout",
+                "--campaign-id",
+                "holdout-test",
+                "--profile",
+                "/tmp/profile.json",
+                "--development-comparison",
+                "/tmp/comparison.json",
+            ]
+        )
+    assert error.value.code == 2

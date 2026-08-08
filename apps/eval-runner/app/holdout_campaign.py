@@ -42,6 +42,7 @@ from app.baseline import (
     _remove_pending,
     _trust_for_trace,
 )
+from app.baseline_comparison import compare_baseline_campaigns
 from app.baseline_models import (
     BaselineArtifactIndex,
     BaselineArtifactIndexEntry,
@@ -196,8 +197,14 @@ def initialize_holdout_campaign(
     repository_root: Path,
     cases_path: Path,
     dataset_lock_path: Path,
+    development_cases_path: Path,
+    development_dataset_lock_path: Path,
     profile_path: Path,
     development_comparison_path: Path,
+    control_campaign_root: Path,
+    control_profile_path: Path,
+    candidate_campaign_root: Path,
+    candidate_profile_path: Path,
     budget_cny: Decimal = Decimal("35"),
 ) -> HoldoutCampaignMetadata:
     """Create a sealed campaign after verifying the development A/B release gate."""
@@ -214,6 +221,13 @@ def initialize_holdout_campaign(
         development_comparison_path,
         source_commit=source_commit,
         profile=profile,
+        repository_root=repository_root,
+        development_cases_path=development_cases_path,
+        development_dataset_lock_path=development_dataset_lock_path,
+        control_campaign_root=control_campaign_root,
+        control_profile_path=control_profile_path,
+        candidate_campaign_root=candidate_campaign_root,
+        candidate_profile_path=candidate_profile_path,
     )
     metadata = HoldoutCampaignMetadata(
         campaign_id=campaign_id,
@@ -646,7 +660,17 @@ def _load_locked_holdout_tasks(
 
 
 def _load_development_comparison(
-    path: Path, *, source_commit: str, profile: HarnessProfileV1
+    path: Path,
+    *,
+    source_commit: str,
+    profile: HarnessProfileV1,
+    repository_root: Path,
+    development_cases_path: Path,
+    development_dataset_lock_path: Path,
+    control_campaign_root: Path,
+    control_profile_path: Path,
+    candidate_campaign_root: Path,
+    candidate_profile_path: Path,
 ) -> tuple[BaselineComparison, str]:
     raw = path.read_bytes()
     comparison = BaselineComparison.model_validate(json.loads(raw))
@@ -663,6 +687,22 @@ def _load_development_comparison(
         raise ValueError("development comparison is not a complete current-source pair")
     if profile.profile_id not in {comparison.control_profile_id, comparison.candidate_profile_id}:
         raise ValueError("holdout profile is not one of the compared development arms")
+    recomputed = compare_baseline_campaigns(
+        control_campaign_root=control_campaign_root,
+        candidate_campaign_root=candidate_campaign_root,
+        repository_root=repository_root,
+        cases_path=development_cases_path,
+        dataset_lock_path=development_dataset_lock_path,
+        control_profile_path=control_profile_path,
+        candidate_profile_path=candidate_profile_path,
+        comparison_mode=(
+            "policy_ab_v1"
+            if comparison.control_transport == comparison.candidate_transport
+            else "transport_ab_v1"
+        ),
+    )
+    if recomputed != comparison:
+        raise ValueError("development comparison does not match verified development arms")
     return comparison, sha256_bytes(raw)
 
 

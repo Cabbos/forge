@@ -29,6 +29,8 @@ REPOSITORY_ROOT = EVAL_ROOT.parents[1]
 FORGEBENCH_ROOT = EVAL_ROOT / "forgebench"
 DEFAULT_CASES = FORGEBENCH_ROOT / "cases" / "holdout"
 DEFAULT_DATASET_LOCK = FORGEBENCH_ROOT / "dataset-lock.json"
+DEFAULT_DEVELOPMENT_CASES = FORGEBENCH_ROOT / "cases" / "development"
+DEFAULT_DEVELOPMENT_DATASET_LOCK = FORGEBENCH_ROOT / "dataset-lock.json"
 
 
 def holdout_main(argv: list[str]) -> int:
@@ -41,6 +43,36 @@ def holdout_main(argv: list[str]) -> int:
     _add_campaign_inputs(init)
     init.add_argument("--campaign-id", required=True)
     init.add_argument("--development-comparison", type=Path, required=True)
+    init.add_argument("--development-cases", type=Path, default=DEFAULT_DEVELOPMENT_CASES)
+    init.add_argument(
+        "--development-dataset-lock",
+        type=Path,
+        default=DEFAULT_DEVELOPMENT_DATASET_LOCK,
+    )
+    init.add_argument(
+        "--control-campaign",
+        type=Path,
+        required=True,
+        help="complete, independently verified development control campaign",
+    )
+    init.add_argument(
+        "--control-profile",
+        type=Path,
+        required=True,
+        help="profile locked by the development control campaign",
+    )
+    init.add_argument(
+        "--candidate-campaign",
+        type=Path,
+        required=True,
+        help="complete, independently verified development candidate campaign",
+    )
+    init.add_argument(
+        "--candidate-profile",
+        type=Path,
+        required=True,
+        help="profile locked by the development candidate campaign",
+    )
     init.add_argument("--budget-cny", default="35")
     run = commands.add_parser("run")
     _add_campaign_inputs(run)
@@ -73,8 +105,14 @@ def holdout_main(argv: list[str]) -> int:
                 repository_root=REPOSITORY_ROOT,
                 cases_path=args.cases,
                 dataset_lock_path=args.dataset_lock,
+                development_cases_path=args.development_cases,
+                development_dataset_lock_path=args.development_dataset_lock,
                 profile_path=args.profile,
                 development_comparison_path=args.development_comparison,
+                control_campaign_root=args.control_campaign,
+                control_profile_path=args.control_profile,
+                candidate_campaign_root=args.candidate_campaign,
+                candidate_profile_path=args.candidate_profile,
                 budget_cny=Decimal(args.budget_cny),
             )
             payload = {

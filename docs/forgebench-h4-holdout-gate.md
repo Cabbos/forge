@@ -52,7 +52,13 @@ incomplete hand-authored aggregate cannot unlock the holdout:
 uv run python -m app.cli holdout init \
   --campaign /private/tmp/forge-h4/arm \
   --campaign-id deepseek-h4-v1 \
+  --development-cases apps/eval-runner/forgebench/cases/development \
+  --development-dataset-lock apps/eval-runner/forgebench/dataset-lock.json \
   --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json \
+  --control-campaign /private/tmp/forge-h2-campaigns-v6/anthropic-control \
+  --control-profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json \
+  --candidate-campaign /private/tmp/forge-h2-campaigns-v6/openai-candidate \
+  --candidate-profile forgebench/profiles/deepseek-v4-flash-openai-chat-control-v1.json \
   --development-comparison /private/tmp/forge-h2-campaigns-v6/comparison-v1.json
 uv run python -m app.cli holdout run --campaign /private/tmp/forge-h4/arm \
   --profile forgebench/profiles/deepseek-v4-flash-anthropic-baseline-v1.json
