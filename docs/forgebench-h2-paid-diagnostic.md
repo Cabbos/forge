@@ -162,3 +162,22 @@ separate H4 sealed holdout campaign: it requires 20 holdout cases × 3
 repetitions, a clean source-pinned run, provenance verification, and the locked
 release thresholds. Until that campaign produces a verified 60-attempt report,
 Forge makes no holdout or frontier-quality claim.
+
+## Source-pinned h0 replication
+
+The current source commit was also exercised with a fresh, complete 30-attempt
+pair after the bounded provider-error evidence fix. Both campaigns passed
+`baseline verify` with zero pending or unknown-cost attempts:
+
+| Arm | Transport | Trusted success | Verification pass | Scope violations | Median cost (CNY) | Total cost (CNY) |
+| --- | --- | ---: | ---: | ---: | ---: | ---: |
+| `h1-anthropic-smoke-h0` | Anthropic Messages | 0.8667 | 0.9667 | 0.1000 | `0.01902320` | `0.71910864` |
+| `h2-openai-candidate-h0` | OpenAI Chat Completions | 0.8667 | 0.9667 | 0.1333 | `0.01637426` | `0.75787960` |
+
+The paired bootstrap selected `no_material_difference` (30 paired attempts).
+The OpenAI candidate is cheaper at the median in this sample, but its scope
+violation rate is higher; this is not a transport winner and does not change
+the Anthropic default. The compact, secret-free summary is checked in at
+[`h2-paid-h0-summary.json`](../apps/eval-runner/forgebench/results/h2-paid-h0-summary.json);
+the full canonical comparison and attempt artifacts remain outside the source
+tree, and no provider credential or raw provider error text was published.
