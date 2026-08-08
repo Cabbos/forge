@@ -28,6 +28,11 @@ needed for frontier tuning explicit and bounded before another paid campaign.
   category (`passed`, model, provider, tool, permission, verification, scope,
   observer, replay, contract, cancellation, or timeout) so reports never need
   to expose a generic `runner_error` as the terminal cause.
+- Forge eval prompts now render the controller-owned allowed and forbidden file
+  scope, plus a bounded “targeted validation then stop” convergence instruction,
+  before the first edit. Post-run filesystem snapshots remain authoritative;
+  this prompt is an early guard against the scope and round failures seen in the
+  first paid H4 control result, not a substitute for the scope gate.
 
 Every Forge trace now emits one `harness_contract_evidence` raw event. Legacy
 shell tool calls are converted into bounded envelopes, while agent-provided

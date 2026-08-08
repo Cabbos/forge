@@ -579,7 +579,11 @@ class ForgeAgentRunner:
             task_dict["context_files"] = prepared_context_files
             payload = {
                 "task": task_dict,
-                "prompt": self.harness_policy.render_prompt(task.prompt, prepared_context_files),
+                "prompt": _render_eval_prompt(
+                    self.harness_policy,
+                    task,
+                    prepared_context_files,
+                ),
                 "harness_policy": self.harness_policy.model_dump(mode="json"),
                 "harness_policy_fingerprint": self.harness_policy.fingerprint(),
                 "context_mode": self.harness_policy.context_policy,
@@ -1617,3 +1621,29 @@ def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> 
         if expected and path not in expected:
             violations.append(f"unexpected_change:{path}")
     return violations
+
+
+def _render_eval_prompt(
+    policy: HarnessPolicyV1,
+    task: EvaluationTask,
+    context_files: Sequence[str],
+) -> str:
+    """Add controller-owned scope and convergence facts to the agent prompt.
+
+    The task JSON already carries these fields, but the desktop headless request
+    intentionally accepts only the agent-facing subset.  Rendering the bounded
+    scope contract here makes the evaluator's authority visible before the first
+    edit, rather than discovering an out-of-scope patch only after the run.
+    """
+
+    prompt = policy.render_prompt(task.prompt, context_files)
+    expected = ", ".join(task.expected_files_changed) or "(none; no product file should change)"
+    forbidden = ", ".join(task.forbidden_files_changed) or "(none declared)"
+    scope_contract = (
+        "\n\nController scope contract:\n"
+        f"- Allowed changed files: {expected}\n"
+        f"- Forbidden changed paths: {forbidden}\n"
+        "- Do not modify any other file; keep the patch minimal.\n"
+        "- Run the targeted validation, then stop once the task is verified."
+    )
+    return prompt + scope_contract

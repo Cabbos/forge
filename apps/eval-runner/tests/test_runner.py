@@ -273,6 +273,10 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "assert payload['harness_policy']['prompt_mode'] == 'minimal_v1'\n"
             "assert payload['harness_policy']['context_policy'] == 'task_local_v1'\n"
             "assert payload['prompt'].startswith('Outcome: Fix the bug.')\n"
+            "assert 'Allowed changed files: src/app.py' in payload['prompt']\n"
+            "assert 'Forbidden changed paths: package.json, .forge/**' in payload['prompt']\n"
+            "assert 'Run the targeted validation, then stop once the task is verified.' "
+            "in payload['prompt']\n"
             "assert len(payload['task']['context_files']) == 16\n"
             "json.dump({'final_answer': 'done', 'verification_result': {"
             "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
@@ -285,6 +289,8 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
         title="Minimal policy",
         prompt="Fix the bug.",
         context_files=[f"src/file-{index}.py" for index in range(20)],
+        expected_files_changed=["src/app.py"],
+        forbidden_files_changed=["package.json", ".forge/**"],
     )
 
     trace = ForgeAgentRunner(
