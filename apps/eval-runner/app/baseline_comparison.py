@@ -22,9 +22,9 @@ from app.baseline_models import (
     BaselineReport,
     BootstrapInterval,
 )
+from app.harness_contracts import resolve_typed_failure_category
 from app.harness_profiles import HarnessProfileV1, harness_profile_fingerprint, load_harness_profile
 from app.harness_telemetry import summarize_harness_telemetry
-from app.harness_contracts import resolve_typed_failure_category
 from app.metrics import trace_passed
 from app.models import EvalModel
 from app.provenance import canonical_json_bytes, sha256_bytes

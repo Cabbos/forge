@@ -32,6 +32,7 @@ from app.baseline_models import (
 )
 from app.cases import load_cases, validate_case_quality
 from app.datasets import dataset_fingerprint
+from app.execution_identity import ExecutionIdentityV1
 from app.harness_checks import run_observer_patch_replay_self_check
 from app.harness_profiles import (
     HarnessProfileV1,
@@ -78,6 +79,7 @@ _INTERRUPTED_BLOCKER = "interrupted_paid_attempt_unknown_cost"
 _REPORT_SEMANTIC_BLOCKERS = {
     _INTERRUPTED_BLOCKER,
     "agent_identity_mismatch",
+    "execution_identity_mismatch",
     "campaign_budget_exceeded",
     "forge_contract_error",
     "per_task_cost_cap_exceeded",
@@ -1027,6 +1029,38 @@ def _attempt_blockers(artifact: BaselineAttemptArtifact) -> list[str]:
         )
     ):
         blockers.append("agent_identity_mismatch")
+    if artifact.profile.base_url is not None:
+        execution_identity = next(
+            (
+                event
+                for event in reversed(artifact.trace.raw_events)
+                if event.get("event_type") == "eval_execution_identity"
+            ),
+            None,
+        )
+        try:
+            execution = (
+                ExecutionIdentityV1.model_validate(
+                    {
+                        key: value
+                        for key, value in (execution_identity or {}).items()
+                        if key != "event_type"
+                    }
+                )
+                if execution_identity is not None
+                else None
+            )
+        except ValidationError:
+            execution = None
+        if (
+            execution is None
+            or execution.provider != artifact.profile.provider
+            or execution.model != artifact.profile.model
+            or execution.transport != artifact.profile.transport
+            or execution.endpoint_family != artifact.profile.endpoint_family
+            or execution.base_url != artifact.profile.resolved_base_url
+        ):
+            blockers.append("execution_identity_mismatch")
     if artifact.trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR:
         blockers.append("forge_contract_error")
     return sorted(set(blockers))

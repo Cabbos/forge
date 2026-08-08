@@ -12,6 +12,10 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
+from app.execution_identity import (
+    ExecutionIdentityV1,
+    validate_execution_identity_event,
+)
 from app.harness_contracts import (
     HarnessPolicyV1,
     build_task_execution_contract,
@@ -281,6 +285,7 @@ class ForgeAgentRunner:
         max_repair_attempts: int | None = None,
         harness_policy: HarnessPolicyV1 | None = None,
         use_provider_credential_store: bool = False,
+        execution_identity: ExecutionIdentityV1 | dict[str, Any] | None = None,
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
@@ -298,6 +303,11 @@ class ForgeAgentRunner:
         self.max_repair_attempts = max_repair_attempts
         self.harness_policy = harness_policy or HarnessPolicyV1()
         self.use_provider_credential_store = use_provider_credential_store
+        self.execution_identity = (
+            ExecutionIdentityV1.model_validate(execution_identity)
+            if execution_identity is not None
+            else None
+        )
 
     def credential_preflight(self) -> ForgeCredentialPreflight:
         if self.command is None:
@@ -346,6 +356,8 @@ class ForgeAgentRunner:
             provider_route = self._provider_route_payload()
             if provider_route is not None:
                 payload["provider_route"] = provider_route
+            if self.execution_identity is not None:
+                payload["execution_identity"] = self.execution_identity.model_dump(mode="json")
             try:
                 completed = run_bounded_process(
                     self.command,
@@ -621,6 +633,8 @@ class ForgeAgentRunner:
             provider_route = self._provider_route_payload()
             if provider_route is not None:
                 payload["provider_route"] = provider_route
+            if self.execution_identity is not None:
+                payload["execution_identity"] = self.execution_identity.model_dump(mode="json")
             completed = run_bounded_process(
                 self.command,
                 input_text=json.dumps(payload),
@@ -820,12 +834,21 @@ class ForgeAgentRunner:
             if not _is_ephemeral_cache_path(diff.path)
         ]
         raw_events = list(payload.get("raw_events", []))
+        if self.execution_identity is not None and payload.get("error") is None:
+            execution_event = next(
+                (
+                    event
+                    for event in reversed(raw_events)
+                    if isinstance(event, dict)
+                    and event.get("event_type") == "eval_execution_identity"
+                ),
+                None,
+            )
+            validate_execution_identity_event(execution_event, expected=self.execution_identity)
         model_rounds = _reported_model_rounds(payload)
         derived_model_rounds = _model_rounds_from_agent_turn_events(raw_events)
         if derived_model_rounds is not None and model_rounds != derived_model_rounds:
-            raise ValueError(
-                "model_rounds does not match authoritative agent_turn_updated events"
-            )
+            raise ValueError("model_rounds does not match authoritative agent_turn_updated events")
         verification_result = (
             VerificationResult.model_validate(payload["verification_result"])
             if payload.get("verification_result") is not None

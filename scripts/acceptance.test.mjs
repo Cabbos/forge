@@ -113,7 +113,7 @@ test("acceptance script dry-run lists the final product gates", () => {
     {
       label: "DeepSeek H2 official transport A/B contract",
       command:
-        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::provider_conformance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_runner.py tests/test_baseline_comparison.py tests/test_provider_usage.py",
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::provider_conformance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_runner.py tests/test_execution_identity.py tests/test_baseline_comparison.py tests/test_provider_usage.py",
     },
     {
       label: "frontier harness contract evidence",

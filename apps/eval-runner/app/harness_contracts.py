@@ -523,6 +523,8 @@ def resolve_typed_failure_category(
         return legacy_category.strip() if legacy_category and legacy_category.strip() else None
     taxonomy = taxonomy_event.get("failure_taxonomy")
     primary = taxonomy.get("primary") if isinstance(taxonomy, dict) else None
+    if not isinstance(primary, str):
+        return PrimaryFailureCategory.HARNESS_CONTRACT_ERROR.value
     try:
         return PrimaryFailureCategory(primary).value
     except (TypeError, ValueError):

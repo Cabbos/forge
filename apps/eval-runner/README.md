@@ -338,6 +338,16 @@ offline contract is:
 scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
 ```
 
+Every route-bound attempt also carries an additive `eval_execution_identity`
+trace event owned by the controller. It binds the exact provider/model/route to
+temperature policy, reasoning policy, output limit, the frozen controller-visible
+tool-name catalog digest (`tool_names_v1`), controller version, and runtime
+versions. The Python runner checks that the event matches the request sent to
+Rust, while baseline/campaign verification rejects missing or malformed
+candidate identity evidence. This leaves the frozen H1 profile JSON bytes and
+fingerprint unchanged; legacy H1 artifacts without a candidate route remain
+verifiable.
+
 The v6 paired comparison is development evidence only; it selected
 `no_material_difference` and is not a holdout or frontier-grade result. See
 [`../../docs/forgebench-h2-transport-ab.md`](../../docs/forgebench-h2-transport-ab.md).

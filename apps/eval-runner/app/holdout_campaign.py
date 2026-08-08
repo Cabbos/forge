@@ -776,6 +776,7 @@ def _evidence_for_artifact(
         else profile.max_cost_cny_per_task,
     )
 
+
 def _build_holdout_report(
     metadata: HoldoutCampaignMetadata,
     profile: HarnessProfileV1,

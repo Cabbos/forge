@@ -591,6 +591,41 @@ pub fn insert_agent_route_identity(
     }
 }
 
+pub fn insert_execution_identity(
+    payload: &mut serde_json::Value,
+    provider: &str,
+    model: &str,
+    route: &super::types::EvalProviderRoute,
+    identity: &super::types::EvalExecutionIdentity,
+) {
+    let Some(object) = payload.as_object_mut() else {
+        return;
+    };
+    let Some(raw_events) = object
+        .get_mut("raw_events")
+        .and_then(|value| value.as_array_mut())
+    else {
+        return;
+    };
+    raw_events.push(serde_json::json!({
+        "event_type": "eval_execution_identity",
+        "schema_version": 1,
+        "provider": provider,
+        "model": model,
+        "transport": route.transport.as_str(),
+        "endpoint_family": route.transport.endpoint_family(),
+        "base_url": &route.base_url,
+        "temperature_policy": &identity.temperature_policy,
+        "temperature": identity.temperature,
+        "reasoning_effort": &identity.reasoning_effort,
+        "max_output_tokens": identity.max_output_tokens,
+        "tool_catalog_format": &identity.tool_catalog_format,
+        "tool_catalog_sha256": &identity.tool_catalog_sha256,
+        "controller_version": &identity.controller_version,
+        "runtime_versions": &identity.runtime_versions,
+    }));
+}
+
 pub fn insert_failure_fields(
     payload: &mut serde_json::Value,
     error: &str,

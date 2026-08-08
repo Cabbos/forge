@@ -304,6 +304,25 @@ def write_acceptance_artifacts(
                 "schema_version": 1,
                 "failure_taxonomy": {"primary": "passed"},
             },
+            {
+                "event_type": "eval_execution_identity",
+                "schema_version": 1,
+                "provider": metadata["provider"],
+                "model": metadata["model"],
+                "transport": metadata["transport"],
+                "endpoint_family": "anthropic",
+                "base_url": "https://api.deepseek.com/anthropic",
+                "temperature_policy": "omitted",
+                "temperature": None,
+                "reasoning_effort": "provider_default",
+                "max_output_tokens": 384000,
+                "tool_catalog_format": "tool_names_v1",
+                "tool_catalog_sha256": (
+                    "b112ec38def45cd13c463572bfaeb34708b7514235ad2adb995210d13e2bbd08"
+                ),
+                "controller_version": "test-controller/1",
+                "runtime_versions": {"python": "3.11"},
+            },
         ],
     )
     report = build_report([trace]).model_copy(
@@ -476,6 +495,7 @@ def test_accept_rejects_failed_independent_verification_and_dirty_controller_edi
         ("missing_identity", "agent identity evidence"),
         ("mismatched_identity", "agent identity evidence"),
         ("missing_contract", "harness contract evidence"),
+        ("missing_execution", "execution identity evidence"),
     ],
 )
 def test_accept_requires_controller_identity_and_contract_evidence(
@@ -485,9 +505,13 @@ def test_accept_requires_controller_identity_and_contract_evidence(
     message: str,
 ) -> None:
     campaign = initialize(tmp_path)
-    trace_path, report_path, patch_path, trace_payload, _report_payload = write_acceptance_artifacts(
-        campaign, tmp_path / "inputs"
-    )
+    (
+        trace_path,
+        report_path,
+        patch_path,
+        trace_payload,
+        _report_payload,
+    ) = write_acceptance_artifacts(campaign, tmp_path / "inputs")
     raw_events = trace_payload["trace"]["raw_events"]
     if mutation == "missing_identity":
         trace_payload["trace"]["raw_events"] = [
@@ -495,11 +519,13 @@ def test_accept_requires_controller_identity_and_contract_evidence(
         ]
     elif mutation == "mismatched_identity":
         raw_events[0]["transport"] = "openai_chat_completions"
+    elif mutation == "missing_contract":
+        trace_payload["trace"]["raw_events"] = [
+            event for event in raw_events if event["event_type"] != "harness_contract_evidence"
+        ]
     else:
         trace_payload["trace"]["raw_events"] = [
-            event
-            for event in raw_events
-            if event["event_type"] != "harness_contract_evidence"
+            event for event in raw_events if event["event_type"] != "eval_execution_identity"
         ]
     trace_path.write_text(json.dumps(trace_payload, sort_keys=True), encoding="utf-8")
     monkeypatch.setattr(

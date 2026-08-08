@@ -321,6 +321,18 @@ for relative in paths:
         }
     )
 
+execution_identity = dict(payload["execution_identity"])
+execution_identity.update(
+    {
+        "event_type": "eval_execution_identity",
+        "schema_version": 1,
+        "provider": payload["provider"],
+        "model": payload["model"],
+        "transport": payload["provider_route"]["transport"],
+        "endpoint_family": "anthropic",
+        "base_url": payload["provider_route"]["base_url"],
+    }
+)
 json.dump(
     {
         "changed_files": paths,
@@ -331,6 +343,7 @@ json.dump(
         "forge_agent_transport": "anthropic_messages",
         "forge_agent_endpoint_family": "anthropic",
         "forge_agent_base_url": "https://api.deepseek.com/anthropic",
+        "raw_events": [execution_identity],
         "model_rounds": 2,
         "forge_run_evidence": {
             "provider_usage": {

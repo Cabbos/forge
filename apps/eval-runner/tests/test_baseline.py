@@ -96,13 +96,43 @@ def make_trace(
     }
     if identity_overrides:
         identity_event.update(identity_overrides)
+    raw_events = [identity_event]
+    if (
+        identity_overrides
+        and identity_overrides.get("base_url") is not None
+        and identity_overrides.get("omit_execution_identity") is not True
+    ):
+        transport = identity_event["transport"]
+        raw_events.append(
+            {
+                "event_type": "eval_execution_identity",
+                "schema_version": 1,
+                "provider": provider,
+                "model": "deepseek-v4-flash",
+                "transport": transport,
+                "endpoint_family": identity_event.get("endpoint_family", "anthropic"),
+                "base_url": identity_event["base_url"],
+                "temperature_policy": "omitted",
+                "temperature": None,
+                "reasoning_effort": "provider_default",
+                "max_output_tokens": 8192 if transport == "openai_chat_completions" else 384000,
+                "tool_catalog_format": "tool_names_v1",
+                "tool_catalog_sha256": (
+                    "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632"
+                    if transport == "openai_chat_completions"
+                    else "b112ec38def45cd13c463572bfaeb34708b7514235ad2adb995210d13e2bbd08"
+                ),
+                "controller_version": "test-controller/1",
+                "runtime_versions": {"python": "3.11"},
+            }
+        )
     return AgentTrace(
         task_id=task.id,
         user_prompt=task.prompt,
         model="deepseek-v4-flash-anthropic-baseline-v1",
         provider=EvalProvider.FORGE,
         required_scores=task.required_scores,
-        raw_events=[identity_event],
+        raw_events=raw_events,
         changed_files=[],
         final_answer="Done.",
         verification_result=VerificationResult(
@@ -572,6 +602,29 @@ def test_fail_closed_attempt_stops_before_next_provider_call(
     assert result.status == "blocked"
     assert expected_blocker in result.blockers
     assert len(runner.calls) == 1
+
+
+def test_candidate_route_requires_execution_identity_trace_event(tmp_path: Path) -> None:
+    profile_path = FORGEBENCH_ROOT / "profiles" / "deepseek-v4-flash-openai-chat-control-v1.json"
+    campaign = initialize(tmp_path, profile_path=profile_path)
+    runner = FakeRunner(
+        campaign_root=campaign,
+        identity_overrides={
+            "transport": "openai_chat_completions",
+            "endpoint_family": "openai",
+            "base_url": "https://api.deepseek.com",
+            "omit_execution_identity": True,
+        },
+    )
+
+    result = run_baseline_campaign(
+        **campaign_kwargs(campaign, profile_path=profile_path),
+        runner=runner,
+        max_attempts=1,
+    )
+
+    assert result.status == "blocked"
+    assert result.blockers == ["execution_identity_mismatch"]
 
 
 def test_recovery_finishes_ledger_for_already_published_artifact(tmp_path: Path) -> None:

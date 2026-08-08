@@ -14,6 +14,7 @@ from app.baseline import (
 from app.baseline_comparison import compare_baseline_campaigns, write_baseline_comparison
 from app.baseline_models import BaselineCampaignMetadata
 from app.config import get_settings
+from app.execution_identity import default_execution_identity
 from app.harness_contracts import HarnessPolicyV1
 from app.harness_profiles import (
     harness_profile_fingerprint,
@@ -173,6 +174,12 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             parallel_read_tools=profile.parallel_read_tools,
         ),
         use_provider_credential_store=True,
+        execution_identity=default_execution_identity(
+            provider=profile.provider,
+            model=profile.model,
+            transport=profile.transport,
+            base_url=profile.resolved_base_url,
+        ),
     )
     preflight = runner.credential_preflight()
     if not preflight.ok:

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -62,6 +62,65 @@ pub struct EvalProviderRoute {
     pub base_url: String,
 }
 
+/// Controller-owned request dimensions that must be copied into every paid
+/// eval trace.  This is additive to the route identity and intentionally does
+/// not alter ordinary desktop requests.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EvalExecutionIdentity {
+    pub temperature_policy: String,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    pub reasoning_effort: String,
+    pub max_output_tokens: u32,
+    pub tool_catalog_format: String,
+    pub tool_catalog_sha256: String,
+    pub controller_version: String,
+    pub runtime_versions: BTreeMap<String, String>,
+}
+
+impl EvalExecutionIdentity {
+    pub(crate) fn validate(&self) -> Result<(), String> {
+        if !matches!(
+            self.temperature_policy.as_str(),
+            "explicit" | "omitted" | "provider_default"
+        ) {
+            return Err("execution_identity_temperature_policy_invalid".to_string());
+        }
+        if self.temperature_policy == "explicit" && self.temperature.is_none() {
+            return Err("execution_identity_temperature_missing".to_string());
+        }
+        if self.temperature_policy != "explicit" && self.temperature.is_some() {
+            return Err("execution_identity_temperature_unexpected".to_string());
+        }
+        if self.reasoning_effort.trim().is_empty() {
+            return Err("execution_identity_reasoning_effort_missing".to_string());
+        }
+        if self.max_output_tokens == 0 {
+            return Err("execution_identity_output_limit_invalid".to_string());
+        }
+        if self.tool_catalog_format != "tool_names_v1"
+            || self.tool_catalog_sha256.len() != 64
+            || !self
+                .tool_catalog_sha256
+                .chars()
+                .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
+        {
+            return Err("execution_identity_tool_catalog_invalid".to_string());
+        }
+        if self.controller_version.trim().is_empty() || self.runtime_versions.is_empty() {
+            return Err("execution_identity_runtime_version_missing".to_string());
+        }
+        if self
+            .runtime_versions
+            .iter()
+            .any(|(key, value)| key.trim().is_empty() || value.trim().is_empty())
+        {
+            return Err("execution_identity_runtime_version_invalid".to_string());
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalHeadlessRequest {
     #[serde(default)]
@@ -80,6 +139,10 @@ pub struct EvalHeadlessRequest {
     /// unchanged for backwards compatibility.
     #[serde(default)]
     pub provider_route: Option<EvalProviderRoute>,
+    /// Controller-owned execution controls for reproducible eval traces.
+    /// Ordinary desktop callers leave this unset.
+    #[serde(default)]
+    pub execution_identity: Option<EvalExecutionIdentity>,
     /// Optional profile id for future runtime profile selection.
     /// Not yet wired to agent session creation; stored for forward-compat.
     #[serde(default)]

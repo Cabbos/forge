@@ -21,6 +21,12 @@ The profile, dataset lock, source commit, dirty-state digest, provider, model,
 transport, and harness fingerprint are frozen into every campaign and attempt.
 A mismatched identity or changed source blocks the campaign.
 
+New route-bound controller runs additionally emit an `eval_execution_identity`
+trace event containing the request controls (temperature/reasoning policy and
+output limit), controller-visible tool catalog digest, and runtime versions.
+This evidence is additive: it does not change the canonical H1 profile bytes or
+fingerprint, and legacy H1 artifacts that omit the event remain verifiable.
+
 ## Spend and recovery boundary
 
 H1 has an 8 CNY campaign allocation, a 1 CNY reservation ceiling per task, and

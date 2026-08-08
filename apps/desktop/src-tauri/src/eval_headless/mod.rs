@@ -89,6 +89,11 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     if let Some(route) = request.provider_route.as_ref() {
         resolve::validate_expected_provider_route(route, &agent_provider, &effective_model)?;
         resolve::validate_configured_provider_route(route, &agent_provider, &effective_model)?;
+        let execution_identity = request
+            .execution_identity
+            .as_ref()
+            .ok_or_else(|| "provider_route_requires_execution_identity".to_string())?;
+        execution_identity.validate()?;
     }
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
@@ -420,6 +425,15 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     trace::insert_agent_identity(&mut payload, &agent_provider, &agent_model);
     if let Some(route) = request.provider_route.as_ref() {
         trace::insert_agent_route_identity(&mut payload, route);
+        if let Some(execution_identity) = request.execution_identity.as_ref() {
+            trace::insert_execution_identity(
+                &mut payload,
+                &agent_provider,
+                &agent_model,
+                route,
+                execution_identity,
+            );
+        }
     }
     if let Some(error) = snapshot_error {
         if let Some(object) = payload.as_object_mut() {
@@ -917,6 +931,48 @@ mod tests {
     }
 
     #[test]
+    fn execution_identity_is_written_as_controller_owned_trace_evidence() {
+        let mut payload = serde_json::json!({"raw_events": []});
+        let route = EvalProviderRoute {
+            transport: EvalProviderTransport::OpenAiChatCompletions,
+            base_url: "https://api.deepseek.com".to_string(),
+        };
+        let identity: types::EvalExecutionIdentity = serde_json::from_value(serde_json::json!({
+            "temperature_policy": "omitted",
+            "reasoning_effort": "provider_default",
+            "max_output_tokens": 8192,
+            "tool_catalog_format": "tool_names_v1",
+            "tool_catalog_sha256": "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632",
+            "controller_version": "test-controller/1",
+            "runtime_versions": {"rust": "test"}
+        }))
+        .expect("execution identity");
+        identity.validate().expect("identity validates");
+
+        trace::insert_execution_identity(
+            &mut payload,
+            "deepseek",
+            "deepseek-v4-flash",
+            &route,
+            &identity,
+        );
+
+        assert_eq!(
+            payload["raw_events"][0]["event_type"],
+            "eval_execution_identity"
+        );
+        assert_eq!(
+            payload["raw_events"][0]["transport"],
+            "openai_chat_completions"
+        );
+        assert_eq!(payload["raw_events"][0]["max_output_tokens"], 8192);
+        assert_eq!(
+            payload["raw_events"][0]["tool_catalog_sha256"],
+            "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632"
+        );
+    }
+
+    #[test]
     fn trace_payload_includes_projected_loop_task_authority() {
         let mut task =
             crate::loop_runtime::LoopTaskRecord::new_for_test("loop-trace", "recover task");
@@ -1328,6 +1384,15 @@ deleted file mode 100644\n\
             "provider_route": {
                 "transport": "openai_chat_completions",
                 "base_url": "https://api.deepseek.com"
+            },
+            "execution_identity": {
+                "temperature_policy": "omitted",
+                "reasoning_effort": "provider_default",
+                "max_output_tokens": 8192,
+                "tool_catalog_format": "tool_names_v1",
+                "tool_catalog_sha256": "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632",
+                "controller_version": "test-controller/1",
+                "runtime_versions": {"rust": "test"}
             },
             "workspace_path": workspace.path(),
             "use_provider_credential_store": false

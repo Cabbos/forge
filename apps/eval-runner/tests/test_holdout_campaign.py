@@ -5,8 +5,8 @@ import pytest
 
 import app.holdout_campaign as holdout_campaign
 from app.baseline_models import BaselineComparison, BaselineComparisonMetrics
-from app.harness_profiles import load_harness_profile
 from app.harness_contracts import resolve_typed_failure_category
+from app.harness_profiles import load_harness_profile
 from app.holdout_campaign import (
     HoldoutRunResult,
     generate_holdout_report,

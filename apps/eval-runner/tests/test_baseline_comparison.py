@@ -183,10 +183,7 @@ def test_comparison_metrics_use_typed_failure_taxonomy() -> None:
 
     metrics = _build_metrics(
         report,
-        {
-            f"attempt-{index}": artifact
-            for index in range(30)
-        },
+        {f"attempt-{index}": artifact for index in range(30)},
     )
 
     assert metrics.failure_categories == {"passed": 30}

@@ -841,6 +841,52 @@ def _validate_acceptance_evidence(
     if not isinstance(taxonomy, dict) or taxonomy.get("primary") != "passed":
         raise ValueError("trusted trace has no passing harness contract evidence")
 
+    execution_event = next(
+        (
+            event
+            for event in reversed(trace.raw_events)
+            if isinstance(event, dict) and event.get("event_type") == "eval_execution_identity"
+        ),
+        None,
+    )
+    if (
+        execution_event is None
+        or execution_event.get("schema_version") != 1
+        or execution_event.get("provider") != trace_artifact.provider
+        or execution_event.get("model") != trace_artifact.model
+        or execution_event.get("transport") != trace_artifact.transport
+        or not isinstance(execution_event.get("endpoint_family"), str)
+        or not isinstance(execution_event.get("base_url"), str)
+        or execution_event.get("temperature_policy")
+        not in {"explicit", "omitted", "provider_default"}
+        or execution_event.get("temperature_policy") == "explicit"
+        and not isinstance(execution_event.get("temperature"), (int, float))
+        or execution_event.get("temperature_policy") != "explicit"
+        and execution_event.get("temperature") is not None
+        or not isinstance(execution_event.get("reasoning_effort"), str)
+        or not execution_event.get("reasoning_effort", "").strip()
+        or not isinstance(execution_event.get("max_output_tokens"), int)
+        or execution_event.get("max_output_tokens", 0) <= 0
+        or execution_event.get("tool_catalog_format") != "tool_names_v1"
+        or not isinstance(execution_event.get("tool_catalog_sha256"), str)
+        or len(execution_event.get("tool_catalog_sha256", "")) != 64
+        or not all(
+            value in "0123456789abcdef" for value in execution_event.get("tool_catalog_sha256", "")
+        )
+        or not isinstance(execution_event.get("controller_version"), str)
+        or not execution_event.get("controller_version", "").strip()
+        or not isinstance(execution_event.get("runtime_versions"), dict)
+        or not execution_event.get("runtime_versions")
+        or any(
+            not isinstance(key, str)
+            or not key.strip()
+            or not isinstance(value, str)
+            or not value.strip()
+            for key, value in execution_event.get("runtime_versions", {}).items()
+        )
+    ):
+        raise ValueError("trusted trace execution identity evidence is incomplete")
+
     if trace.task_id != task.id or trace.user_prompt != task.prompt:
         raise ValueError("trusted trace task identity does not match")
     if trace.error is not None or trace.failure_category != FailureCategory.NONE:

@@ -31,6 +31,16 @@ before preflight or session creation. This is an eval-only isolated route
 override, not a desktop settings migration or shared session-builder change.
 The ordinary desktop DeepSeek default remains Anthropic.
 
+Every route-bound request also carries a controller-owned
+`eval_execution_identity` event in the returned trace. It records the exact
+provider/model/route plus temperature policy, reasoning policy, output limit,
+the `tool_names_v1` tool-catalog digest, controller version, and runtime
+versions. The runner compares the event to the request it sent; baseline and
+campaign verification reject missing, malformed, or mismatched candidate
+identity evidence. This additive event deliberately leaves the frozen H1
+profile bytes and fingerprint unchanged, including H1's legacy omitted
+`base_url` form.
+
 ## Trust and spend boundary
 
 Both arms use the H1 pending marker, immutable attempt artifacts, usage ledger,

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from app.config import get_settings
+from app.execution_identity import default_execution_identity
 from app.harness_contracts import HarnessPolicyV1
 from app.harness_profiles import harness_profile_fingerprint, load_harness_profile
 from app.holdout_campaign import (
@@ -122,6 +123,12 @@ def holdout_main(argv: list[str]) -> int:
                     parallel_read_tools=profile.parallel_read_tools,
                 ),
                 use_provider_credential_store=True,
+                execution_identity=default_execution_identity(
+                    provider=profile.provider,
+                    model=profile.model,
+                    transport=profile.transport,
+                    base_url=profile.resolved_base_url,
+                ),
             )
             preflight = runner.credential_preflight()
             if not preflight.ok:
