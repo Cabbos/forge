@@ -23,6 +23,9 @@ MAX_TOOL_CONTENT_CHARS = 2_000
 MAX_NEXT_EVIDENCE_CHARS = 240
 MAX_CONTEXT_ITEMS = 64
 MAX_MINIMAL_PROMPT_CHARS = 3_600
+MAX_TASK_PLAN_STEPS = 8
+MAX_TASK_PLAN_FILES = 64
+MAX_TASK_PLAN_COMMANDS = 16
 
 
 class HarnessContractModel(BaseModel):
@@ -77,6 +80,199 @@ class HarnessPolicyV1(HarnessContractModel):
             ensure_ascii=False,
         ).encode("utf-8")
         return hashlib.sha256(payload).hexdigest()
+
+
+class TaskContractKind(StrEnum):
+    """Controller-owned shape of the change an eval task permits."""
+
+    NO_CHANGE = "no_change"
+    SINGLE_FILE = "single_file"
+    MULTI_FILE = "multi_file"
+    SHELL_HEAVY = "shell_heavy"
+
+
+class TaskExecutionContract(HarnessContractModel):
+    """Bounded execution guidance derived from the sealed task definition.
+
+    This is deliberately not a new agent permission.  It makes the evaluator's
+    expectations explicit before the first edit and gives the trace verifier a
+    stable shape against which an optional agent plan can be checked.
+    """
+
+    schema_version: Literal[1] = 1
+    kind: TaskContractKind
+    allowed_changed_files: list[str] = Field(default_factory=list, max_length=MAX_TASK_PLAN_FILES)
+    forbidden_changed_paths: list[str] = Field(default_factory=list, max_length=MAX_TASK_PLAN_FILES)
+    required_inspection_files: list[str] = Field(
+        default_factory=list, max_length=MAX_TASK_PLAN_FILES
+    )
+    required_validation_commands: list[str] = Field(
+        default_factory=list, max_length=MAX_TASK_PLAN_COMMANDS
+    )
+    stop_condition: str = Field(min_length=1, max_length=360)
+
+
+class TaskPlanAction(StrEnum):
+    INSPECT = "inspect"
+    EDIT = "edit"
+    VERIFY = "verify"
+    RECOVER = "recover"
+    STOP = "stop"
+
+
+class TaskPlanStep(HarnessContractModel):
+    id: str = Field(min_length=1, max_length=40, pattern=r"^[a-z0-9][a-z0-9_-]*$")
+    action: TaskPlanAction
+    files: list[str] = Field(default_factory=list, max_length=MAX_TASK_PLAN_FILES)
+    evidence: str = Field(default="", max_length=240)
+
+
+class AgentTaskPlan(HarnessContractModel):
+    """Optional structured plan returned by the Forge headless adapter."""
+
+    schema_version: Literal[1] = 1
+    goal: str = Field(min_length=1, max_length=500)
+    steps: list[TaskPlanStep] = Field(
+        min_length=1,
+        max_length=MAX_TASK_PLAN_STEPS,
+    )
+
+    @model_validator(mode="after")
+    def validate_unique_step_ids(self) -> AgentTaskPlan:
+        ids = [step.id for step in self.steps]
+        if len(ids) != len(set(ids)):
+            raise ValueError("task plan step ids must be unique")
+        return self
+
+
+def build_task_execution_contract(
+    *,
+    expected_files_changed: Iterable[str],
+    forbidden_files_changed: Iterable[str],
+    context_files: Iterable[str],
+    validation_commands: Iterable[str],
+    verification_command: str | None,
+    tags: Iterable[str],
+) -> TaskExecutionContract:
+    """Derive bounded planning facts without exposing controller-only checks."""
+
+    allowed = _dedupe_nonblank(expected_files_changed, limit=MAX_TASK_PLAN_FILES)
+    forbidden = _dedupe_nonblank(forbidden_files_changed, limit=MAX_TASK_PLAN_FILES)
+    context = _dedupe_nonblank(context_files, limit=MAX_TASK_PLAN_FILES)
+    commands = _dedupe_nonblank(
+        [*validation_commands, verification_command or ""],
+        limit=MAX_TASK_PLAN_COMMANDS,
+    )
+    normalized_tags = {str(tag).strip().lower() for tag in tags if str(tag).strip()}
+    if not allowed:
+        kind = TaskContractKind.NO_CHANGE
+        inspection = context
+        stop_condition = (
+            "Leave the workspace unchanged and prove the requested no-op with validation."
+        )
+    elif "shell-heavy" in normalized_tags:
+        kind = TaskContractKind.SHELL_HEAVY
+        inspection = allowed
+        stop_condition = (
+            "Capture the bounded command evidence, pass targeted validation, then stop."
+        )
+    elif len(allowed) > 1 or "multi-file" in normalized_tags:
+        kind = TaskContractKind.MULTI_FILE
+        inspection = allowed
+        stop_condition = (
+            "Inspect every allowed file before editing, preserve the cross-file contract, "
+            "run targeted validation, then stop."
+        )
+    else:
+        kind = TaskContractKind.SINGLE_FILE
+        inspection = allowed
+        stop_condition = "Inspect the allowed file, make the smallest fix, validate it, then stop."
+    return TaskExecutionContract(
+        kind=kind,
+        allowed_changed_files=allowed,
+        forbidden_changed_paths=forbidden,
+        required_inspection_files=inspection,
+        required_validation_commands=commands,
+        stop_condition=stop_condition,
+    )
+
+
+def validate_task_plan(
+    value: Any,
+    contract: TaskExecutionContract,
+) -> AgentTaskPlan:
+    """Validate an agent plan against controller-owned paths and phases."""
+
+    try:
+        plan = AgentTaskPlan.model_validate(value)
+    except Exception as exc:
+        raise ValueError("task_plan_invalid") from exc
+    allowed = set(contract.allowed_changed_files)
+    inspection_required = set(contract.required_inspection_files)
+    inspected: set[str] = set()
+    has_verification = False
+    has_edit = False
+    for step in plan.steps:
+        files = set(step.files)
+        if files - allowed and step.action in {TaskPlanAction.EDIT, TaskPlanAction.RECOVER}:
+            raise ValueError("task_plan_edit_out_of_scope")
+        if step.action == TaskPlanAction.INSPECT:
+            inspected.update(files)
+        elif step.action == TaskPlanAction.VERIFY:
+            has_verification = True
+        elif step.action in {TaskPlanAction.EDIT, TaskPlanAction.RECOVER}:
+            has_edit = True
+    missing = inspection_required - inspected
+    if missing:
+        raise ValueError("task_plan_missing_inspection")
+    if not has_verification:
+        raise ValueError("task_plan_missing_verification")
+    if contract.kind == TaskContractKind.NO_CHANGE and has_edit:
+        raise ValueError("task_plan_no_change_edit")
+    return plan
+
+
+def task_plan_evidence(
+    contract: TaskExecutionContract,
+    provided_plan: Any = None,
+) -> dict[str, Any]:
+    """Return bounded plan evidence; absence is explicit, never inferred as success."""
+
+    if provided_plan is None:
+        return {
+            "source": "missing",
+            "status": "missing",
+            "required": False,
+            "reason": "agent did not provide task_plan",
+        }
+    plan = validate_task_plan(provided_plan, contract)
+    inspected = sorted(
+        {
+            path
+            for step in plan.steps
+            if step.action == TaskPlanAction.INSPECT
+            for path in step.files
+        }
+    )
+    return {
+        "source": "agent_payload",
+        "status": "valid",
+        "required": False,
+        "inspected_files": inspected,
+        "step_count": len(plan.steps),
+        "plan": plan.model_dump(mode="json"),
+    }
+
+
+def _dedupe_nonblank(values: Iterable[str], *, limit: int) -> list[str]:
+    result: list[str] = []
+    for value in values:
+        normalized = str(value).strip()
+        if normalized and normalized not in result:
+            result.append(normalized)
+        if len(result) >= limit:
+            break
+    return result
 
 
 class ToolResultStatus(StrEnum):
@@ -420,6 +616,8 @@ def harness_contract_evidence(
     error: str | None = None,
     verification_passed: bool | None = None,
     scope_violation: bool = False,
+    task_contract: TaskExecutionContract | None = None,
+    provided_plan: Any = None,
 ) -> dict[str, Any]:
     """Build a JSON-safe evidence event without retaining unbounded output."""
 
@@ -450,6 +648,14 @@ def harness_contract_evidence(
         verification_passed=verification_passed,
         scope_violation=scope_violation,
     )
+    resolved_contract = task_contract or build_task_execution_contract(
+        expected_files_changed=[],
+        forbidden_files_changed=[],
+        context_files=task_context_files,
+        validation_commands=[],
+        verification_command=None,
+        tags=[],
+    )
     return {
         "event_type": "harness_contract_evidence",
         "schema_version": 1,
@@ -465,4 +671,6 @@ def harness_contract_evidence(
             "stagnation": decision.model_dump(mode="json"),
         },
         "failure_taxonomy": failure.model_dump(mode="json"),
+        "task_execution_contract": resolved_contract.model_dump(mode="json"),
+        "task_plan": task_plan_evidence(resolved_contract, provided_plan),
     }

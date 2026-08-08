@@ -33,6 +33,13 @@ needed for frontier tuning explicit and bounded before another paid campaign.
   before the first edit. Post-run filesystem snapshots remain authoritative;
   this prompt is an early guard against the scope and round failures seen in the
   first paid H4 control result, not a substitute for the scope gate.
+- Forge eval prompts now also receive a controller-owned `TaskExecutionContract`.
+  It classifies no-op, single-file, multi-file, and shell-heavy tasks, names the
+  files that must be inspected, carries only the targeted validation commands,
+  and states the stop condition. A headless adapter may return a bounded
+  `task_plan`; when present, the runner validates unique phases, required
+  inspection coverage, in-scope edits, and a verification step. Missing plans
+  remain explicit evidence rather than being counted as success.
 
 Every Forge trace now emits one `harness_contract_evidence` raw event. Legacy
 shell tool calls are converted into bounded envelopes, while agent-provided

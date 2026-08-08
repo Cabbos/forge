@@ -11,7 +11,11 @@ from typing import Any, Literal, Protocol
 
 from pydantic import TypeAdapter, ValidationError
 
-from app.harness_contracts import HarnessPolicyV1, harness_contract_evidence
+from app.harness_contracts import (
+    HarnessPolicyV1,
+    build_task_execution_contract,
+    harness_contract_evidence,
+)
 from app.hidden_verifiers import run_hidden_verifier, verifier_command
 from app.models import (
     AgentTrace,
@@ -577,16 +581,27 @@ class ForgeAgentRunner:
                 task_dict["max_repair_attempts"] = self.harness_policy.repair_attempt_limit
             prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
             task_dict["context_files"] = prepared_context_files
+            task_contract = build_task_execution_contract(
+                expected_files_changed=task.expected_files_changed,
+                forbidden_files_changed=task.forbidden_files_changed,
+                context_files=prepared_context_files,
+                validation_commands=task.validation_commands,
+                verification_command=task.verification_command,
+                tags=task.tags,
+            )
+            task_dict["task_execution_contract"] = task_contract.model_dump(mode="json")
             payload = {
                 "task": task_dict,
                 "prompt": _render_eval_prompt(
                     self.harness_policy,
                     task,
                     prepared_context_files,
+                    task_contract,
                 ),
                 "harness_policy": self.harness_policy.model_dump(mode="json"),
                 "harness_policy_fingerprint": self.harness_policy.fingerprint(),
                 "context_mode": self.harness_policy.context_policy,
+                "task_execution_contract": task_contract.model_dump(mode="json"),
                 "provider": self.agent_provider,
                 "model": self.agent_model,
                 "use_provider_credential_store": self.use_provider_credential_store,
@@ -815,6 +830,15 @@ class ForgeAgentRunner:
             )
         changed_files = workspace_observation.changed_files
         raw_events = list(payload.get("raw_events", []))
+        prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+        task_contract = build_task_execution_contract(
+            expected_files_changed=task.expected_files_changed,
+            forbidden_files_changed=task.forbidden_files_changed,
+            context_files=prepared_context_files,
+            validation_commands=task.validation_commands,
+            verification_command=task.verification_command,
+            tags=task.tags,
+        )
         identity_event = {
             "event_type": "eval_agent_identity",
             "provider": payload.get("forge_agent_provider"),
@@ -957,14 +981,12 @@ class ForgeAgentRunner:
                 "event_type": "eval_harness_policy",
                 "policy": self.harness_policy.model_dump(mode="json"),
                 "policy_fingerprint": self.harness_policy.fingerprint(),
-                "prepared_context_files": self.harness_policy.selected_context_files(
-                    task.context_files
-                ),
+                "prepared_context_files": prepared_context_files,
             }
         )
 
         harness_evidence = harness_contract_evidence(
-            task_context_files=self.harness_policy.selected_context_files(task.context_files),
+            task_context_files=prepared_context_files,
             workspace=workspace,
             tool_calls=(
                 (call.command, call.stdout, call.stderr, call.exit_code) for call in tool_calls
@@ -978,6 +1000,8 @@ class ForgeAgentRunner:
                 verification_result.passed if verification_result is not None else None
             ),
             scope_violation=bool(scope_violations),
+            task_contract=task_contract,
+            provided_plan=payload.get("task_plan"),
         )
         raw_events.append(harness_evidence)
 
@@ -987,7 +1011,7 @@ class ForgeAgentRunner:
             model=self.model,
             provider=self.provider,
             required_scores=task.required_scores,
-            context_files=task.context_files,
+            context_files=prepared_context_files,
             raw_events=raw_events,
             tool_calls=tool_calls,
             shell_outputs=shell_outputs,
@@ -1627,6 +1651,7 @@ def _render_eval_prompt(
     policy: HarnessPolicyV1,
     task: EvaluationTask,
     context_files: Sequence[str],
+    task_contract: Any | None = None,
 ) -> str:
     """Add controller-owned scope and convergence facts to the agent prompt.
 
@@ -1637,6 +1662,15 @@ def _render_eval_prompt(
     """
 
     prompt = policy.render_prompt(task.prompt, context_files)
+    if task_contract is None:
+        task_contract = build_task_execution_contract(
+            expected_files_changed=task.expected_files_changed,
+            forbidden_files_changed=task.forbidden_files_changed,
+            context_files=context_files,
+            validation_commands=task.validation_commands,
+            verification_command=task.verification_command,
+            tags=task.tags,
+        )
     expected = ", ".join(task.expected_files_changed) or "(none; no product file should change)"
     forbidden = ", ".join(task.forbidden_files_changed) or "(none declared)"
     scope_contract = (
@@ -1646,4 +1680,20 @@ def _render_eval_prompt(
         "- Do not modify any other file; keep the patch minimal.\n"
         "- Run the targeted validation, then stop once the task is verified."
     )
-    return prompt + scope_contract
+    required_inspection = ", ".join(task_contract.required_inspection_files) or "(none declared)"
+    required_validation = (
+        ", ".join(command[:240] for command in task_contract.required_validation_commands)
+        or "(none declared)"
+    )
+    planning_contract = (
+        "\n\nController execution contract:\n"
+        f"- Task shape: {task_contract.kind.value}.\n"
+        f"- Inspect before editing: {required_inspection}.\n"
+        f"- Required targeted checks: {required_validation}.\n"
+        f"- Stop condition: {task_contract.stop_condition}\n"
+        "- Before the first mutation, form a short inspect/edit/verify plan; if the "
+        "headless adapter supports it, return it as task_plan with at most 8 steps "
+        "using {goal, steps:[{id, action, files, evidence}]} and actions inspect/edit/verify.\n"
+        "- A no_change task must not contain an edit step."
+    )
+    return prompt + scope_contract + planning_contract

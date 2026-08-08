@@ -10,13 +10,16 @@ from app.harness_contracts import (
     ProgressKind,
     ProgressSignal,
     StagnationAction,
+    TaskContractKind,
     ToolResultEnvelope,
     ToolResultStatus,
     build_context_manifest,
+    build_task_execution_contract,
     classify_failure,
     envelope_from_shell_output,
     evaluate_stagnation,
     harness_contract_evidence,
+    task_plan_evidence,
 )
 
 
@@ -137,3 +140,63 @@ def test_harness_contract_evidence_marks_missing_progress_explicitly(tmp_path: P
     assert evidence["progress"]["source"] == "missing"
     assert evidence["progress"]["stagnation"]["action"] == "continue"
     assert evidence["failure_taxonomy"]["primary"] == "model_incomplete"
+
+
+def test_task_execution_contract_requires_all_multi_file_inspection_and_verification() -> None:
+    contract = build_task_execution_contract(
+        expected_files_changed=["src/a.py", "src/b.py"],
+        forbidden_files_changed=["package.json"],
+        context_files=[],
+        validation_commands=["pytest tests/test_ab.py"],
+        verification_command=None,
+        tags=["multi-file"],
+    )
+
+    assert contract.kind == TaskContractKind.MULTI_FILE
+    evidence = task_plan_evidence(
+        contract,
+        {
+            "goal": "preserve the cross-file contract",
+            "steps": [
+                {"id": "inspect", "action": "inspect", "files": ["src/a.py", "src/b.py"]},
+                {"id": "edit", "action": "edit", "files": ["src/a.py", "src/b.py"]},
+                {"id": "verify", "action": "verify", "files": []},
+            ],
+        },
+    )
+
+    assert evidence["status"] == "valid"
+    assert evidence["inspected_files"] == ["src/a.py", "src/b.py"]
+
+
+def test_task_plan_evidence_rejects_out_of_scope_edit_and_missing_verification() -> None:
+    contract = build_task_execution_contract(
+        expected_files_changed=["src/a.py"],
+        forbidden_files_changed=["package.json"],
+        context_files=[],
+        validation_commands=["pytest"],
+        verification_command=None,
+        tags=[],
+    )
+
+    with pytest.raises(ValueError, match="task_plan_edit_out_of_scope"):
+        task_plan_evidence(
+            contract,
+            {
+                "goal": "break scope",
+                "steps": [
+                    {"id": "inspect", "action": "inspect", "files": ["src/a.py"]},
+                    {"id": "edit", "action": "edit", "files": ["package.json"]},
+                    {"id": "verify", "action": "verify", "files": []},
+                ],
+            },
+        )
+
+    with pytest.raises(ValueError, match="task_plan_missing_verification"):
+        task_plan_evidence(
+            contract,
+            {
+                "goal": "forget validation",
+                "steps": [{"id": "inspect", "action": "inspect", "files": ["src/a.py"]}],
+            },
+        )

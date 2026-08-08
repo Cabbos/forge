@@ -255,6 +255,7 @@ def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) 
     assert event["tool_results"]["envelopes"][0]["content"] == "ok"
     assert event["progress"]["stagnation"]["action"] == "redirect"
     assert event["failure_taxonomy"]["primary"] == "passed"
+    assert event["task_plan"]["status"] == "missing"
     convergence = next(
         event
         for event in trace.raw_events
@@ -262,6 +263,56 @@ def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) 
     )
     assert convergence["repair_attempts_used"] == 0
     assert convergence["fresh_controller_verifier"] is False
+
+
+def test_forge_runner_exposes_task_execution_contract_and_validates_agent_plan(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "planned_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "contract = payload['task_execution_contract']\n"
+            "assert contract['kind'] == 'multi_file'\n"
+            "assert contract['required_inspection_files'] == ['src/a.py', 'src/b.py']\n"
+            "assert 'Inspect every allowed file' in contract['stop_condition']\n"
+            "assert 'Task shape: multi_file' in payload['prompt']\n"
+            "json.dump({\n"
+            "  'final_answer': 'done',\n"
+            "  'task_plan': {\n"
+            "    'goal': 'preserve the cross-file contract',\n"
+            "    'steps': [\n"
+            "      {'id': 'inspect', 'action': 'inspect', 'files': ['src/a.py', 'src/b.py']},\n"
+            "      {'id': 'edit', 'action': 'edit', 'files': ['src/a.py', 'src/b.py']},\n"
+            "      {'id': 'verify', 'action': 'verify', 'files': []}\n"
+            "    ]\n"
+            "  }\n"
+            "}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="planned-multi-file",
+        title="Planned multi-file task",
+        prompt="Preserve the cross-file contract.",
+        expected_files_changed=["src/a.py", "src/b.py"],
+        validation_commands=["python -c 'print(1)'"],
+        tags=["multi-file"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+    evidence = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "harness_contract_evidence"
+    )
+    assert evidence["task_execution_contract"]["kind"] == "multi_file"
+    assert evidence["task_plan"]["status"] == "valid"
+    assert evidence["task_plan"]["step_count"] == 3
+    assert trace.context_files == []
 
 
 def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path) -> None:
