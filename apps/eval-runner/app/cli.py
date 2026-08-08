@@ -13,6 +13,7 @@ from app.forgebench import main as forgebench_main
 from app.holdout_cli import holdout_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
 from app.red_team import is_red_team_task
+from app.release_cli import release_main
 from app.trace_import import promote_failed_traces
 
 
@@ -217,6 +218,8 @@ def main(argv: list[str] | None = None) -> int:
         return baseline_main(raw_argv[1:])
     if raw_argv[:1] == ["holdout"]:
         return holdout_main(raw_argv[1:])
+    if raw_argv[:1] == ["release"]:
+        return release_main(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(

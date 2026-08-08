@@ -106,6 +106,10 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cd apps/eval-runner && uv run pytest tests/test_holdout_campaign.py tests/test_holdout_gate.py tests/test_holdout_cli.py",
     },
     {
+      label: "Forge frontier release aggregation contract",
+      command: "cd apps/eval-runner && uv run pytest tests/test_release_gate.py",
+    },
+    {
       label: "DeepSeek H1 paid-baseline contract",
       command:
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_provider_usage.py tests/test_baseline.py tests/test_baseline_cli.py && uv run pytest tests/test_runner.py -k credential_preflight",

@@ -1,5 +1,6 @@
 # Changelog
 
+- Added a unified offline Forge frontier release gate. `python -m app.cli release verify` now combines the frozen holdout decision with matching profile/dataset identity, verified Forge provenance, and clean full-monorepo verification; it fails closed and never starts a provider call.
 - Tightened the eval execution identity contract: route-bound runs now write
   the route-specific output limit into the isolated provider profile and Rust
   rejects a mismatched limit before session creation. Python runner, baseline,

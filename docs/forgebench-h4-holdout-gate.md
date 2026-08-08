@@ -26,6 +26,20 @@ cd apps/eval-runner
 uv run python -m app.cli holdout verify --report /path/to/holdout-report.json
 ```
 
+For the final claim boundary, combine that report with the independently
+verified Forge-built integration campaign:
+
+```bash
+uv run python -m app.cli release verify \
+  --holdout-report /path/to/holdout-report.json \
+  --campaign /private/tmp/forge-h0c/campaign
+```
+
+This aggregation command is offline and fail-closed. It requires the holdout
+threshold decision, matching profile/dataset fingerprints, a valid provenance
+chain, and a passing clean full-monorepo verification; it never starts a
+provider call.
+
 The paid campaign boundary is explicit and resumable. Initialize it only from
 the pinned development comparison and the checked-in sealed split:
 

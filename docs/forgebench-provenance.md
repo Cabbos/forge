@@ -98,6 +98,19 @@ clone, compares the replayed tree with the recorded output commit, and runs the
 full verifier on a clean copy. A source, history, ledger, artifact, lock,
 manifest, or verification-field change fails closed.
 
+The scoring and integration tracks can be combined only through the offline
+frontier gate:
+
+```bash
+uv run python -m app.cli release verify \
+  --holdout-report /path/to/holdout-report.json \
+  --campaign /path/to/forge-built-campaign
+```
+
+It checks the H4 threshold decision, profile/dataset identity binding, and the
+complete campaign verification as one machine-readable decision. It never
+starts a provider call.
+
 This proves that every product change after the locked baseline and before the
 manifest came from the recorded trusted Forge patch chain, and that the bound
 tree passed the recorded independent verification.
