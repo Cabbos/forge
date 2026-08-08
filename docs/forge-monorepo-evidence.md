@@ -108,8 +108,10 @@ The first real H4 control campaign is recorded in
 [`forgebench-h4-paid-result.md`](forgebench-h4-paid-result.md). It closed all
 60 attempts at `1.80125860 CNY` with complete evidence coverage, but the
 canonical gate correctly failed at 0.7000 trusted success, 0.2333 scope
-violations, and 31.5 median rounds. This is diagnostic evidence for the next
-development-split harness iteration, not a passing holdout or frontier result.
+violations, and 31.5 median rounds. The round value predates the parallel-tool
+round accounting fix and is retained only as historical diagnostic evidence;
+this remains a development-split harness iteration, not a passing holdout or
+frontier result.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

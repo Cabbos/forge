@@ -3,6 +3,14 @@
 This document records the first real sealed holdout campaign. It is a
 diagnostic release result, not a passing frontier claim.
 
+The campaign predates commit
+`76d7822c6e4faf1ed402cc16c5b6c4e265c34d61`, which corrected model-round
+accounting for parallel tool calls. The stored success, scope, trust, replay,
+verification, and usage evidence remains immutable; the published round
+metric is historical and must not be treated as authoritative for a current
+release decision. A new source-pinned holdout run is required to measure the
+round threshold after the fix.
+
 ## Locked execution
 
 - Campaign: `h4-holdout-v1-control`
