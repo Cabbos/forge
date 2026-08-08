@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from app.baseline import (
     BaselineCrashInjected,
     _attempt_blockers,
+    _build_baseline_report,
     generate_baseline_report,
     initialize_baseline_campaign,
     recover_baseline_campaign,
@@ -20,6 +21,7 @@ from app.baseline import (
 from app.baseline_models import (
     BaselineAttemptArtifact,
     BaselineBudgetEntry,
+    BaselineCampaignMetadata,
     BaselinePendingAttempt,
     BaselineReport,
 )
@@ -893,6 +895,49 @@ def test_report_has_deterministic_percentiles_and_flaky_per_task_results(
     assert regenerated == report
     assert (campaign / "baseline-report.json").read_bytes() == report_bytes
     assert (campaign / "artifact-index.json").read_bytes() == index_bytes
+
+
+def test_report_failure_categories_use_typed_taxonomy_over_legacy_artifact_category(
+    tmp_path: Path,
+) -> None:
+    campaign = initialize(tmp_path)
+    run_baseline_campaign(
+        **campaign_kwargs(campaign),
+        runner=FakeRunner(campaign_root=campaign),
+        max_attempts=1,
+    )
+    artifact_path = next((campaign / "attempts").glob("*.json"))
+    artifact = BaselineAttemptArtifact.model_validate(json.loads(artifact_path.read_text()))
+    typed_trace = artifact.trace.model_copy(
+        update={
+            "failure_category": FailureCategory.BUDGET_EXHAUSTED,
+            "raw_events": [
+                *artifact.trace.raw_events,
+                {
+                    "event_type": "harness_contract_evidence",
+                    "failure_taxonomy": {"primary": "scope_violation"},
+                },
+            ],
+        }
+    )
+    typed_artifact = artifact.model_copy(
+        update={
+            "trace": typed_trace,
+            "trace_sha256": sha256_bytes(canonical_json_bytes(typed_trace.model_dump(mode="json"))),
+            "primary_failure_category": FailureCategory.BUDGET_EXHAUSTED.value,
+        }
+    )
+    metadata = json.loads((campaign / "campaign.json").read_text())
+    entry = json.loads((campaign / "budget.jsonl").read_text().splitlines()[0])
+
+    report = _build_baseline_report(
+        BaselineCampaignMetadata.model_validate(metadata),
+        {typed_artifact.attempt_id: typed_artifact},
+        [BaselineBudgetEntry.model_validate(entry)],
+        index_sha256="0" * 64,
+    )
+
+    assert report.failure_categories == {"scope_violation": 1}
 
 
 def test_baseline_report_accepts_both_h2_transports_and_rejects_responses(

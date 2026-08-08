@@ -1,5 +1,8 @@
 # Changelog
 
+- Baseline report failure-category histograms now resolve the controller-owned
+  typed taxonomy before falling back to legacy artifact categories, keeping
+  canonical reports and paired comparisons consistent for compound failures.
 - Comparison provider-error aggregates now use bounded typed categories instead
   of copying raw provider response text into canonical evidence, preventing
   accidental secret leakage while preserving useful failure deltas.

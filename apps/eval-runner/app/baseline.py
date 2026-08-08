@@ -34,7 +34,7 @@ from app.cases import load_cases, validate_case_quality
 from app.datasets import dataset_fingerprint
 from app.execution_identity import ExecutionIdentityV1, default_execution_identity
 from app.harness_checks import run_observer_patch_replay_self_check
-from app.harness_contracts import HarnessPolicyV1
+from app.harness_contracts import HarnessPolicyV1, resolve_typed_failure_category
 from app.harness_profiles import (
     HarnessProfileV1,
     harness_profile_bytes,
@@ -583,7 +583,17 @@ def _build_baseline_report(
         if artifact.usage.status != "known" or artifact.usage.cost_cny is None
     )
 
-    failure_categories = Counter(artifact.primary_failure_category for artifact in ordered)
+    failure_categories = Counter(
+        category
+        for artifact in ordered
+        if (
+            category := resolve_typed_failure_category(
+                artifact.trace.raw_events,
+                artifact.primary_failure_category,
+            )
+        )
+        is not None
+    )
     trust_blocker_counts: Counter[str] = Counter()
     for artifact in ordered:
         blockers = set(attempt_blockers[artifact.attempt_id])
