@@ -54,7 +54,7 @@ def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
         control_transport="anthropic_messages",
         candidate_transport="openai_chat_completions",
         outcome_changes={
-            f"r{repetition}:case-{index:02d}": "passed->passed"
+            f"r{repetition}:case-{index:02d}": "success->success"
             for repetition in range(1, 4)
             for index in range(10)
         },

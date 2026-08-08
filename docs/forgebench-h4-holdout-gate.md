@@ -44,9 +44,9 @@ the command never starts a provider call.
 
 The paid campaign boundary is explicit and resumable. Initialize it only from
 the pinned development comparison and the checked-in sealed split. The
-comparison schema binds both arm identities, all 30 paired outcomes, and the
-five bootstrap intervals; an incomplete or hand-authored aggregate cannot
-unlock the holdout:
+comparison schema binds both arm identities, all 30 typed paired outcomes, and
+the five bootstrap intervals whose estimates match the aggregate metrics; an
+incomplete hand-authored aggregate cannot unlock the holdout:
 
 ```bash
 uv run python -m app.cli holdout init \

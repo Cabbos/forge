@@ -78,8 +78,9 @@ not prove a holdout score, frontier KPI, or production certification.
 
 The comparison artifact must show both arms are trusted and complete, bind both
 profile IDs/fingerprints and the source commit, contain exactly 30 paired
-outcome records (10 per repetition), and publish all five deterministic paired
-bootstrap intervals. It must verify that transport/endpoint family is the only
+outcome records (10 per repetition), use the typed success/failure outcome
+vocabulary, and publish all five deterministic paired bootstrap intervals with
+estimates matching the aggregate metrics. It must verify that transport/endpoint family is the only
 experimental difference and publish per-task success, scope, rounds, cost,
 latency, provider errors, trust blockers, and the selected arm. If the candidate does not materially improve trusted
 success or safety-preserving efficiency, Anthropic remains the default for the

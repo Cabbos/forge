@@ -237,6 +237,17 @@ def test_comparison_requires_bound_identity_and_clean_trust_metrics() -> None:
         payload["control_metrics"] = dirty_metrics.model_dump(mode="json")
         BaselineComparison.model_validate(payload)
 
+    with pytest.raises(ValueError, match="outcome values"):
+        payload = fixture.model_dump(mode="json")
+        payload["outcome_changes"]["r1:case-00"] = "arbitrary"
+        BaselineComparison.model_validate(payload)
+
+    with pytest.raises(ValueError, match="interval estimates"):
+        payload = fixture.model_dump(mode="json")
+        payload["bootstrap_intervals"]["trusted_success_rate_delta"]["estimate"] = 1.0
+        payload["bootstrap_intervals"]["trusted_success_rate_delta"]["high"] = 1.0
+        BaselineComparison.model_validate(payload)
+
 
 def test_comparison_metrics_use_typed_failure_taxonomy() -> None:
     task = EvaluationTask(id="taxonomy-case", title="Taxonomy", prompt="Run the task.")

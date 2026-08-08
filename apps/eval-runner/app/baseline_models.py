@@ -1,4 +1,5 @@
 import json
+import math
 from datetime import datetime
 from decimal import Decimal
 from pathlib import PurePosixPath
@@ -367,6 +368,8 @@ class BootstrapInterval(EvalModel):
 
     @model_validator(mode="after")
     def validate_interval(self) -> "BootstrapInterval":
+        if not all(math.isfinite(value) for value in (self.estimate, self.low, self.high)):
+            raise ValueError("bootstrap interval values must be finite")
         if self.low > self.high:
             raise ValueError("bootstrap interval low bound cannot exceed high bound")
         if not self.low <= self.estimate <= self.high:
@@ -424,9 +427,15 @@ class BaselineComparison(EvalModel):
                 not separator
                 or repetition not in repetitions
                 or SAFE_ID_PATTERN.fullmatch(task_id) is None
-                or not value.strip()
+                or value
+                not in {
+                    "success->success",
+                    "success->failure",
+                    "failure->success",
+                    "failure->failure",
+                }
             ):
-                raise ValueError("comparison outcome keys must bind repetition and task")
+                raise ValueError("comparison outcome keys or outcome values are invalid")
             repetitions[repetition] += 1
         if set(repetitions.values()) != {10}:
             raise ValueError("comparison must contain 10 paired outcomes per repetition")
@@ -441,10 +450,25 @@ class BaselineComparison(EvalModel):
             raise ValueError("comparison bootstrap intervals are incomplete")
         if any(interval.resamples != 2_000 for interval in self.bootstrap_intervals.values()):
             raise ValueError("comparison bootstrap intervals must use 2000 resamples")
-        if any(not key.strip() or not value.strip() for key, value in self.outcome_changes.items()):
-            raise ValueError("comparison outcomes must contain nonblank keys and values")
         if any(not key.strip() for key in self.bootstrap_intervals):
             raise ValueError("bootstrap interval names must be nonblank")
+        expected_estimates = {
+            "trusted_success_rate_delta": self.candidate_metrics.trusted_success_rate
+            - self.control_metrics.trusted_success_rate,
+            "verification_pass_rate_delta": self.candidate_metrics.verification_pass_rate
+            - self.control_metrics.verification_pass_rate,
+            "scope_violation_rate_delta": self.candidate_metrics.scope_violation_rate
+            - self.control_metrics.scope_violation_rate,
+            "median_model_rounds_delta": self.candidate_metrics.median_model_rounds
+            - self.control_metrics.median_model_rounds,
+            "median_duration_ms_delta": self.candidate_metrics.median_duration_ms
+            - self.control_metrics.median_duration_ms,
+        }
+        if any(
+            abs(self.bootstrap_intervals[name].estimate - estimate) > 1e-12
+            for name, estimate in expected_estimates.items()
+        ):
+            raise ValueError("comparison interval estimates must match aggregate metrics")
         _reject_secret_material(self.model_dump(mode="json"))
         return self
 
