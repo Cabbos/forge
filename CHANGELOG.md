@@ -1,5 +1,8 @@
 # Changelog
 
+- Comparison provider-error aggregates now use bounded typed categories instead
+  of copying raw provider response text into canonical evidence, preventing
+  accidental secret leakage while preserving useful failure deltas.
 - Comparison artifacts now carry deterministic SHA-256 fingerprints over each
   arm's canonical campaign metadata, locks, budget, artifact index, report, and
   all 30 attempt artifacts, so the compared evidence set is replayable and

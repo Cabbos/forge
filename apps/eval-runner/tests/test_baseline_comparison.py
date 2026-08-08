@@ -291,6 +291,43 @@ def test_comparison_metrics_use_typed_failure_taxonomy() -> None:
     assert metrics.failure_categories == {"passed": 30}
 
 
+def test_comparison_provider_errors_are_bounded_codes() -> None:
+    task = EvaluationTask(id="provider-error-case", title="Provider error", prompt="Run the task.")
+    trace = make_trace(task).model_copy(
+        update={
+            "error": "HTTP 401: Bearer abcdefghijklmnop",
+            "raw_events": [
+                {
+                    "event_type": "provider_error",
+                    "error": "HTTP 401: Bearer abcdefghijklmnop",
+                }
+            ],
+        }
+    )
+    report = SimpleNamespace(
+        trusted_attempts=30,
+        trusted_success_rate=0.0,
+        verification_pass_rate=0.0,
+        scope_violation_rate=0.0,
+    )
+    artifact = SimpleNamespace(
+        repetition=1,
+        task_id=task.id,
+        trace=trace,
+        usage=SimpleNamespace(cost_cny=Decimal("0.1")),
+        trust_result=SimpleNamespace(blockers=[]),
+        primary_failure_category="provider_error",
+    )
+
+    metrics = _build_metrics(
+        report,
+        {f"attempt-{index}": artifact for index in range(30)},
+    )
+
+    assert set(metrics.provider_errors) == {"authentication"}
+    assert all("Bearer" not in key for key in metrics.provider_errors)
+
+
 def test_compare_rejects_same_transport_and_incomplete_campaign(tmp_path: Path) -> None:
     control = _campaign(tmp_path, "control", CONTROL_PROFILE)
     same_route = _campaign(tmp_path, "same", CONTROL_PROFILE)
