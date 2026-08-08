@@ -10,6 +10,9 @@
   and profiles: the comparison is independently recomputed and must byte-level
   match the supplied canonical artifact before the holdout campaign is created;
   development case/lock inputs are now separate from the sealed holdout split.
+- Bound the sealed comparison lock and campaign metadata to the same source
+  commit, so a rewritten comparison cannot be paired with otherwise valid
+  holdout evidence.
 - Tightened Forge integration provenance: route-bound campaign profiles now require submitted execution-identity endpoint family and base URL to match the locked profile before a patch can enter the provenance ledger.
 - Added a unified offline Forge frontier release gate. `python -m app.cli release verify` now re-verifies a sealed holdout campaign's attempts, budget chain, trust evidence, artifact index, and canonical report before combining the frozen holdout decision with matching profile/dataset identity, verified Forge provenance, and clean full-monorepo verification; standalone aggregate reports fail closed and no provider call starts.
 - Tightened the eval execution identity contract: route-bound runs now write

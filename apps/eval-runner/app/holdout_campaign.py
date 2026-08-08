@@ -155,6 +155,8 @@ class HoldoutCampaignMetadata(EvalModel):
             raise ValueError("holdout reservation cap exceeds campaign budget")
         if self.budget_cny != Decimal("35"):
             raise ValueError("holdout budget is locked at 35 CNY")
+        if self.development_comparison_source_commit != self.source_commit:
+            raise ValueError("development comparison source commit does not match holdout source")
         if SECRET_PATTERN.search(json.dumps(self.model_dump(mode="json"), sort_keys=True)):
             raise ValueError("holdout campaign metadata contains secret material")
         return self
@@ -738,6 +740,11 @@ def _verify_campaign_inputs(
         raise CampaignStateError("comparison_lock_noncanonical")
     if sha256_bytes(comparison_raw) != metadata.development_comparison_sha256:
         raise CampaignStateError("comparison_lock_digest_mismatch")
+    if (
+        comparison.source_commit != metadata.source_commit
+        or comparison.source_commit != metadata.development_comparison_source_commit
+    ):
+        raise CampaignStateError("comparison_lock_source_mismatch")
     if sha256_bytes(dataset_lock_path.read_bytes()) != metadata.dataset_lock_sha256:
         raise CampaignStateError("dataset_lock_digest_mismatch")
     if (

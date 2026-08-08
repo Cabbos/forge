@@ -4,10 +4,12 @@ from pathlib import Path
 import pytest
 
 import app.holdout_campaign as holdout_campaign
+from app.baseline import CampaignStateError
 from app.baseline_models import BaselineComparison, BaselineComparisonMetrics, BootstrapInterval
 from app.harness_contracts import resolve_typed_failure_category
 from app.harness_profiles import load_harness_profile
 from app.holdout_campaign import (
+    HoldoutCampaignMetadata,
     HoldoutRunResult,
     generate_holdout_report,
     initialize_holdout_campaign,
@@ -161,6 +163,31 @@ def test_holdout_init_locks_sealed_split_and_development_comparison(tmp_path: Pa
     verification = verify_holdout_campaign(**_kwargs(campaign))
     assert verification.ok is False
     assert "holdout_attempt_count_incomplete" in verification.blockers
+
+
+def test_holdout_metadata_binds_development_comparison_to_source_commit(tmp_path: Path) -> None:
+    campaign = _initialize(tmp_path)
+    payload = json.loads((campaign / "campaign.json").read_text())
+    payload["development_comparison_source_commit"] = "0" * 40
+
+    with pytest.raises(ValueError, match="comparison source commit"):
+        HoldoutCampaignMetadata.model_validate(payload)
+
+
+def test_holdout_verifier_binds_locked_comparison_source(tmp_path: Path) -> None:
+    campaign = _initialize(tmp_path)
+    comparison_path = campaign / "locks" / "development-comparison.json"
+    comparison_payload = json.loads(comparison_path.read_text())
+    comparison_payload["source_commit"] = "0" * 40
+    comparison_raw = canonical_json_bytes(comparison_payload) + b"\n"
+    comparison_path.write_bytes(comparison_raw)
+    metadata_path = campaign / "campaign.json"
+    metadata_payload = json.loads(metadata_path.read_text())
+    metadata_payload["development_comparison_sha256"] = sha256_bytes(comparison_raw)
+    metadata_path.write_bytes(canonical_json_bytes(metadata_payload) + b"\n")
+
+    with pytest.raises(CampaignStateError, match="comparison_lock_source_mismatch"):
+        holdout_campaign._verify_campaign_inputs(**_kwargs(campaign))
 
 
 def test_holdout_init_rejects_planning_only_profile(tmp_path: Path) -> None:
