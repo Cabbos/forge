@@ -79,11 +79,14 @@ def _build_parser() -> argparse.ArgumentParser:
     for name in ("status", "recover", "report", "verify"):
         command = commands.add_parser(name)
         _add_campaign_inputs(command)
-        if name == "verify":
+        if name in {"report", "verify"}:
             command.add_argument(
                 "--frozen",
                 action="store_true",
-                help="verify the sealed campaign without requiring the current worktree digest",
+                help=(
+                    "use the sealed campaign source identity without requiring the current "
+                    "worktree digest"
+                ),
             )
     compare = commands.add_parser(
         "compare",
@@ -238,6 +241,7 @@ def _report(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         cases_path=args.cases,
         dataset_lock_path=args.dataset_lock,
         profile_path=args.profile,
+        require_current_source=not args.frozen,
     )
     return report.model_dump(mode="json"), 1 if report.status == "blocked" else 0
 

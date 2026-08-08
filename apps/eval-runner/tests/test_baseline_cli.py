@@ -424,6 +424,15 @@ json.dump(
         str(PROFILE_PATH),
         env=env,
     )
+    frozen_reported = run_baseline_cli(
+        "report",
+        "--campaign",
+        str(campaign),
+        "--profile",
+        str(PROFILE_PATH),
+        "--frozen",
+        env=env,
+    )
     verified = run_baseline_cli(
         "verify",
         "--campaign",
@@ -437,6 +446,8 @@ json.dump(
     assert json.loads(status.stdout)["attempt_count"] == 1
     assert reported.returncode == 0, reported.stderr
     assert json.loads(reported.stdout)["status"] == "incomplete"
+    assert frozen_reported.returncode == 0, frozen_reported.stderr
+    assert json.loads(frozen_reported.stdout)["status"] == "incomplete"
     assert verified.returncode == 0, verified.stderr
     assert json.loads(verified.stdout)["ok"] is True
     assert (campaign / "budget.jsonl").read_bytes() == budget_before
@@ -468,7 +479,15 @@ json.dump(
 
     all_output = "".join(
         result.stdout + result.stderr
-        for result in (initialized, attempted, status, reported, verified, recovered)
+        for result in (
+            initialized,
+            attempted,
+            status,
+            reported,
+            frozen_reported,
+            verified,
+            recovered,
+        )
     )
     assert str(tmp_path) not in all_output
     assert "sk-offline-test-must-never-appear" not in all_output

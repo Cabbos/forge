@@ -487,6 +487,7 @@ def generate_baseline_report(
     cases_path: Path,
     dataset_lock_path: Path,
     profile_path: Path,
+    require_current_source: bool = True,
 ) -> BaselineReport:
     verification = verify_baseline_campaign(
         campaign_root,
@@ -494,6 +495,7 @@ def generate_baseline_report(
         cases_path=cases_path,
         dataset_lock_path=dataset_lock_path,
         profile_path=profile_path,
+        require_current_source=require_current_source,
     )
     if verification.pending_count:
         raise ValueError("baseline report requires recovery of pending paid attempts")
