@@ -40,7 +40,12 @@ CASES = FORGEBENCH_ROOT / "cases"
 DATASET_LOCK = FORGEBENCH_ROOT / "dataset-lock.json"
 
 
-def write_harness_profile(path: Path, *, secret: bool = False) -> None:
+def write_harness_profile(
+    path: Path,
+    *,
+    secret: bool = False,
+    route_fields: dict[str, str] | None = None,
+) -> None:
     payload = {
         "schema_version": 1,
         "profile_id": "deepseek-v4-flash-frontier-v1",
@@ -52,6 +57,8 @@ def write_harness_profile(path: Path, *, secret: bool = False) -> None:
     }
     if secret:
         payload["api_key"] = "sk-" + "x" * 32
+    if route_fields:
+        payload.update(route_fields)
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
@@ -545,6 +552,43 @@ def test_accept_requires_controller_identity_and_contract_evidence(
         accept(campaign, trace_path, report_path, patch_path)
     readme.write_text(original, encoding="utf-8")
     assert git(campaign / "worktree", "status", "--porcelain") == ""
+
+
+def test_accept_rejects_execution_route_drift_against_locked_profile(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    profile = tmp_path / "route-profile.json"
+    write_harness_profile(
+        profile,
+        route_fields={
+            "endpoint_family": "anthropic",
+            "base_url": "https://api.deepseek.com/anthropic",
+        },
+    )
+    campaign = initialize(tmp_path, harness_profile=profile)
+    (
+        trace_path,
+        report_path,
+        patch_path,
+        trace_payload,
+        _report_payload,
+    ) = write_acceptance_artifacts(campaign, tmp_path / "route-inputs")
+    execution_event = next(
+        event
+        for event in trace_payload["trace"]["raw_events"]
+        if event["event_type"] == "eval_execution_identity"
+    )
+    execution_event["base_url"] = "https://api.deepseek.com"
+    trace_path.write_text(json.dumps(trace_payload, sort_keys=True), encoding="utf-8")
+    monkeypatch.setattr(
+        "app.campaign._run_accept_verification",
+        lambda *_args, **_kwargs: {"passed": True, "checks": []},
+    )
+
+    with pytest.raises(ValueError, match="execution route"):
+        accept(campaign, trace_path, report_path, patch_path)
+    assert (campaign / "ledger.jsonl").read_bytes() == b""
 
 
 def test_accept_rejects_unfrozen_task_definition_and_unsafe_run_id(

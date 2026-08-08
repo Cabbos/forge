@@ -22,7 +22,9 @@ commit chain may contain only patches emitted by Forge runs that pass all of
 these checks:
 
 1. provider, model, transport, dataset, harness, input commit, and workspace
-   observation match the frozen campaign inputs;
+   observation match the frozen campaign inputs; route-bound profiles also
+   require the execution identity's endpoint family and base URL to match the
+   locked profile;
 2. the trace and report are trusted and their exact bytes match the supplied
    SHA-256 digests;
 3. the supplied patch exactly matches the independently observed workspace

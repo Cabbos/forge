@@ -752,6 +752,7 @@ def _load_campaign_state(
     return {
         "metadata": metadata,
         "dataset_lock": dataset_lock,
+        "harness_profile": profile,
         "worktree": worktree,
         "ledger": ledger,
         "artifacts": artifacts,
@@ -849,6 +850,9 @@ def _validate_acceptance_evidence(
         ),
         None,
     )
+    harness_profile = state["harness_profile"]
+    expected_endpoint_family = harness_profile.get("endpoint_family")
+    expected_base_url = harness_profile.get("base_url")
     if (
         execution_event is None
         or execution_event.get("schema_version") != 1
@@ -886,6 +890,13 @@ def _validate_acceptance_evidence(
         )
     ):
         raise ValueError("trusted trace execution identity evidence is incomplete")
+    if (
+        isinstance(expected_endpoint_family, str)
+        and execution_event.get("endpoint_family") != expected_endpoint_family
+    ):
+        raise ValueError("trusted trace execution route does not match harness profile")
+    if isinstance(expected_base_url, str) and execution_event.get("base_url") != expected_base_url:
+        raise ValueError("trusted trace execution route does not match harness profile")
 
     if trace.task_id != task.id or trace.user_prompt != task.prompt:
         raise ValueError("trusted trace task identity does not match")
