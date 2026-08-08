@@ -52,9 +52,13 @@ outside the repository; only code, tests, dataset locks, and provenance
 documents are checked in.
 
 The verifier rejects non-canonical JSON, incomplete attempts, trust gaps,
-missing evidence, budget overruns, and threshold failures. A failing or missing
-report does not authorize another holdout attempt; improvements must return to
-the development split with a new harness fingerprint.
+missing evidence, budget overruns, and threshold failures. A trusted
+integration trace must also carry controller-owned `eval_agent_identity`
+evidence matching the campaign's provider, exact model, transport, and harness
+fingerprint, plus a passing `harness_contract_evidence` taxonomy event. Artifact
+wrapper fields alone are not sufficient proof of Forge authorship. A failing or
+missing report does not authorize another holdout attempt; improvements must
+return to the development split with a new harness fingerprint.
 
 The offline contract gate proves the decision boundary only. Until a real
 60-attempt report passes from a clean checkout and the provenance campaign is

@@ -811,6 +811,36 @@ def _validate_acceptance_evidence(
     if trace_artifact.input_commit != input_commit:
         raise ValueError("trusted trace input commit does not match campaign HEAD")
 
+    identity_event = next(
+        (
+            event
+            for event in reversed(trace.raw_events)
+            if isinstance(event, dict) and event.get("event_type") == "eval_agent_identity"
+        ),
+        None,
+    )
+    if (
+        identity_event is None
+        or identity_event.get("provider") != trace_artifact.provider
+        or identity_event.get("model") != trace_artifact.model
+        or identity_event.get("transport") != trace_artifact.transport
+        or identity_event.get("harness_fingerprint") != trace_artifact.harness_fingerprint
+        or identity_event.get("identity_matches_profile") is not True
+    ):
+        raise ValueError("trusted trace agent identity evidence does not match campaign")
+
+    contract_event = next(
+        (
+            event
+            for event in reversed(trace.raw_events)
+            if isinstance(event, dict) and event.get("event_type") == "harness_contract_evidence"
+        ),
+        None,
+    )
+    taxonomy = contract_event.get("failure_taxonomy") if contract_event else None
+    if not isinstance(taxonomy, dict) or taxonomy.get("primary") != "passed":
+        raise ValueError("trusted trace has no passing harness contract evidence")
+
     if trace.task_id != task.id or trace.user_prompt != task.prompt:
         raise ValueError("trusted trace task identity does not match")
     if trace.error is not None or trace.failure_category != FailureCategory.NONE:

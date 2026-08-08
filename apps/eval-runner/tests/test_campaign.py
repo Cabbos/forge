@@ -290,6 +290,21 @@ def write_acceptance_artifacts(
         ended_at=now,
         duration_ms=10,
         cost_usd=0.01,
+        raw_events=[
+            {
+                "event_type": "eval_agent_identity",
+                "provider": metadata["provider"],
+                "model": metadata["model"],
+                "transport": metadata["transport"],
+                "harness_fingerprint": metadata["harness_profile_sha256"],
+                "identity_matches_profile": True,
+            },
+            {
+                "event_type": "harness_contract_evidence",
+                "schema_version": 1,
+                "failure_taxonomy": {"primary": "passed"},
+            },
+        ],
     )
     report = build_report([trace]).model_copy(
         update={
@@ -450,6 +465,49 @@ def test_accept_rejects_failed_independent_verification_and_dirty_controller_edi
     )
 
     with pytest.raises(ValueError, match="verification"):
+        accept(campaign, trace_path, report_path, patch_path)
+    assert git(campaign / "worktree", "status", "--porcelain") == ""
+    assert (campaign / "ledger.jsonl").read_bytes() == b""
+
+
+@pytest.mark.parametrize(
+    ("mutation", "message"),
+    [
+        ("missing_identity", "agent identity evidence"),
+        ("mismatched_identity", "agent identity evidence"),
+        ("missing_contract", "harness contract evidence"),
+    ],
+)
+def test_accept_requires_controller_identity_and_contract_evidence(
+    tmp_path: Path,
+    monkeypatch,
+    mutation: str,
+    message: str,
+) -> None:
+    campaign = initialize(tmp_path)
+    trace_path, report_path, patch_path, trace_payload, _report_payload = write_acceptance_artifacts(
+        campaign, tmp_path / "inputs"
+    )
+    raw_events = trace_payload["trace"]["raw_events"]
+    if mutation == "missing_identity":
+        trace_payload["trace"]["raw_events"] = [
+            event for event in raw_events if event["event_type"] != "eval_agent_identity"
+        ]
+    elif mutation == "mismatched_identity":
+        raw_events[0]["transport"] = "openai_chat_completions"
+    else:
+        trace_payload["trace"]["raw_events"] = [
+            event
+            for event in raw_events
+            if event["event_type"] != "harness_contract_evidence"
+        ]
+    trace_path.write_text(json.dumps(trace_payload, sort_keys=True), encoding="utf-8")
+    monkeypatch.setattr(
+        "app.campaign._run_accept_verification",
+        lambda *_args, **_kwargs: {"passed": True, "checks": []},
+    )
+
+    with pytest.raises(ValueError, match=message):
         accept(campaign, trace_path, report_path, patch_path)
     assert git(campaign / "worktree", "status", "--porcelain") == ""
     assert (campaign / "ledger.jsonl").read_bytes() == b""
