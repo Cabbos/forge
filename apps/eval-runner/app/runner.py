@@ -672,7 +672,8 @@ class ForgeAgentRunner:
             elif self.harness_policy.prompt_mode in {"minimal_v1", "planning_v1"}:
                 task_dict["max_repair_attempts"] = self.harness_policy.repair_attempt_limit
             task_dict["stagnation_policy"] = self.harness_policy.stagnation_policy
-            prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+            task_context_files = _derive_eval_context_files(task)
+            prepared_context_files = self.harness_policy.selected_context_files(task_context_files)
             task_dict["context_files"] = prepared_context_files
             context_manifest = build_context_manifest(
                 prepared_context_files,
@@ -952,7 +953,9 @@ class ForgeAgentRunner:
                 duration_ms=last_validation.duration_ms,
             )
         changed_files = workspace_observation.changed_files
-        prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+        prepared_context_files = self.harness_policy.selected_context_files(
+            _derive_eval_context_files(task)
+        )
         task_contract = build_task_execution_contract(
             expected_files_changed=task.expected_files_changed,
             forbidden_files_changed=task.forbidden_files_changed,
@@ -1101,6 +1104,9 @@ class ForgeAgentRunner:
                 "policy": self.harness_policy.model_dump(mode="json"),
                 "policy_fingerprint": self.harness_policy.fingerprint(),
                 "prepared_context_files": prepared_context_files,
+                "context_source": (
+                    "explicit_task_context" if task.context_files else "scope_validation_derived_v1"
+                ),
             }
         )
 
@@ -1805,6 +1811,42 @@ def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> 
         if (expected or expected_no_change) and path not in expected:
             violations.append(f"unexpected_change:{path}")
     return violations
+
+
+def _derive_eval_context_files(task: EvaluationTask) -> list[str]:
+    """Give a context-free case its scoped source and targeted test paths.
+
+    ForgeBench case JSON intentionally keeps context_files optional so the
+    dataset fingerprint does not encode a tuning hint. At execution time the
+    controller can still avoid repository-wide reconnaissance by deriving a
+    bounded, non-secret context from the exact edit allowlist and public targeted
+    validation command. Explicit case context remains authoritative.
+    """
+
+    if task.context_files:
+        return list(dict.fromkeys(task.context_files))
+
+    paths: list[str] = list(task.expected_files_changed)
+    source_suffixes = {".js", ".jsx", ".json", ".md", ".py", ".ts", ".tsx"}
+    for command in task.validation_commands:
+        try:
+            tokens = shlex.split(command)
+        except ValueError:
+            continue
+        for token in tokens:
+            candidate = token.strip()
+            if (
+                not candidate
+                or candidate.startswith(("-", "$", "/"))
+                or Path(candidate).suffix not in source_suffixes
+                or ("/" not in candidate and not candidate.startswith("."))
+            ):
+                continue
+            normalized = candidate.removeprefix("./")
+            if ".." in Path(normalized).parts:
+                continue
+            paths.append(normalized)
+    return list(dict.fromkeys(paths))
 
 
 def _render_eval_prompt(
