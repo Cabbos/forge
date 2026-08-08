@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 from collections.abc import Sequence
 from datetime import datetime
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
@@ -1658,7 +1659,7 @@ def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> 
     expected_no_change = task.metadata.get("expected_no_change") is True
     violations: list[str] = []
     for path in changed_files:
-        if path in forbidden:
+        if any(fnmatchcase(path, pattern) for pattern in forbidden):
             violations.append(f"forbidden_change:{path}")
         if (expected or expected_no_change) and path not in expected:
             violations.append(f"unexpected_change:{path}")

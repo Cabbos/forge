@@ -1479,6 +1479,19 @@ def test_forge_runner_no_change_contract_rejects_source_mutations(tmp_path: Path
     assert trace.scope_violations == ["unexpected_change:unexpected.py"]
 
 
+def test_scope_violations_match_forbidden_glob_paths() -> None:
+    task = EvaluationTask(
+        id="forbidden-glob",
+        title="Forbidden glob",
+        prompt="Do not touch runtime state.",
+        forbidden_files_changed=[".forge/**"],
+    )
+
+    assert scope_violations_for(task, [".forge/continuity.db"]) == [
+        "forbidden_change:.forge/continuity.db"
+    ]
+
+
 def test_forge_runner_python_verification_cache_never_becomes_a_patch(
     tmp_path: Path,
 ) -> None:
