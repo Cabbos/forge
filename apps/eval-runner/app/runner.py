@@ -327,6 +327,7 @@ class ForgeAgentRunner:
                     "XDG_CACHE_HOME": str(runtime_state / "cache"),
                     "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
                     "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
+                    "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
             payload = {
@@ -499,6 +500,7 @@ class ForgeAgentRunner:
                     "XDG_CACHE_HOME": str(runtime_state / "cache"),
                     "BUN_INSTALL_CACHE_DIR": str(runtime_state / "bun-cache"),
                     "UV_CACHE_DIR": str(runtime_state / "uv-cache"),
+                    "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
             setup_outputs = run_setup_commands(
@@ -1691,6 +1693,8 @@ def _render_eval_prompt(
         f"- Allowed changed files: {expected}\n"
         f"- Forbidden changed paths: {forbidden}\n"
         "- Do not modify any other file; keep the patch minimal.\n"
+        "- Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, and build "
+        "outputs as read-only; do not create or edit .venv, uv.lock, node_modules, or cache files.\n"
         "- Run the targeted validation, then stop once the task is verified."
     )
     required_inspection = ", ".join(task_contract.required_inspection_files) or "(none declared)"
