@@ -1453,6 +1453,32 @@ def test_forge_runner_runtime_files_never_become_changed_files(tmp_path: Path) -
     assert trace.scope_violations == []
 
 
+def test_forge_runner_no_change_contract_rejects_source_mutations(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    script = tmp_path / "mutating_noop_agent.py"
+    script.write_text(
+        "import json,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "(pathlib.Path(payload['workspace_path'])/'unexpected.py').write_text('oops\\n')\n"
+        "json.dump({'final_answer':'done'},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="no-change-scope",
+        title="No-change scope",
+        prompt="Verify without source changes.",
+        fixture_path=str(fixture),
+        expected_files_changed=[],
+        metadata={"expected_no_change": True},
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error == "scope_violation"
+    assert trace.scope_violations == ["unexpected_change:unexpected.py"]
+
+
 def test_forge_runner_python_verification_cache_never_becomes_a_patch(
     tmp_path: Path,
 ) -> None:

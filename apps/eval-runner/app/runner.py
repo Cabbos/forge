@@ -1655,11 +1655,12 @@ def command_failure(
 def scope_violations_for(task: EvaluationTask, changed_files: Sequence[str]) -> list[str]:
     expected = set(task.expected_files_changed)
     forbidden = set(task.forbidden_files_changed)
+    expected_no_change = task.metadata.get("expected_no_change") is True
     violations: list[str] = []
     for path in changed_files:
         if path in forbidden:
             violations.append(f"forbidden_change:{path}")
-        if expected and path not in expected:
+        if (expected or expected_no_change) and path not in expected:
             violations.append(f"unexpected_change:{path}")
     return violations
 
