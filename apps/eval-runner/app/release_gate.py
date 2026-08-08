@@ -18,10 +18,13 @@ from app.harness_profiles import (
     harness_profile_fingerprint,
     load_harness_profile,
 )
+from app.holdout_campaign import HoldoutVerification, verify_holdout_campaign
 from app.holdout_gate import (
     HoldoutGateDecisionV1,
     HoldoutGateReportV1,
     evaluate_holdout_gate,
+    holdout_report_fingerprint,
+    load_holdout_report,
 )
 from app.models import EvalModel
 from app.provenance_models import Sha256
@@ -34,30 +37,66 @@ class FrontierReleaseDecisionV1(EvalModel):
     passed: bool
     blockers: list[str]
     holdout_gate: HoldoutGateDecisionV1
+    holdout_campaign: HoldoutVerification
     integration: CampaignVerification
     profile_id: str | None = None
     dataset_fingerprint: Sha256 | None = None
     harness_fingerprint: Sha256 | None = None
+    holdout_report_fingerprint: Sha256 | None = None
 
 
 def evaluate_frontier_release(
     report: HoldoutGateReportV1,
     campaign_root: Path,
     *,
+    holdout_campaign_root: Path,
+    repository_root: Path,
+    cases_path: Path,
+    dataset_lock_path: Path,
+    profile_path: Path,
     run_full_verification: bool = True,
 ) -> FrontierReleaseDecisionV1:
-    """Combine independently verified holdout and Forge-built evidence."""
+    """Combine independently verified holdout and Forge-built evidence.
+
+    A passing aggregate report is not sufficient evidence on its own.  The
+    report must be the canonical artifact published by a sealed holdout
+    campaign whose attempts, budget chain, trust decisions, and artifact index
+    are independently re-verified here.
+    """
 
     holdout_gate = evaluate_holdout_gate(report)
+    holdout_campaign = verify_holdout_campaign(
+        holdout_campaign_root,
+        repository_root=repository_root,
+        cases_path=cases_path,
+        dataset_lock_path=dataset_lock_path,
+        profile_path=profile_path,
+        require_current_source=False,
+    )
     integration = verify_campaign(
         campaign_root,
         run_full_verification=run_full_verification,
     )
     blockers = [f"holdout:{item}" for item in holdout_gate.blockers]
+    blockers.extend(f"holdout_campaign:{item}" for item in holdout_campaign.blockers)
+    if not holdout_campaign.ok:
+        blockers.append("holdout_campaign:verification_failed")
     blockers.extend(f"integration:{item}" for item in integration.blockers)
     profile_id: str | None = None
     dataset_fingerprint: str | None = None
     harness_fingerprint: str | None = None
+    report_fingerprint: str | None = None
+
+    campaign_report_path = holdout_campaign_root / "holdout-report.json"
+    try:
+        campaign_report = load_holdout_report(campaign_report_path)
+    except (OSError, ValueError, json.JSONDecodeError):
+        campaign_report = None
+        blockers.append("holdout_campaign:report_invalid")
+    if campaign_report != report:
+        blockers.append("holdout_campaign:report_argument_mismatch")
+    elif campaign_report is not None:
+        report_fingerprint = holdout_report_fingerprint(campaign_report)
 
     metadata = _load_campaign_metadata(campaign_root)
     profile_path = campaign_root / "locks" / "harness-profile.json"
@@ -98,10 +137,12 @@ def evaluate_frontier_release(
         passed=not blockers,
         blockers=blockers,
         holdout_gate=holdout_gate,
+        holdout_campaign=holdout_campaign,
         integration=integration,
         profile_id=profile_id,
         dataset_fingerprint=dataset_fingerprint,
         harness_fingerprint=harness_fingerprint,
+        holdout_report_fingerprint=report_fingerprint,
     )
 
 

@@ -103,13 +103,15 @@ frontier gate:
 
 ```bash
 uv run python -m app.cli release verify \
-  --holdout-report /path/to/holdout-report.json \
+  --holdout-campaign /path/to/sealed-h4-campaign \
   --campaign /path/to/forge-built-campaign
 ```
 
-It checks the H4 threshold decision, profile/dataset identity binding, and the
-complete campaign verification as one machine-readable decision. It never
-starts a provider call.
+It re-verifies the sealed H4 attempts, budget chain, trust decisions, artifact
+index, and canonical report before checking the H4 threshold decision,
+profile/dataset identity binding, and the complete Forge campaign as one
+machine-readable decision. A hand-authored aggregate report cannot satisfy the
+gate, and it never starts a provider call.
 
 This proves that every product change after the locked baseline and before the
 manifest came from the recorded trusted Forge patch chain, and that the bound

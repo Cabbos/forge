@@ -31,14 +31,16 @@ verified Forge-built integration campaign:
 
 ```bash
 uv run python -m app.cli release verify \
-  --holdout-report /path/to/holdout-report.json \
+  --holdout-campaign /path/to/sealed-h4-campaign \
   --campaign /private/tmp/forge-h0c/campaign
 ```
 
-This aggregation command is offline and fail-closed. It requires the holdout
-threshold decision, matching profile/dataset fingerprints, a valid provenance
-chain, and a passing clean full-monorepo verification; it never starts a
-provider call.
+This aggregation command is offline and fail-closed. It re-verifies the sealed
+campaign's 60 attempts, budget chain, trust decisions, artifact index, and
+canonical report before requiring the holdout threshold decision, matching
+profile/dataset fingerprints, a valid provenance chain, and a passing clean
+full-monorepo verification. A standalone aggregate JSON is not accepted, and
+the command never starts a provider call.
 
 The paid campaign boundary is explicit and resumable. Initialize it only from
 the pinned development comparison and the checked-in sealed split:
