@@ -1,5 +1,8 @@
 # Changelog
 
+- Forge eval prompts now carry an explicit twelve-round convergence target and
+  forbid repeating unchanged read-only commands, reducing late-loop waste while
+  preserving the hard model-round cap and independent terminal evidence gates.
 - Baseline report failure-category histograms now resolve the controller-owned
   typed taxonomy before falling back to legacy artifact categories, keeping
   canonical reports and paired comparisons consistent for compound failures.

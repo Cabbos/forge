@@ -1793,7 +1793,11 @@ def _render_eval_prompt(
         "- Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, and build "
         "outputs as read-only; do not create or edit .venv, uv.lock, node_modules, or cache "
         "files.\n"
-        "- Run the targeted validation, then stop once the task is verified."
+        "- Run the targeted validation, then stop once the task is verified.\n"
+        "- Target at most 12 model rounds: inspect early, make the smallest edit, validate, "
+        "and stop; do not spend rounds polishing an already verified result.\n"
+        "- Do not repeat an unchanged read-only command; only rerun it after new evidence or "
+        "a file change."
     )
     required_inspection = ", ".join(task_contract.required_inspection_files) or "(none declared)"
     required_validation = (

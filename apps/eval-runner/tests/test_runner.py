@@ -337,6 +337,8 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "and build outputs as read-only' in payload['prompt']\n"
             "assert 'do not create or edit .venv, uv.lock, node_modules, or cache files' "
             "in payload['prompt']\n"
+            "assert 'Target at most 12 model rounds' in payload['prompt']\n"
+            "assert 'Do not repeat an unchanged read-only command' in payload['prompt']\n"
             "assert len(payload['task']['context_files']) == 16\n"
             "json.dump({'final_answer': 'done', 'verification_result': {"
             "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
