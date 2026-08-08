@@ -37,6 +37,16 @@ MINIMAL_PROFILE_PATHS = (
     / "profiles"
     / "deepseek-v4-flash-openai-chat-minimal-v1.json",
 )
+PLANNING_PROFILE_PATHS = (
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-anthropic-planning-v1.json",
+    Path(__file__).parents[1]
+    / "forgebench"
+    / "profiles"
+    / "deepseek-v4-flash-openai-chat-planning-v1.json",
+)
 
 
 def valid_profile_payload() -> dict[str, object]:
@@ -105,6 +115,24 @@ def valid_minimal_profile_payload(*, openai: bool = False) -> dict[str, object]:
     return payload
 
 
+def valid_planning_profile_payload(*, openai: bool = False) -> dict[str, object]:
+    payload = valid_control_profile_payload() if openai else valid_profile_payload()
+    payload.update(
+        {
+            "profile_id": (
+                "deepseek-v4-flash-openai-chat-planning-v1"
+                if openai
+                else "deepseek-v4-flash-anthropic-planning-v1"
+            ),
+            "prompt_mode": "planning_v1",
+            "context_policy": "task_local_v1",
+            "tool_result_policy": "bounded_structured_v1",
+            "stagnation_policy": "semantic_progress_v1",
+        }
+    )
+    return payload
+
+
 def test_h2_committed_profiles_are_canonical_distinct_and_route_only() -> None:
     baseline = load_harness_profile(PROFILE_PATH)
     control = load_harness_profile(CONTROL_PROFILE_PATH)
@@ -129,6 +157,20 @@ def test_h3_committed_minimal_profiles_are_canonical_and_policy_bound() -> None:
         for path, profile in zip(MINIMAL_PROFILE_PATHS, profiles, strict=True)
     )
     assert all(profile.prompt_mode == "minimal_v1" for profile in profiles)
+    assert all(profile.context_policy == "task_local_v1" for profile in profiles)
+    assert all(profile.tool_result_policy == "bounded_structured_v1" for profile in profiles)
+    assert all(profile.stagnation_policy == "semantic_progress_v1" for profile in profiles)
+    assert len({harness_profile_fingerprint(profile) for profile in profiles}) == 2
+
+
+def test_h3_committed_planning_profiles_are_canonical_and_policy_bound() -> None:
+    profiles = [load_harness_profile(path) for path in PLANNING_PROFILE_PATHS]
+
+    assert all(
+        path.read_bytes() == harness_profile_bytes(profile) + b"\n"
+        for path, profile in zip(PLANNING_PROFILE_PATHS, profiles, strict=True)
+    )
+    assert all(profile.prompt_mode == "planning_v1" for profile in profiles)
     assert all(profile.context_policy == "task_local_v1" for profile in profiles)
     assert all(profile.tool_result_policy == "bounded_structured_v1" for profile in profiles)
     assert all(profile.stagnation_policy == "semantic_progress_v1" for profile in profiles)
@@ -296,6 +338,16 @@ def test_h3_minimal_profiles_bind_policy_identity(openai: bool) -> None:
     profile = HarnessProfileV1.model_validate(valid_minimal_profile_payload(openai=openai))
 
     assert profile.prompt_mode == "minimal_v1"
+    assert profile.context_policy == "task_local_v1"
+    assert profile.tool_result_policy == "bounded_structured_v1"
+    assert profile.stagnation_policy == "semantic_progress_v1"
+
+
+@pytest.mark.parametrize("openai", [False, True])
+def test_h3_planning_profiles_bind_policy_identity(openai: bool) -> None:
+    profile = HarnessProfileV1.model_validate(valid_planning_profile_payload(openai=openai))
+
+    assert profile.prompt_mode == "planning_v1"
     assert profile.context_policy == "task_local_v1"
     assert profile.tool_result_policy == "bounded_structured_v1"
     assert profile.stagnation_policy == "semantic_progress_v1"

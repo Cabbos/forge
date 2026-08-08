@@ -55,6 +55,22 @@ def test_minimal_harness_policy_is_bounded_and_fingerprintable() -> None:
     assert len(policy.fingerprint()) == 64
 
 
+def test_planning_harness_policy_renders_structured_plan_contract() -> None:
+    policy = HarnessPolicyV1(
+        prompt_mode="planning_v1",
+        context_policy="task_local_v1",
+        tool_result_policy="bounded_structured_v1",
+        stagnation_policy="semantic_progress_v1",
+    )
+
+    rendered = policy.render_prompt("Fix the cross-file bug.", ["src/a.py", "src/b.py"])
+
+    assert rendered.startswith("Outcome: Fix the cross-file bug.")
+    assert "Plan-first contract:" in rendered
+    assert "task_plan" in rendered
+    assert len(rendered) <= 3_600
+
+
 def test_truncated_tool_result_without_artifact_digest_is_rejected() -> None:
     with pytest.raises(ValidationError, match="artifact_digest"):
         ToolResultEnvelope(

@@ -577,7 +577,7 @@ class ForgeAgentRunner:
                 )
             if self.max_repair_attempts is not None:
                 task_dict["max_repair_attempts"] = self.max_repair_attempts
-            elif self.harness_policy.prompt_mode == "minimal_v1":
+            elif self.harness_policy.prompt_mode in {"minimal_v1", "planning_v1"}:
                 task_dict["max_repair_attempts"] = self.harness_policy.repair_attempt_limit
             prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
             task_dict["context_files"] = prepared_context_files

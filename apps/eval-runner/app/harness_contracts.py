@@ -36,7 +36,7 @@ class HarnessPolicyV1(HarnessContractModel):
     """Eval-only policy identity for measured prompt/context experiments."""
 
     schema_version: Literal[1] = 1
-    prompt_mode: Literal["current_product_v1", "minimal_v1"] = "current_product_v1"
+    prompt_mode: Literal["current_product_v1", "minimal_v1", "planning_v1"] = "current_product_v1"
     context_policy: Literal["current_product_v1", "task_local_v1"] = "current_product_v1"
     tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"] = (
         "current_product_v1"
@@ -61,15 +61,27 @@ class HarnessPolicyV1(HarnessContractModel):
             return prompt
         selected = self.selected_context_files(context_files)
         context_line = ", ".join(selected) if selected else "(none declared)"
-        rendered = (
-            "Outcome: " + prompt.strip() + "\n\n"
-            "Scope: inspect the declared task-local context before editing; change only "
-            "files required for the outcome.\n"
-            f"Task-local context: {context_line}\n"
-            "Execution contract: make the smallest actionable change, run the targeted "
-            "verification, and use at most one evidence-driven repair before reporting "
-            "changed files and verification."
-        )
+        if self.prompt_mode == "planning_v1":
+            rendered = (
+                "Outcome: " + prompt.strip() + "\n\n"
+                "Scope: inspect the declared task-local context before editing; change only "
+                "files required for the outcome.\n"
+                f"Task-local context: {context_line}\n"
+                "Plan-first contract: form a bounded inspect/edit/verify plan before the "
+                "first mutation; keep it to at most eight steps and use one evidence-driven "
+                "repair at most. Return the plan as task_plan when the adapter supports "
+                "structured trace fields, then report changed files and verification."
+            )
+        else:
+            rendered = (
+                "Outcome: " + prompt.strip() + "\n\n"
+                "Scope: inspect the declared task-local context before editing; change only "
+                "files required for the outcome.\n"
+                f"Task-local context: {context_line}\n"
+                "Execution contract: make the smallest actionable change, run the targeted "
+                "verification, and use at most one evidence-driven repair before reporting "
+                "changed files and verification."
+            )
         return rendered[:MAX_MINIMAL_PROMPT_CHARS]
 
     def fingerprint(self) -> str:

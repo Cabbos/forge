@@ -22,10 +22,13 @@ EVAL_ROOT = Path(__file__).resolve().parents[1]
 HOLDOUT_CASES = EVAL_ROOT / "forgebench" / "cases" / "holdout"
 DATASET_LOCK = EVAL_ROOT / "forgebench" / "dataset-lock.json"
 PROFILE = EVAL_ROOT / "forgebench" / "profiles" / "deepseek-v4-flash-anthropic-baseline-v1.json"
+PLANNING_PROFILE = (
+    EVAL_ROOT / "forgebench" / "profiles" / "deepseek-v4-flash-anthropic-planning-v1.json"
+)
 
 
-def _comparison(tmp_path: Path) -> Path:
-    profile = load_harness_profile(PROFILE)
+def _comparison(tmp_path: Path, profile_path: Path = PROFILE) -> Path:
+    profile = load_harness_profile(profile_path)
     metrics = BaselineComparisonMetrics(
         trusted_attempts=30,
         trusted_success_rate=0.9,
@@ -101,6 +104,19 @@ def test_holdout_init_locks_sealed_split_and_development_comparison(tmp_path: Pa
     verification = verify_holdout_campaign(**_kwargs(campaign))
     assert verification.ok is False
     assert "holdout_attempt_count_incomplete" in verification.blockers
+
+
+def test_holdout_init_rejects_planning_only_profile(tmp_path: Path) -> None:
+    with pytest.raises(ValueError, match="planning-only profile"):
+        initialize_holdout_campaign(
+            tmp_path / "planning-holdout",
+            campaign_id="h4-planning-rejected",
+            repository_root=REPOSITORY_ROOT,
+            cases_path=HOLDOUT_CASES,
+            dataset_lock_path=DATASET_LOCK,
+            profile_path=PLANNING_PROFILE,
+            development_comparison_path=_comparison(tmp_path, PLANNING_PROFILE),
+        )
 
 
 def test_holdout_runner_is_resumable_and_never_replays_terminal_attempts(tmp_path: Path) -> None:

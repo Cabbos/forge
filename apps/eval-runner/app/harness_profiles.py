@@ -71,6 +71,8 @@ class HarnessProfileV1(EvalModel):
         "deepseek-v4-flash-openai-chat-control-v1",
         "deepseek-v4-flash-anthropic-minimal-v1",
         "deepseek-v4-flash-openai-chat-minimal-v1",
+        "deepseek-v4-flash-anthropic-planning-v1",
+        "deepseek-v4-flash-openai-chat-planning-v1",
     ]
     provider: Literal["deepseek"]
     model: Literal["deepseek-v4-flash"]
@@ -85,7 +87,7 @@ class HarnessProfileV1(EvalModel):
     ) = Field(default=None, exclude_if=lambda value: value is None)
     reasoning_effort: Literal["provider_default"]
     thinking_mode: Literal["enabled_default"]
-    prompt_mode: Literal["current_product_v1", "minimal_v1"]
+    prompt_mode: Literal["current_product_v1", "minimal_v1", "planning_v1"]
     context_policy: Literal["current_product_v1", "task_local_v1"]
     tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"]
     parallel_read_tools: Literal[True]
@@ -127,12 +129,18 @@ class HarnessProfileV1(EvalModel):
             ("openai_chat_completions", "openai", "minimal_v1"): (
                 "deepseek-v4-flash-openai-chat-minimal-v1"
             ),
+            ("anthropic_messages", "anthropic", "planning_v1"): (
+                "deepseek-v4-flash-anthropic-planning-v1"
+            ),
+            ("openai_chat_completions", "openai", "planning_v1"): (
+                "deepseek-v4-flash-openai-chat-planning-v1"
+            ),
         }
         expected_profile = expected_profiles.get(
             (self.transport, self.endpoint_family, self.prompt_mode)
         )
         minimal_policy = (
-            self.prompt_mode == "minimal_v1"
+            self.prompt_mode in {"minimal_v1", "planning_v1"}
             and self.context_policy == "task_local_v1"
             and self.tool_result_policy == "bounded_structured_v1"
             and self.stagnation_policy == "semantic_progress_v1"
@@ -146,7 +154,7 @@ class HarnessProfileV1(EvalModel):
         if (
             expected is None
             or self.profile_id != expected_profile
-            or (self.prompt_mode == "minimal_v1" and not minimal_policy)
+            or (self.prompt_mode in {"minimal_v1", "planning_v1"} and not minimal_policy)
             or (self.prompt_mode == "current_product_v1" and not current_policy)
             or (self.endpoint_family == "openai" and self.base_url is None)
             or (self.base_url is not None and self.base_url != expected)

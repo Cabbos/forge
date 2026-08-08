@@ -249,12 +249,7 @@ def summarize_holdout_attempts(
     case_ids: Sequence[str],
     dataset_fingerprint: str,
     harness_fingerprint: str,
-    profile_id: Literal[
-        "deepseek-v4-flash-anthropic-baseline-v1",
-        "deepseek-v4-flash-openai-chat-control-v1",
-        "deepseek-v4-flash-anthropic-minimal-v1",
-        "deepseek-v4-flash-openai-chat-minimal-v1",
-    ],
+    profile_id: str,
     source_commit: str,
     price_table_fingerprint: str,
     transport: Literal["anthropic_messages", "openai_chat_completions"],

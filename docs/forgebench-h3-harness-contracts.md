@@ -15,6 +15,12 @@ needed for frontier tuning explicit and bounded before another paid campaign.
   `deepseek-v4-flash-openai-chat-minimal-v1`. They are route-bound canonical
   artifacts; H1 keeps its legacy omitted `base_url`, while H2 records the
   explicit OpenAI-compatible URL.
+- The planning experiment is isolated in two additional development-only
+  profiles: `deepseek-v4-flash-anthropic-planning-v1` and
+  `deepseek-v4-flash-openai-chat-planning-v1`. They keep the same official
+  routes and budgets as H3 minimal, but fingerprint the plan-first prompt so a
+  future A/B cannot silently compare different policies under one profile id;
+  neither profile is eligible for H4 holdout publication.
 - `ContextManifest` records only selected context paths, tier, origin, priority,
   byte/token estimates, content hashes, duplicate groups, and same-name
   conflicts. Source content is never copied into the manifest.
@@ -98,8 +104,8 @@ Run the offline gate:
 scripts/acceptance.sh --only "frontier harness contract evidence"
 ```
 
-The gate covers the canonical minimal profiles, pure contract tests, and a Forge
-runner integration test.
+The gate covers the canonical minimal and planning profiles, pure contract
+tests, and a Forge runner integration test.
 This is development-split harness evidence only. H4 holdout execution remains
 closed until a complete, trusted development A/B comparison exists and all
 paid interruptions have a known charge or an explicit unknown-cost blocker.

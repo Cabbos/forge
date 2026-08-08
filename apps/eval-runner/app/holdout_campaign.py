@@ -111,6 +111,14 @@ _HOLDOUT_IDS = tuple(
         "forgebench-holdout-worker-quarantine",
     )
 )
+_HOLDOUT_PROFILE_IDS = frozenset(
+    {
+        "deepseek-v4-flash-anthropic-baseline-v1",
+        "deepseek-v4-flash-openai-chat-control-v1",
+        "deepseek-v4-flash-anthropic-minimal-v1",
+        "deepseek-v4-flash-openai-chat-minimal-v1",
+    }
+)
 
 
 class HoldoutCampaignMetadata(EvalModel):
@@ -139,6 +147,8 @@ class HoldoutCampaignMetadata(EvalModel):
             raise ValueError("holdout profile fingerprint does not match")
         if self.profile.dataset_split != DatasetSplit.DEVELOPMENT:
             raise ValueError("holdout route profile must retain development profile policy")
+        if self.profile.profile_id not in _HOLDOUT_PROFILE_IDS:
+            raise ValueError("holdout campaign cannot use a planning-only profile")
         if self.profile.max_cost_cny_per_task > self.budget_cny:
             raise ValueError("holdout reservation cap exceeds campaign budget")
         if self.budget_cny != Decimal("35"):
