@@ -346,6 +346,8 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "verification' "
             "in payload['prompt']\n"
             "assert 'Target at most 12 model rounds' in payload['prompt']\n"
+            "assert 'Phase budget: inspect by round 3, edit by round 6, verify by round 10' "
+            "in payload['prompt']\n"
             "assert 'Do not repeat an unchanged read-only command' in payload['prompt']\n"
             "assert len(payload['task']['context_files']) == 16\n"
             "json.dump({'final_answer': 'done', 'verification_result': {"
