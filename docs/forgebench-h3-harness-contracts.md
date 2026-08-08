@@ -49,6 +49,20 @@ patch replay untrusted. `.uv-cache` is now an explicit disposable-cache
 allowlist entry alongside `.bun-cache`; the interrupted candidate is not
 replayed or promoted to a comparison result.
 
+After that fix, a fresh source-pinned 30-attempt arm pair completed with no
+trust blockers. Control was 0.9333 trusted success, 0.0667 scope violations,
+and 23.0 median rounds; candidate was 0.9333, 0.0333, and 30.0 respectively.
+The paired bootstrap comparison digest is
+`26e2d36cd5f9c42dd2e6ae8514154e3c6bd3e140b827cb31fb828dfcc2214d65`, and its
+quality gate selected `no_material_difference`: the scope interval crossed
+zero and the round delta favored control. This is useful harness evidence, not
+a claim that the prompt guard alone improved model quality.
+
+Both H4 holdout and H2 development campaign verifiers now expose this same
+publication boundary: the default path remains strict for active execution,
+while `--frozen` rechecks sealed artifacts after documentation commits without
+requiring the live worktree digest and without starting a provider call.
+
 Baseline reports aggregate the event into `harness_telemetry`: contract
 coverage, tool-call histogram and repeated-call rate, context byte/token
 percentiles and tier totals, duplicate/conflict rates, stagnation redirects and

@@ -416,6 +416,7 @@ def verify_baseline_campaign(
     cases_path: Path,
     dataset_lock_path: Path,
     profile_path: Path,
+    require_current_source: bool = True,
 ) -> BaselineVerification:
     blockers: list[str] = []
     attempt_count = 0
@@ -428,6 +429,7 @@ def verify_baseline_campaign(
             cases_path=cases_path,
             dataset_lock_path=dataset_lock_path,
             profile_path=profile_path,
+            require_current_source=require_current_source,
         )
         profile = load_harness_profile(profile_path)
         tasks, _dataset_lock = _load_locked_development_tasks(
@@ -712,6 +714,7 @@ def _verify_campaign_inputs(
     cases_path: Path,
     dataset_lock_path: Path,
     profile_path: Path,
+    require_current_source: bool = True,
 ) -> BaselineCampaignMetadata:
     metadata = _read_canonical_model(
         campaign_root / _CAMPAIGN_FILE,
@@ -740,11 +743,12 @@ def _verify_campaign_inputs(
         raise CampaignStateError("development_dataset_fingerprint_mismatch")
     if [task.id for task in tasks] != metadata.task_ids:
         raise CampaignStateError("development_task_ids_mismatch")
-    repository_root = repository_root.resolve()
-    if _git_text(repository_root, "rev-parse", "HEAD") != metadata.source_commit:
-        raise CampaignStateError("source_commit_mismatch")
-    if _dirty_state_sha256(repository_root, campaign_root) != metadata.dirty_state_sha256:
-        raise CampaignStateError("dirty_state_digest_mismatch")
+    if require_current_source:
+        repository_root = repository_root.resolve()
+        if _git_text(repository_root, "rev-parse", "HEAD") != metadata.source_commit:
+            raise CampaignStateError("source_commit_mismatch")
+        if _dirty_state_sha256(repository_root, campaign_root) != metadata.dirty_state_sha256:
+            raise CampaignStateError("dirty_state_digest_mismatch")
     return metadata
 
 

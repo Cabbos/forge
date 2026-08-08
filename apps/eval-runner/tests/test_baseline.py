@@ -344,6 +344,21 @@ def test_initialize_freezes_exact_development_catalog_and_source(tmp_path: Path)
     assert verify_baseline_campaign(**campaign_kwargs(campaign)).ok is True
 
 
+def test_frozen_verification_survives_post_publication_source_changes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    campaign = initialize(tmp_path)
+    monkeypatch.setattr("app.baseline._git_text", lambda *args: "0" * 40)
+    monkeypatch.setattr("app.baseline._dirty_state_sha256", lambda *args: "0" * 64)
+
+    strict = verify_baseline_campaign(**campaign_kwargs(campaign))
+    assert strict.ok is False
+    assert strict.blockers == ["source_commit_mismatch"]
+
+    frozen = verify_baseline_campaign(**campaign_kwargs(campaign), require_current_source=False)
+    assert frozen.ok is True
+
+
 def test_legacy_h1_profile_remains_canonical_in_campaign_evidence(tmp_path: Path) -> None:
     legacy_payload = json.loads(PROFILE_PATH.read_bytes())
     legacy_payload.pop("base_url", None)
