@@ -1,0 +1,63 @@
+{
+  "schema_version": 1,
+  "campaigns": {
+    "before": "h1-anthropic-smoke-h0",
+    "after": "h1-convergence-cacfe"
+  },
+  "dataset_fingerprint": "39ac183a1f3f8e7c0f29dbbe5d4e302765935d94417f8c2adffb984632223dbd",
+  "profile_id": "deepseek-v4-flash-anthropic-baseline-v1",
+  "harness_fingerprint": "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66",
+  "raw_campaign_roots": {
+    "before": "/private/tmp/forge-h1-smoke-h0",
+    "after": "/private/tmp/forge-h1-convergence-cacfe"
+  },
+  "arms": {
+    "before": {
+      "source_commit": "1a2e0b9d4288a1b79cc9f4155726eb5cb2609518",
+      "report_sha256": "fb341325a649c51edc976910e6b290b8c523ed28c03d1238dbcdc1d4fa6a86e4",
+      "artifact_index_sha256": "262241b9d807205c83bf9dcde21900f9f8b91383fc77a4c5c55ed8675714d02b",
+      "attempts": 30,
+      "trusted_success_rate": 0.8666666666666667,
+      "verification_pass_rate": 0.9666666666666667,
+      "scope_violation_rate": 0.1,
+      "median_model_rounds": 16.5,
+      "p95_model_rounds": 32.0,
+      "median_tool_calls": 26.0,
+      "p95_tool_calls": 50.0,
+      "repeated_tool_call_rate": 0.788391777509069,
+      "median_cost_cny": "0.01902320",
+      "total_cost_cny": "0.71910864"
+    },
+    "after": {
+      "source_commit": "cacfe290ec16b41d54d7818b84985d9878bf267f",
+      "report_sha256": "7369e54800a52e071a15106c2415a3a451cb47de1981d966602951a15b5842b3",
+      "artifact_index_sha256": "a97149ea7fa44ab7dc8efee17902ef99ce941fb641e99074fc07f65561fe921e",
+      "attempts": 30,
+      "trusted_success_rate": 0.8666666666666667,
+      "verification_pass_rate": 1.0,
+      "scope_violation_rate": 0.13333333333333333,
+      "median_model_rounds": 14.0,
+      "p95_model_rounds": 36.0,
+      "median_tool_calls": 21.5,
+      "p95_tool_calls": 56.0,
+      "repeated_tool_call_rate": 0.7650918635170604,
+      "median_cost_cny": "0.01716026",
+      "total_cost_cny": "0.71606912"
+    }
+  },
+  "claims": {
+    "development_only": true,
+    "paired_causal_comparison": false,
+    "holdout_accessed": false,
+    "frontier_claim": false,
+    "promoted": false,
+    "interpretation": {
+      "median_rounds_improved": true,
+      "median_tool_calls_improved": true,
+      "repeated_tool_call_rate_improved": true,
+      "scope_violation_rate_worsened": true,
+      "p95_model_rounds_worsened": true,
+      "next_focus": "scope_firewall_and_explicit_read_only_boundaries"
+    }
+  }
+}
