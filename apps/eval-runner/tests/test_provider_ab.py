@@ -305,6 +305,40 @@ def test_provider_ab_artifact_rejects_missing_source_provenance(tmp_path) -> Non
         )
 
 
+def test_provider_ab_artifact_rejects_secret_like_trace_content(tmp_path) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+    leaked_trace = candidate.traces[0].model_copy(
+        update={
+            "raw_events": [
+                *candidate.traces[0].raw_events,
+                {"event_type": "debug", "message": "sk-1234567890abcdef"},
+            ]
+        }
+    )
+    leaked_candidate = ProviderABArm(
+        arm_id=candidate.arm_id,
+        dataset_fingerprint=candidate.dataset_fingerprint,
+        traces=(leaked_trace,),
+        report=candidate.report,
+    )
+
+    with pytest.raises(ProviderABError, match="artifact_secret_detected"):
+        write_provider_ab_artifact(
+            tmp_path / "provider-ab.json",
+            comparison=comparison,
+            control=control,
+            candidate=leaked_candidate,
+        )
+
+
 def test_provider_ab_binds_source_and_task_contract_to_comparison() -> None:
     comparison = compare_provider_ab(
         control=_deepseek(["task-a"]),

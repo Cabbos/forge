@@ -26,7 +26,7 @@ from app.execution import ExecutionOptions, execute_evaluation
 from app.execution_identity import default_execution_identity, validate_execution_identity_event
 from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
 from app.provenance import canonical_json_bytes, sha256_bytes
-from app.provenance_models import GitSha1, Sha256
+from app.provenance_models import SECRET_PATTERN, GitSha1, Sha256
 from app.provider_fallback import ProviderRouteSpec
 from app.red_team import is_red_team_task
 
@@ -258,6 +258,8 @@ def write_provider_ab_artifact(
         },
     }
     raw = canonical_json_bytes(payload) + b"\n"
+    if SECRET_PATTERN.search(raw.decode("utf-8")) is not None:
+        raise ProviderABError("artifact_secret_detected")
     digest = sha256_bytes(raw)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_bytes(raw)
