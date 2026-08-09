@@ -153,7 +153,39 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
         tool_batch_starts
     };
 
+    // ProviderUsage is the canonical event and is emitted once per model
+    // call.  Legacy Usage is intentionally only a last-call compatibility
+    // signal, so prefer the provider events when they are present and sum
+    // their known token counts for the eval trace.
+    if events
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ProviderUsage { .. }))
+    {
+        summary.input_tokens = aggregate_provider_tokens(events, |event| match event {
+            StreamEvent::ProviderUsage { input_tokens, .. } => *input_tokens,
+            _ => None,
+        });
+        summary.output_tokens = aggregate_provider_tokens(events, |event| match event {
+            StreamEvent::ProviderUsage { output_tokens, .. } => *output_tokens,
+            _ => None,
+        });
+    }
+
     summary
+}
+
+fn aggregate_provider_tokens(
+    events: &[StreamEvent],
+    select: impl Fn(&StreamEvent) -> Option<u64>,
+) -> Option<u32> {
+    let mut total = 0_u64;
+    for event in events {
+        if !matches!(event, StreamEvent::ProviderUsage { .. }) {
+            continue;
+        }
+        total = total.checked_add(select(event)?)?;
+    }
+    u32::try_from(total).ok()
 }
 
 pub(crate) fn enrich_tool_calls_with_turn_tools(
@@ -229,5 +261,51 @@ pub(crate) fn format_tool_command(tool_name: &str, input: &serde_json::Value) ->
     match path {
         Some(path) if !path.trim().is_empty() => format!("{tool_name} {path}"),
         _ => tool_name.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::events::ProviderUsageReason;
+
+    fn provider_usage(input_tokens: Option<u64>, output_tokens: Option<u64>) -> StreamEvent {
+        StreamEvent::ProviderUsage {
+            session_id: "session-1".to_string(),
+            block_id: uuid::Uuid::now_v7().to_string(),
+            provider_id: Some("custom_openai".to_string()),
+            model: Some("k3".to_string()),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_micros: None,
+            pricing_source: None,
+            source: Some("openai_compatible".to_string()),
+            reason: ProviderUsageReason::PricingUnknown,
+        }
+    }
+
+    #[test]
+    fn provider_usage_summary_sums_known_tokens_across_model_calls() {
+        let summary = summarize_events(&[
+            provider_usage(Some(833), Some(93)),
+            provider_usage(Some(979), Some(116)),
+        ]);
+
+        assert_eq!(summary.input_tokens, Some(1812));
+        assert_eq!(summary.output_tokens, Some(209));
+    }
+
+    #[test]
+    fn provider_usage_summary_is_unknown_when_a_call_omits_tokens() {
+        let summary = summarize_events(&[
+            provider_usage(Some(833), Some(93)),
+            provider_usage(None, None),
+        ]);
+
+        assert_eq!(summary.input_tokens, None);
+        assert_eq!(summary.output_tokens, None);
     }
 }

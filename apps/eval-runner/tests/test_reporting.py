@@ -349,6 +349,55 @@ def test_build_report_sums_total_cost_usd() -> None:
     assert report.total_cost_usd == 0.2
 
 
+def test_build_report_exposes_usage_and_cost_known_rates() -> None:
+    first = make_trace(
+        "usage-a",
+        verification_passed=True,
+        duration_ms=1000,
+        model_rounds=2,
+        confirm_requests=0,
+    ).model_copy(update={"input_tokens": 120, "output_tokens": 40})
+    second = make_trace(
+        "usage-b",
+        verification_passed=True,
+        duration_ms=1000,
+        model_rounds=2,
+        confirm_requests=0,
+        cost_usd=0.01,
+    ).model_copy(update={"input_tokens": 80, "output_tokens": 20})
+
+    report = build_report([first, second])
+
+    assert report.total_input_tokens == 200
+    assert report.total_output_tokens == 60
+    assert report.provider_usage_known_rate == 1.0
+    assert report.provider_cost_known_rate == 0.5
+
+
+def test_build_report_keeps_totals_unknown_when_one_trace_omits_usage() -> None:
+    known = make_trace(
+        "usage-known",
+        verification_passed=True,
+        duration_ms=1000,
+        model_rounds=2,
+        confirm_requests=0,
+    ).model_copy(update={"input_tokens": 120, "output_tokens": 40})
+    unknown = make_trace(
+        "usage-unknown",
+        verification_passed=True,
+        duration_ms=1000,
+        model_rounds=2,
+        confirm_requests=0,
+    )
+
+    report = build_report([known, unknown])
+
+    assert report.total_input_tokens is None
+    assert report.total_output_tokens is None
+    assert report.provider_usage_known_rate == 0.5
+    assert report.provider_cost_known_rate == 0.0
+
+
 def test_trial_aggregation_marks_flaky_task() -> None:
     from app.reporting import aggregate_trial_metrics
 

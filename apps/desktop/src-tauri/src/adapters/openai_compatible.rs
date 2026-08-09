@@ -146,6 +146,9 @@ impl OpenAiCompatibleAdapter {
             stream,
             max_tokens: Some(self.max_tokens),
             tools: if tools.is_empty() { None } else { Some(tools) },
+            stream_options: stream.then_some(OpenAiStreamOptions {
+                include_usage: true,
+            }),
         }
     }
 
@@ -217,6 +220,13 @@ struct OpenAiRequest {
     max_tokens: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OpenAiTool>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<OpenAiStreamOptions>,
+}
+
+#[derive(Serialize)]
+struct OpenAiStreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Serialize)]
@@ -1968,6 +1978,7 @@ mod tests {
             .expect("request messages");
 
         assert_eq!(request_body["stream"], true);
+        assert_eq!(request_body["stream_options"]["include_usage"], true);
         assert_openai_tool_result_contract(request_messages);
     }
 
