@@ -18,7 +18,10 @@ winner when either arm is not trusted. Pairing uses `(repetition, task_id)`;
 task-order, dataset-fingerprint, route, and attempt-count drift fail closed.
 The report includes deterministic paired bootstrap intervals for success,
 verification, scope, rounds, duration, and cost, plus a canonical JSON artifact
-and `.sha256` sidecar.
+and `.sha256` sidecar. Artifact publication is fail-closed: a comparison must
+carry a non-zero source commit and dirty-state digest, and the canonical bytes
+are scanned for token-like material before either the JSON or its digest sidecar
+is written.
 
 ## Run
 
