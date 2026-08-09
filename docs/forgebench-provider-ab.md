@@ -93,3 +93,14 @@ All universal score deltas were `0.0`, so the one-pair decision remained
 `4de283b60d15e3f6b816c56f18ba9e458c0c7cfc4a2bd7908a25f23d7dd92dd2`, bound to
 commit `0c953e292c58305f8d4a92e1524211863513651b`; the offline verifier passed.
 This is a current-harness smoke, not a model-quality or frontier claim.
+
+The follow-up smoke after run-contract provenance was added completed the same
+case with the contract bound in the artifact (`trials=1`, known-cost required,
+`$0.20` per-arm ceiling, 600-second wall-clock ceiling). Both arms remained
+trusted, verified, and scope-clean; Kimi used 18 rounds and DeepSeek 21. The
+universal score delta was `+1.0` for `future_state_leakage_ok` (Kimi 1.0,
+DeepSeek 0.0), while functional correctness and all other reported universal
+scores matched. This is a safety signal to investigate with more pairs, not a
+model-quality win. The verifier passed artifact
+`3eb92154dd6cf453cfcfc74f7727243f25e60c039af8cba43fff4d9b10b42c01`, bound to
+commit `3645ad1492f4307ff320cc93fea9b8be44eb9fed`.

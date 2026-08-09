@@ -83,6 +83,9 @@ comparison, canonical artifact verifier, secret scrub, and bounded wall-clock
 runner. It completed one trusted pair with identical universal scores and
 `no_material_difference`; the artifact is bound to its source commit and can be
 re-verified offline without provider calls.
+The follow-up contract-bound smoke also surfaced a `future_state_leakage_ok`
+delta for investigation (Kimi 1.0 versus DeepSeek 0.0 on one pair); the
+diagnostic deliberately records this as a safety signal, not a quality win.
 
 The first live paired smoke used one development case per arm. Both arms were
 trusted, verified, and scope-clean with known cost and no fallback; the
