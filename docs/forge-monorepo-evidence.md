@@ -147,6 +147,13 @@ The complete 10-case Kimi run after the write-policy change is recorded in
 `$0.5847462` total cost. Its 11.6 average rounds are directionally similar to
 the earlier 11.4-round diagnostic, so this evidence proves no regression and a
 pre-execution safety boundary, not a material model-quality improvement.
+
+The deterministic ForgeBench trust self-check correction is recorded in
+[`forgebench-golden-trust-self-check-2026-08-10.md`](forgebench-golden-trust-self-check-2026-08-10.md):
+the golden mock now stays inside each case's declared output scope and treats
+explicit no-op cases as unchanged. The canonical 10-case development mock is
+now trusted with zero scope violations; this fixes evidence pollution but is
+not a new paid provider or holdout result.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

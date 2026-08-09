@@ -1,5 +1,10 @@
 # Changelog
 
+- Fixed the deterministic ForgeBench golden self-check so cases with empty
+  context use their declared output scope, while explicit no-op cases remain
+  unchanged. This removes a false `harness_untrusted` blocker from real eval
+  reports without relaxing scope or trust gates; the full eval-runner suite is
+  645/645.
 - Added an eval-only headless write policy. Forge now copies the controller's
   allowed/forbidden file contract into the Rust permission emitter and blocks
   out-of-scope file writes, deletes, and mutating shell confirmations before
