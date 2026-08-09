@@ -12,6 +12,7 @@ from app.experiments import experiment_artifact_metadata
 from app.forgebench import main as forgebench_main
 from app.holdout_cli import holdout_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
+from app.provider_fallback import ProviderChainSpec, named_provider_chain
 from app.red_team import is_red_team_task
 from app.release_cli import release_main
 from app.trace_import import promote_failed_traces
@@ -28,6 +29,7 @@ def run_backtest_with_traces(
     mutations_only: bool = False,
     include_red_team: bool = False,
     red_team_only: bool = False,
+    provider_chain: ProviderChainSpec | None = None,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
     execution = run_backtest_execution(
         cases_path,
@@ -39,6 +41,7 @@ def run_backtest_with_traces(
         mutations_only=mutations_only,
         include_red_team=include_red_team,
         red_team_only=red_team_only,
+        provider_chain=provider_chain,
     )
     return execution.report, execution.traces
 
@@ -55,6 +58,7 @@ def run_backtest_execution(
     include_red_team: bool = False,
     red_team_only: bool = False,
     require_red_team: bool = False,
+    provider_chain: ProviderChainSpec | None = None,
 ) -> EvaluationExecution:
     tasks = load_backtest_tasks(
         cases_path,
@@ -76,6 +80,7 @@ def run_backtest_execution(
             setup_timeout_seconds=settings.setup_timeout_seconds,
             validation_timeout_seconds=settings.validation_timeout_seconds,
             require_red_team=require_red_team,
+            provider_chain=provider_chain,
         ),
     )
 
@@ -91,6 +96,7 @@ def run_backtest(
     mutations_only: bool = False,
     include_red_team: bool = False,
     red_team_only: bool = False,
+    provider_chain: ProviderChainSpec | None = None,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -102,6 +108,7 @@ def run_backtest(
         mutations_only=mutations_only,
         include_red_team=include_red_team,
         red_team_only=red_team_only,
+        provider_chain=provider_chain,
     )
     return report
 
@@ -229,6 +236,12 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to a case JSON file or directory.",
     )
     parser.add_argument("--provider", default="mock", choices=["mock", "forge"])
+    parser.add_argument(
+        "--provider-chain",
+        choices=["kimi-k3-deepseek"],
+        default=None,
+        help="Development-only Kimi k3 chain with DeepSeek V4 Flash auth/quota fallback.",
+    )
     parser.add_argument("--model", default=None)
     parser.add_argument(
         "--output",
@@ -262,7 +275,16 @@ def main(argv: list[str] | None = None) -> int:
     if args.trials < 1:
         parser.error("--trials must be at least 1")
 
-    model = args.model or ("local-forge" if args.provider == "forge" else "deterministic-agent-v1")
+    provider_chain = named_provider_chain(args.provider_chain) if args.provider_chain else None
+    if provider_chain is not None and args.provider != "forge":
+        parser.error("--provider-chain requires --provider forge")
+    if provider_chain is not None and args.model not in (None, provider_chain.primary.model):
+        parser.error("--provider-chain fixes the primary model to k3")
+    model = args.model or (
+        provider_chain.primary.model
+        if provider_chain is not None
+        else ("local-forge" if args.provider == "forge" else "deterministic-agent-v1")
+    )
     settings = get_settings()
     try:
         execution = run_backtest_execution(
@@ -276,6 +298,7 @@ def main(argv: list[str] | None = None) -> int:
             include_red_team=args.include_red_team,
             red_team_only=args.red_team_only,
             require_red_team=args.require_red_team,
+            provider_chain=provider_chain,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)

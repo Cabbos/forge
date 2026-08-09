@@ -31,6 +31,20 @@ def test_default_route_identity_freezes_controls_and_catalog() -> None:
     assert identity.runtime_versions["python"]
 
 
+def test_kimi_route_identity_is_explicit_and_openai_bound() -> None:
+    identity = default_execution_identity(
+        provider="custom_openai",
+        model="k3",
+        transport="openai_chat_completions",
+        base_url="https://api.kimi.com/coding/v1",
+    )
+
+    assert identity.provider == "custom_openai"
+    assert identity.model == "k3"
+    assert identity.endpoint_family == "openai"
+    assert identity.max_output_tokens == 8192
+
+
 def test_execution_identity_rejects_wrong_catalog_or_route() -> None:
     identity = default_execution_identity(
         provider="deepseek",

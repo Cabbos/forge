@@ -50,6 +50,12 @@ _MAX_OUTPUT_TOKENS = {
     "anthropic_messages": 384_000,
     "openai_chat_completions": 8_192,
 }
+_OFFICIAL_EVAL_ROUTES: dict[tuple[str, str], dict[tuple[str, str], str]] = {
+    ("deepseek", "deepseek-v4-flash"): OFFICIAL_DEEPSEEK_ROUTES,
+    ("custom_openai", "k3"): {
+        ("openai_chat_completions", "openai"): "https://api.kimi.com/coding/v1",
+    },
+}
 
 
 def tool_catalog_sha256(transport: str) -> str:
@@ -95,9 +101,10 @@ class ExecutionIdentityV1(EvalModel):
 
     @model_validator(mode="after")
     def validate_identity(self) -> ExecutionIdentityV1:
-        if self.provider != "deepseek" or self.model != "deepseek-v4-flash":
+        allowed_routes = _OFFICIAL_EVAL_ROUTES.get((self.provider, self.model))
+        if allowed_routes is None:
             raise ValueError(
-                "execution identity provider/model does not match frozen DeepSeek route"
+                "execution identity provider/model does not match an approved eval route"
             )
         expected_family = {
             "anthropic_messages": "anthropic",
@@ -105,23 +112,27 @@ class ExecutionIdentityV1(EvalModel):
         }[self.transport]
         if self.endpoint_family != expected_family:
             raise ValueError("execution identity endpoint family does not match transport")
-        expected_base_url = OFFICIAL_DEEPSEEK_ROUTES[(self.transport, self.endpoint_family)]
-        if self.base_url != expected_base_url:
-            raise ValueError("execution identity base URL does not match frozen DeepSeek route")
+        expected_base_url = allowed_routes.get((self.transport, self.endpoint_family))
+        if expected_base_url is None or self.base_url != expected_base_url:
+            raise ValueError("execution identity base URL does not match an approved eval route")
         if self.temperature_policy == "explicit" and self.temperature is None:
             raise ValueError("explicit temperature policy requires temperature")
         if self.temperature_policy != "explicit" and self.temperature is not None:
             raise ValueError("non-explicit temperature policy must omit temperature")
         if self.temperature_policy != "omitted":
-            raise ValueError("temperature policy is not supported by the frozen route contract")
+            raise ValueError(
+                "temperature policy is not supported by the approved frozen route contract"
+            )
         if self.reasoning_effort != "provider_default":
-            raise ValueError("reasoning effort is not supported by the frozen route contract")
+            raise ValueError(
+                "reasoning effort is not supported by the approved frozen route contract"
+            )
         expected_max_output_tokens = {
             "anthropic_messages": 384_000,
             "openai_chat_completions": 8_192,
         }[self.transport]
         if self.max_output_tokens != expected_max_output_tokens:
-            raise ValueError("output limit does not match the frozen route contract")
+            raise ValueError("output limit does not match the approved frozen route contract")
         if self.tool_catalog_sha256 != tool_catalog_sha256(self.transport):
             raise ValueError("tool catalog fingerprint does not match the frozen route catalog")
         return self
@@ -130,7 +141,7 @@ class ExecutionIdentityV1(EvalModel):
 def default_execution_identity(
     *, provider: str, model: str, transport: str, base_url: str
 ) -> ExecutionIdentityV1:
-    """Build the pinned DeepSeek execution controls for a Forge eval process."""
+    """Build the pinned execution controls for an approved Forge eval route."""
 
     endpoint_family = "anthropic" if transport == "anthropic_messages" else "openai"
     max_output_tokens = _MAX_OUTPUT_TOKENS.get(transport)

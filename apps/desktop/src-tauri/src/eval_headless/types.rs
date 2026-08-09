@@ -28,12 +28,13 @@ pub enum EvalHeadlessMode {
     CredentialPreflight,
 }
 
-/// The small, closed set of provider routes that an eval run may attest.
+/// The small, closed set of transports that an eval run may attest.
 ///
-/// This is intentionally separate from the desktop provider registry.  An eval
-/// campaign can opt into one of the two official DeepSeek V4 Flash endpoints,
-/// while ordinary desktop requests continue using their configured provider
-/// profile without an implicit override.
+/// This is intentionally separate from the desktop provider registry.  The
+/// locked DeepSeek H1/H2 campaigns use the two official V4 Flash endpoints;
+/// ordinary development chains may additionally attest an explicitly approved
+/// OpenAI-compatible route such as Kimi coding `k3` without changing desktop
+/// defaults or user settings.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum EvalProviderTransport {

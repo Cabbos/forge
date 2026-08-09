@@ -2,7 +2,11 @@ import json
 from datetime import UTC, datetime
 
 from app.models import AgentTrace, EvalProvider, EvaluationTask, FailureCategory
-from app.provider_fallback import ProviderFallbackRunner
+from app.provider_fallback import (
+    ProviderFallbackRunner,
+    build_provider_fallback_runner,
+    named_provider_chain,
+)
 
 
 def _trace(
@@ -110,3 +114,45 @@ def test_provider_fallback_does_not_retry_verification_or_scope_failures() -> No
     assert primary.calls == 1
     assert fallback.calls == 0
     assert not any(item.get("event_type") == "eval_provider_fallback" for item in result.raw_events)
+
+
+def test_named_kimi_chain_is_explicit_and_route_bound() -> None:
+    chain = named_provider_chain("kimi-k3-deepseek")
+
+    assert chain.primary.provider == "custom_openai"
+    assert chain.primary.model == "k3"
+    assert chain.primary.transport == "openai_chat_completions"
+    assert chain.primary.base_url == "https://api.kimi.com/coding/v1"
+    assert chain.primary.api_key_env == "FORGE_CUSTOM_OPENAI_API_KEY"
+    assert chain.fallback.provider == "deepseek"
+    assert chain.fallback.model == "deepseek-v4-flash"
+    assert chain.fallback.transport == "anthropic_messages"
+    assert chain.fallback.base_url == "https://api.deepseek.com/anthropic"
+    assert chain.fallback.api_key_env == "DEEPSEEK_API_KEY"
+
+
+def test_named_provider_chain_rejects_implicit_or_unknown_names() -> None:
+    import pytest
+
+    with pytest.raises(ValueError, match="unsupported provider chain"):
+        named_provider_chain("kimi-k3-deepseek-extra")
+
+
+def test_provider_chain_isolates_route_selector_for_each_child() -> None:
+    chain = named_provider_chain("kimi-k3-deepseek")
+    runner = build_provider_fallback_runner(chain, command=["forge-headless"])
+
+    assert runner.primary.child_env_overrides == {
+        "FORGE_HEADLESS_PROVIDER": "custom_openai",
+        "FORGE_HEADLESS_MODEL": "k3",
+        "FORGE_CUSTOM_OPENAI_BASE_URL": "https://api.kimi.com/coding/v1",
+    }
+    assert runner.fallback.child_env_overrides == {
+        "FORGE_HEADLESS_PROVIDER": "deepseek",
+        "FORGE_HEADLESS_MODEL": "deepseek-v4-flash",
+        "DEEPSEEK_BASE_URL": "https://api.deepseek.com/anthropic",
+    }
+    assert runner.primary.execution_identity is not None
+    assert runner.primary.execution_identity.provider == "custom_openai"
+    assert runner.fallback.execution_identity is not None
+    assert runner.fallback.execution_identity.provider == "deepseek"

@@ -120,7 +120,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
             .as_ref()
             .is_some_and(|credentials| !credentials.api_key.trim().is_empty());
         let route_error = request.provider_route.as_ref().and_then(|route| {
-            if agent_model != resolve::DEEPSEEK_EVAL_MODEL {
+            if resolve::expected_eval_model(&agent_provider) != Some(agent_model.as_str()) {
                 return Some("provider_route_model_mismatch");
             }
             credentials.as_ref().and_then(|credentials| {
@@ -160,20 +160,20 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     );
 
     if let Some(route) = request.provider_route.as_ref() {
-        if agent_model != resolve::DEEPSEEK_EVAL_MODEL {
+        if resolve::expected_eval_model(&agent_provider) != Some(agent_model.as_str()) {
             return Ok(trace::build_setup_error_payload(
                 types::SetupErrorPayloadInput {
                     task_id,
                     prompt,
                     display_provider,
                     display_model,
-                    agent_provider,
+                    agent_provider: agent_provider.clone(),
                     agent_model: agent_model.clone(),
                     duration_ms: started.elapsed().as_millis() as u64,
                     error: "provider_route_model_mismatch".to_string(),
                     failure_reason: format!(
                         "Forge eval route expected model {}, got {}.",
-                        resolve::DEEPSEEK_EVAL_MODEL,
+                        resolve::expected_eval_model(&agent_provider).unwrap_or("unknown"),
                         agent_model
                     ),
                 },

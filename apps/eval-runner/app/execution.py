@@ -15,9 +15,10 @@ from app.models import (
     TrustGateResult,
 )
 from app.process_control import CancelRequested, never_cancelled
+from app.provider_fallback import ProviderChainSpec, build_provider_fallback_runner
 from app.red_team import is_red_team_task
 from app.reporting import build_report
-from app.runner import create_runner
+from app.runner import EvalRunner, create_runner
 from app.scoring import score_trace
 from app.trust_gates import evaluate_trust_gates
 
@@ -31,6 +32,7 @@ class ExecutionOptions:
     setup_timeout_seconds: float
     validation_timeout_seconds: float
     require_red_team: bool
+    provider_chain: ProviderChainSpec | None = None
 
 
 @dataclass(frozen=True)
@@ -45,14 +47,26 @@ def execute_tasks(
     options: ExecutionOptions,
     cancel_requested: CancelRequested,
 ) -> list[AgentTrace]:
-    runner = create_runner(
-        provider=options.provider,
-        model=options.model,
-        forge_command=options.forge_command,
-        command_timeout_seconds=options.command_timeout_seconds,
-        setup_timeout_seconds=options.setup_timeout_seconds,
-        validation_timeout_seconds=options.validation_timeout_seconds,
-    )
+    runner: EvalRunner
+    if options.provider_chain is not None:
+        if options.provider != EvalProvider.FORGE:
+            raise ValueError("provider chains require provider=forge")
+        runner = build_provider_fallback_runner(
+            options.provider_chain,
+            command=options.forge_command,
+            command_timeout_seconds=options.command_timeout_seconds,
+            setup_timeout_seconds=options.setup_timeout_seconds,
+            validation_timeout_seconds=options.validation_timeout_seconds,
+        )
+    else:
+        runner = create_runner(
+            provider=options.provider,
+            model=options.model,
+            forge_command=options.forge_command,
+            command_timeout_seconds=options.command_timeout_seconds,
+            setup_timeout_seconds=options.setup_timeout_seconds,
+            validation_timeout_seconds=options.validation_timeout_seconds,
+        )
     traces: list[AgentTrace] = []
     for task in tasks:
         if cancel_requested():

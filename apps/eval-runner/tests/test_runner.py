@@ -587,6 +587,45 @@ def test_forge_runner_writes_secret_free_route_config_and_payload(
     assert result.base_url == "https://api.deepseek.com"
 
 
+def test_forge_runner_writes_route_specific_api_key_env_for_custom_openai(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "custom_openai_route_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "config = os.path.join(os.environ['HOME'], '.forge', 'config.json')\n"
+            "config_text = open(config, encoding='utf-8').read()\n"
+            "assert 'FORGE_CUSTOM_OPENAI_API_KEY' in config_text\n"
+            "assert 'DEEPSEEK_API_KEY' not in config_text\n"
+            "assert 'https://api.kimi.com/coding/v1' in config_text\n"
+            "assert payload['provider'] == 'custom_openai'\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'custom_openai', 'model': 'k3',\n"
+            "'transport': 'openai_chat_completions', 'endpoint_family': 'openai',\n"
+            "'base_url': 'https://api.kimi.com/coding/v1',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="custom_openai",
+        agent_model="k3",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.kimi.com/coding/v1",
+        api_key_env="FORGE_CUSTOM_OPENAI_API_KEY",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "custom_openai"
+    assert result.base_url == "https://api.kimi.com/coding/v1"
+
+
 def test_forge_runner_rejects_execution_identity_route_mismatch(tmp_path: Path) -> None:
     identity = default_execution_identity(
         provider="deepseek",

@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 87 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 88 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -134,6 +134,7 @@ Forge-built monorepo provenance 使用独立 integration campaign，把通过 tr
 DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、逐任务与累计预算、可恢复账本、可信报告和独立验证。`baseline run` 会先执行不创建 session、不触发 provider 的 typed credential preflight；隔离 HOME 不会清除 controller 已导出的 `DEEPSEEK_API_KEY`，本地付费运行可从 Git 忽略且权限为 `600` 的 `apps/eval-runner/.env` 显式导出，不要求使用钥匙串。Python 字节码与 pytest cache 被强制写入工作区外的隔离 runtime-state，避免“仅验证、无需改代码”的任务产生伪 patch；预检失败时不会写 pending、attempt 或预算记录。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
 
 DeepSeek H2 official transport A/B 只比较 DeepSeek V4 Flash 的两条官方路由：Anthropic Messages (`https://api.deepseek.com/anthropic`) 与 OpenAI-compatible Chat Completions (`https://api.deepseek.com`)。路由覆盖是 eval-only 的 isolated route override：controller 在子进程隔离 `HOME` 下写入无 secret 的临时 profile，并由 Rust 以 typed route identity 做 fail-closed attestation；桌面默认 DeepSeek 仍然是 Anthropic，用户设置和共享 session builder 不变。付费 campaign 在 route identity mismatch、provider schema drift、unknown usage/cost、untrusted workspace、patch replay failure 或 interrupted call 时立即停止且不重放 pending call。Forge 不声称支持 DeepSeek OpenAI Responses；H2 证明的是 development split 的协议与 harness 对照，不是 holdout 或 frontier 成绩。详见 [`docs/forgebench-h2-transport-ab.md`](docs/forgebench-h2-transport-ab.md)。
+普通 development 还可显式使用 `apps/eval-runner` 的 `--provider-chain kimi-k3-deepseek`：Kimi `k3` 的 OpenAI-compatible coding route 有独立 typed identity，只有鉴权/配额错误才切到独立 DeepSeek runner；该链路不进入锁定 H1/H2 或 holdout 证据。
 每个 route-bound attempt 还会写入 controller-owned 的 `eval_execution_identity` trace event，把 temperature/reasoning/output limit、`tool_names_v1` 工具目录摘要、controller/runtime 版本与请求的 provider/model/route 绑定；OpenAI candidate 的 8,192 output limit 会真实写进隔离 provider profile，并由 Rust/Python 双重校验，避免只记录不生效。Python runner、baseline 和 campaign verifier 都会对缺失或篡改 fail closed。它是对 H1 的 additive evidence，不改变原 H1 profile JSON 字节和 fingerprint；旧 H1（Anthropic 且省略 `base_url`）证据仍保持兼容。
 H3 现在为每条 Forge trace 写入 bounded harness contract evidence：minimal context manifest、typed tool-result envelope 和双轮 no-progress 的 stagnation decision；`semantic_progress_v1` 会通过 task payload 进入隔离 Rust loop guard，在两次连续失败 tool batch 后实际停止，普通桌面触发仍保持六轮默认。controller contract 在 adapter 提供 typed progress signals 时仍允许一次 evidence-driven redirect；大输出保留 digest 而不把无限内容塞入 trace。eval prompt 还会在首次编辑前显式渲染 controller-owned 的 allowed/forbidden 文件范围和“跑 targeted validation 后停止”的 bounded convergence 约束，事后仍以独立 filesystem snapshot 做最终裁决。development A/B 的 winner 还必须通过 paired-bootstrap 的 success/verification/scope 非劣性门控，区间不确定时保持 `no_material_difference`。该 gate 只证明 harness 证据边界，不证明付费分数提升。详见 [`docs/forgebench-h3-harness-contracts.md`](docs/forgebench-h3-harness-contracts.md)。
 除原始 H1 Anthropic profile 为保持历史字节指纹而省略 `base_url` 外，所有 route-bound profile 都锁定官方 base URL；baseline/holdout verifier 还要求 controller-owned 的 harness policy event 与 profile 指纹完全一致。

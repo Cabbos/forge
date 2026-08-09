@@ -370,6 +370,7 @@ class ForgeAgentRunner:
         use_provider_credential_store: bool = False,
         execution_identity: ExecutionIdentityV1 | dict[str, Any] | None = None,
         child_env_overrides: Mapping[str, str] | None = None,
+        api_key_env: str = "DEEPSEEK_API_KEY",
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
@@ -388,6 +389,13 @@ class ForgeAgentRunner:
         self.harness_policy = harness_policy or HarnessPolicyV1()
         self.use_provider_credential_store = use_provider_credential_store
         self.child_env_overrides = _validate_child_env_overrides(child_env_overrides)
+        if (
+            not api_key_env
+            or api_key_env[0].isdigit()
+            or any(not (char.isalnum() or char == "_") for char in api_key_env)
+        ):
+            raise ValueError("api_key_env must be a valid environment variable name")
+        self.api_key_env = api_key_env
         self.execution_identity = (
             ExecutionIdentityV1.model_validate(execution_identity)
             if execution_identity is not None
@@ -533,7 +541,7 @@ class ForgeAgentRunner:
                     "id": self.agent_provider,
                     "label": "Forge eval isolated provider",
                     "base_url": route["base_url"],
-                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "api_key_env": self.api_key_env,
                     "default_model": self.agent_model,
                     "transport": route["transport"],
                     "supports_tools": True,

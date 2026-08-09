@@ -120,6 +120,11 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::provider_conformance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_runner.py tests/test_execution_identity.py tests/test_baseline_comparison.py tests/test_provider_usage.py",
     },
     {
+      label: "development Kimi provider-chain contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cd apps/eval-runner && uv run pytest tests/test_provider_fallback.py tests/test_execution.py tests/test_execution_identity.py tests/test_cli.py -q",
+    },
+    {
       label: "frontier harness contract evidence",
       command:
         'cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_harness_contracts.py tests/test_harness_telemetry.py tests/test_baseline_comparison.py tests/test_runner.py -k "h3_minimal or h3_planning or harness_contract or failure_taxonomy or harness_telemetry or compare or repair_overrun or minimal_policy or task_plan or task_execution or planning_policy"',
@@ -736,6 +741,11 @@ test("acceptance script can dry-run gates by case-insensitive label substring", 
   });
 
   assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "development Kimi provider-chain contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cd apps/eval-runner && uv run pytest tests/test_provider_fallback.py tests/test_execution.py tests/test_execution_identity.py tests/test_cli.py -q",
+    },
     {
       label: "provider usage known/unknown telemetry",
       command:

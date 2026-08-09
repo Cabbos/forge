@@ -45,7 +45,7 @@ scripts/acceptance.sh --only "ForgeBench sealed holdout campaign runner"
 scripts/acceptance.sh --list-json
 ```
 
-The matrix currently contains 86 executable gates. `--list-json` is the
+The matrix currently contains 88 executable gates. `--list-json` is the
 machine-readable source for release tooling; `--results-json` binds executed
 results to the current commit. The H3 and H4 contract gates are intentionally
 offline and safe to run without a provider key; they prove decision boundaries,

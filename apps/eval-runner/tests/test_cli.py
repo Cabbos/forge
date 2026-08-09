@@ -283,6 +283,29 @@ def test_cli_report_only_prints_blockers_and_exits_zero(tmp_path: Path, capsys) 
     assert payload["trust_result"]["trusted"] is False
 
 
+def test_cli_accepts_development_kimi_provider_chain(tmp_path: Path, capsys) -> None:
+    from app.cli import main
+
+    cases_dir = tmp_path / "empty-cases"
+    cases_dir.mkdir()
+
+    exit_code = main(
+        [
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "forge",
+            "--provider-chain",
+            "kimi-k3-deepseek",
+            "--report-only",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+
+    assert exit_code == 0
+    assert payload["total_tasks"] == 0
+
+
 def test_cli_invalid_provider_exits_two(capsys) -> None:
     from app.cli import main
 

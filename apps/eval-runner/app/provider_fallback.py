@@ -1,6 +1,106 @@
+from collections.abc import Sequence
+from dataclasses import dataclass
+
+from app.execution_identity import default_execution_identity
 from app.models import AgentTrace, EvalProvider, EvaluationTask, FailureCategory
 from app.process_control import CancelRequested, never_cancelled
-from app.runner import EvalRunner
+from app.runner import (
+    DEFAULT_FORGE_TIMEOUT_SECONDS,
+    DEFAULT_SETUP_TIMEOUT_SECONDS,
+    DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+    EvalRunner,
+    ForgeAgentRunner,
+)
+
+
+@dataclass(frozen=True)
+class ProviderRouteSpec:
+    provider: str
+    model: str
+    transport: str
+    endpoint_family: str
+    base_url: str
+    api_key_env: str
+
+    def child_env_overrides(self) -> dict[str, str]:
+        base_url_env = {
+            "custom_openai": "FORGE_CUSTOM_OPENAI_BASE_URL",
+            "deepseek": "DEEPSEEK_BASE_URL",
+        }.get(self.provider)
+        if base_url_env is None:
+            raise ValueError(f"provider chain route has no supported base URL env: {self.provider}")
+        return {
+            "FORGE_HEADLESS_PROVIDER": self.provider,
+            "FORGE_HEADLESS_MODEL": self.model,
+            base_url_env: self.base_url,
+        }
+
+
+@dataclass(frozen=True)
+class ProviderChainSpec:
+    name: str
+    primary: ProviderRouteSpec
+    fallback: ProviderRouteSpec
+
+
+def named_provider_chain(name: str) -> ProviderChainSpec:
+    """Return a checked-in development chain without accepting secret material."""
+
+    if name != "kimi-k3-deepseek":
+        raise ValueError(f"unsupported provider chain: {name}")
+    return ProviderChainSpec(
+        name=name,
+        primary=ProviderRouteSpec(
+            provider="custom_openai",
+            model="k3",
+            transport="openai_chat_completions",
+            endpoint_family="openai",
+            base_url="https://api.kimi.com/coding/v1",
+            api_key_env="FORGE_CUSTOM_OPENAI_API_KEY",
+        ),
+        fallback=ProviderRouteSpec(
+            provider="deepseek",
+            model="deepseek-v4-flash",
+            transport="anthropic_messages",
+            endpoint_family="anthropic",
+            base_url="https://api.deepseek.com/anthropic",
+            api_key_env="DEEPSEEK_API_KEY",
+        ),
+    )
+
+
+def build_provider_fallback_runner(
+    chain: ProviderChainSpec,
+    *,
+    command: str | Sequence[str] | None,
+    command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
+    setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
+    validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+) -> "ProviderFallbackRunner":
+    def build(spec: ProviderRouteSpec) -> ForgeAgentRunner:
+        return ForgeAgentRunner(
+            provider=EvalProvider.FORGE,
+            model=spec.model,
+            command=command,
+            command_timeout_seconds=command_timeout_seconds,
+            setup_timeout_seconds=setup_timeout_seconds,
+            validation_timeout_seconds=validation_timeout_seconds,
+            agent_provider=spec.provider,
+            agent_model=spec.model,
+            agent_transport=spec.transport,
+            agent_endpoint_family=spec.endpoint_family,
+            agent_base_url=spec.base_url,
+            api_key_env=spec.api_key_env,
+            child_env_overrides=spec.child_env_overrides(),
+            execution_identity=default_execution_identity(
+                provider=spec.provider,
+                model=spec.model,
+                transport=spec.transport,
+                base_url=spec.base_url,
+            ),
+        )
+
+    return ProviderFallbackRunner(build(chain.primary), build(chain.fallback))
 
 
 class ProviderFallbackRunner:

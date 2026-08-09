@@ -9,6 +9,16 @@ use super::types::{EvalHeadlessRequest, EvalProviderRoute, EvalProviderTransport
 pub(crate) const DEEPSEEK_ANTHROPIC_BASE_URL: &str = "https://api.deepseek.com/anthropic";
 pub(crate) const DEEPSEEK_OPENAI_BASE_URL: &str = "https://api.deepseek.com";
 pub(crate) const DEEPSEEK_EVAL_MODEL: &str = "deepseek-v4-flash";
+pub(crate) const KIMI_OPENAI_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+pub(crate) const KIMI_EVAL_MODEL: &str = "k3";
+
+pub(crate) fn expected_eval_model(provider: &str) -> Option<&'static str> {
+    match provider.trim() {
+        "deepseek" => Some(DEEPSEEK_EVAL_MODEL),
+        "custom_openai" => Some(KIMI_EVAL_MODEL),
+        _ => None,
+    }
+}
 
 pub(crate) fn resolve_prompt(request: &EvalHeadlessRequest) -> Result<String, String> {
     let prompt = request
@@ -35,20 +45,30 @@ pub(crate) fn validate_expected_provider_route(
     provider: &str,
     model: &str,
 ) -> Result<(), String> {
-    if provider.trim() != "deepseek" {
+    let expected_model = expected_eval_model(provider).ok_or_else(|| {
+        format!(
+            "eval provider route does not allow provider {}",
+            provider.trim()
+        )
+    })?;
+    if model.trim() != expected_model {
         return Err(format!(
-            "eval provider route requires provider deepseek, got {provider}"
-        ));
-    }
-    if model.trim() != DEEPSEEK_EVAL_MODEL {
-        return Err(format!(
-            "eval provider route requires model {DEEPSEEK_EVAL_MODEL}, got {model}"
+            "eval provider route requires model {expected_model} for provider {}, got {model}",
+            provider.trim()
         ));
     }
 
-    let expected_base_url = match route.transport {
-        EvalProviderTransport::AnthropicMessages => DEEPSEEK_ANTHROPIC_BASE_URL,
-        EvalProviderTransport::OpenAiChatCompletions => DEEPSEEK_OPENAI_BASE_URL,
+    let expected_base_url = match (provider.trim(), route.transport) {
+        ("deepseek", EvalProviderTransport::AnthropicMessages) => DEEPSEEK_ANTHROPIC_BASE_URL,
+        ("deepseek", EvalProviderTransport::OpenAiChatCompletions) => DEEPSEEK_OPENAI_BASE_URL,
+        ("custom_openai", EvalProviderTransport::OpenAiChatCompletions) => KIMI_OPENAI_BASE_URL,
+        _ => {
+            return Err(format!(
+                "eval provider route transport {} is not approved for provider {}",
+                route.transport.as_str(),
+                provider.trim()
+            ));
+        }
     };
     if route.base_url != expected_base_url {
         return Err(format!(
@@ -84,10 +104,11 @@ fn validate_configured_provider_route_against(
     let profile = find_loaded_provider_profile(profiles, provider).ok_or_else(|| {
         format!("eval provider route could not load configured provider profile {provider}")
     })?;
-    if profile.id != "deepseek" {
+    if profile.id != provider.trim() {
         return Err(format!(
-            "eval provider route resolved unexpected provider profile {}",
-            profile.id
+            "eval provider route resolved unexpected provider profile {}, expected {}",
+            profile.id,
+            provider.trim()
         ));
     }
 
@@ -106,7 +127,9 @@ fn validate_configured_provider_route_against(
     let expected_base_url = route.base_url.as_str();
     let configured_base_url = match profile.default_base_url.as_deref() {
         Some(value) => value,
-        None if profile.transport == ProviderTransport::AnthropicMessages => {
+        None if profile.id == "deepseek"
+            && profile.transport == ProviderTransport::AnthropicMessages =>
+        {
             DEEPSEEK_ANTHROPIC_BASE_URL
         }
         None => {
@@ -273,6 +296,23 @@ mod tests {
         .expect("configured profile")
     }
 
+    fn configured_kimi(base_url: &str) -> Vec<LoadedProviderProfile> {
+        load_provider_profiles(&[ProviderProfileConfig {
+            id: "custom_openai".to_string(),
+            label: Some("Kimi eval".to_string()),
+            base_url: Some(base_url.to_string()),
+            api_key_env: Some(EnvVarList::One("FORGE_CUSTOM_OPENAI_API_KEY".to_string())),
+            base_url_env: Some(EnvVarList::One("FORGE_CUSTOM_OPENAI_BASE_URL".to_string())),
+            default_model: Some("k3".to_string()),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec![],
+        }])
+        .expect("configured Kimi profile")
+    }
+
     #[test]
     fn official_eval_routes_deserialize_and_validate() {
         let anthropic = route("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
@@ -301,6 +341,20 @@ mod tests {
     }
 
     #[test]
+    fn kimi_openai_eval_route_is_explicit_and_configured() {
+        let kimi = route("openai_chat_completions", KIMI_OPENAI_BASE_URL);
+        validate_expected_provider_route(&kimi, "custom_openai", KIMI_EVAL_MODEL)
+            .expect("Kimi route");
+        validate_configured_provider_route_against(
+            &kimi,
+            "custom_openai",
+            KIMI_EVAL_MODEL,
+            &configured_kimi(KIMI_OPENAI_BASE_URL),
+        )
+        .expect("configured Kimi route");
+    }
+
+    #[test]
     fn invalid_eval_routes_fail_closed() {
         let unsupported_transport =
             serde_json::from_value::<EvalProviderRoute>(serde_json::json!({
@@ -325,6 +379,20 @@ mod tests {
             validate_expected_provider_route(&openai, "anthropic", DEEPSEEK_EVAL_MODEL).is_err()
         );
         assert!(validate_expected_provider_route(&openai, "deepseek", "deepseek-chat").is_err());
+
+        let kimi = route("openai_chat_completions", KIMI_OPENAI_BASE_URL);
+        validate_expected_provider_route(&kimi, "custom_openai", KIMI_EVAL_MODEL)
+            .expect("approved Kimi route");
+        assert!(validate_expected_provider_route(&kimi, "custom_openai", "kimi-k2").is_err());
+        for base_url in ["https://api.kimi.com", "https://evil.example.test/v1"] {
+            let wrong_kimi = route("openai_chat_completions", base_url);
+            assert!(validate_expected_provider_route(
+                &wrong_kimi,
+                "custom_openai",
+                KIMI_EVAL_MODEL
+            )
+            .is_err());
+        }
 
         let profiles = configured_deepseek("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
         assert!(validate_configured_provider_route_against(

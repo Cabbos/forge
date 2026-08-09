@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -6,6 +7,8 @@ import pytest
 from app.cases import load_cases
 from app.execution import ExecutionOptions, execute_evaluation
 from app.models import EvalProvider, TrustStatus, WorkspaceCheck
+from app.provider_fallback import named_provider_chain
+from app.runner import DeterministicMockRunner
 
 
 def write_executable_case(
@@ -65,6 +68,38 @@ def test_execute_evaluation_returns_trusted_for_complete_mock_evidence(
 
     assert execution.trust_result.status == TrustStatus.TRUSTED
     assert execution.trust_result.trusted is True
+
+
+def test_execute_tasks_wires_named_provider_chain_into_development_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    chain = named_provider_chain("kimi-k3-deepseek")
+    seen: dict[str, object] = {}
+
+    def build_chain(received_chain, **kwargs):
+        seen["chain"] = received_chain
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_fallback_runner", build_chain)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=chain,
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["chain"] == chain
+    assert seen["command"] == ["forge-headless"]
 
 
 def test_execute_evaluation_is_untrusted_when_observer_replay_self_check_fails(
