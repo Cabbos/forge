@@ -45,7 +45,7 @@ scripts/acceptance.sh --only "ForgeBench sealed holdout campaign runner"
 scripts/acceptance.sh --list-json
 ```
 
-The matrix currently contains 88 executable gates. `--list-json` is the
+The matrix currently contains 89 executable gates. `--list-json` is the
 machine-readable source for release tooling; `--results-json` binds executed
 results to the current commit. The H3 and H4 contract gates are intentionally
 offline and safe to run without a provider key; they prove decision boundaries,
@@ -71,6 +71,18 @@ now use the same isolated environment and `uv` scope wrapper as the headless
 agent. This prevents verification tooling from reintroducing `.venv`, `uv.lock`,
 or cache artifacts into the observed workspace after the agent itself has been
 isolated.
+
+The route-pure Kimi/DeepSeek diagnostic is documented in
+[`forgebench-provider-ab.md`](forgebench-provider-ab.md). It is deliberately
+separate from the frozen DeepSeek H1/H2 profiles: each arm is single-provider,
+fallback events invalidate the pair, unknown cost blocks publication, and the
+comparison remains diagnostic-only.
+
+The first live paired smoke used one development case per arm. Both arms were
+trusted, verified, and scope-clean with known cost and no fallback; the
+quality-gated result was `no_material_difference` (artifact digest
+`51db077aeba620ada4ef305669cbc3a9998a49fef03e79712aaeaed4403639cf`). This is
+route and harness evidence, not a model-quality or frontier claim.
 
 The first post-fix paid pair (`bda5d977`) reached six trusted attempts per arm
 before both arms stopped at the same unknown-cost multi-file API interruption;

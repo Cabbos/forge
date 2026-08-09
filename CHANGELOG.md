@@ -1,5 +1,16 @@
 # Changelog
 
+- Added a route-pure Kimi K3 versus DeepSeek V4 Flash paired diagnostic. It
+  runs separate approved routes over the same ordered tasks, binds every trace
+  to execution identity, rejects fallback contamination and unknown cost, and
+  emits deterministic paired bootstrap intervals with a canonical artifact and
+  SHA-256 sidecar. This is development-only evidence and cannot unlock the
+  holdout or make a frontier claim.
+- Ran the first live paired smoke: one case per arm, both trusted/verified and
+  scope-clean with known cost and no fallback; the quality-gated result was
+  `no_material_difference` (DeepSeek 10 rounds / `$0.002169`, Kimi K3 7 rounds /
+  `$0.0355908`). One pair is intentionally insufficient to claim a model-quality
+  difference.
 - Fixed the deterministic ForgeBench golden self-check so cases with empty
   context use their declared output scope, while explicit no-op cases remain
   unchanged. This removes a false `harness_untrusted` blocker from real eval

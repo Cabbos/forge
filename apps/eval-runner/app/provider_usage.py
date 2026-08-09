@@ -1,5 +1,5 @@
 from decimal import Decimal
-from typing import Any, Literal
+from typing import Any, Literal, TypeGuard
 
 from pydantic import Field
 
@@ -174,7 +174,8 @@ def estimate_provider_cost_usd(provider_events: list[dict[str, Any]]) -> float |
 
     reported_micros = [event.get("estimated_cost_micros") for event in canonical_events]
     if all(_is_token_count(value) for value in reported_micros):
-        return float(sum(reported_micros, 0) / Decimal(1_000_000))
+        token_values = [value for value in reported_micros if _is_token_count(value)]
+        return float(sum(token_values, 0) / Decimal(1_000_000))
 
     identities = {(event.get("provider_id"), event.get("model")) for event in canonical_events}
     if identities != {("custom_openai", "k3")}:
@@ -252,7 +253,7 @@ def _optional_token_count(
     return int(value)
 
 
-def _is_token_count(value: Any) -> bool:
+def _is_token_count(value: Any) -> TypeGuard[int]:
     return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 

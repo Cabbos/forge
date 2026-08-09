@@ -5,6 +5,7 @@ from app.models import AgentTrace, EvalProvider, EvaluationTask, FailureCategory
 from app.provider_fallback import (
     ProviderFallbackRunner,
     build_provider_fallback_runner,
+    build_provider_route_runner,
     named_provider_chain,
 )
 
@@ -156,3 +157,16 @@ def test_provider_chain_isolates_route_selector_for_each_child() -> None:
     assert runner.primary.execution_identity.provider == "custom_openai"
     assert runner.fallback.execution_identity is not None
     assert runner.fallback.execution_identity.provider == "deepseek"
+
+
+def test_single_provider_route_runner_preserves_exact_route_identity() -> None:
+    chain = named_provider_chain("kimi-k3-deepseek")
+
+    runner = build_provider_route_runner(chain.primary, command=["forge-headless"])
+
+    assert runner.agent_provider == "custom_openai"
+    assert runner.agent_model == "k3"
+    assert runner.agent_transport == "openai_chat_completions"
+    assert runner.agent_endpoint_family == "openai"
+    assert runner.agent_base_url == "https://api.kimi.com/coding/v1"
+    assert runner.api_key_env == "FORGE_CUSTOM_OPENAI_API_KEY"

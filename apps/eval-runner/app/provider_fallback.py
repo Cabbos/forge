@@ -77,30 +77,55 @@ def build_provider_fallback_runner(
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
 ) -> "ProviderFallbackRunner":
-    def build(spec: ProviderRouteSpec) -> ForgeAgentRunner:
-        return ForgeAgentRunner(
-            provider=EvalProvider.FORGE,
-            model=spec.model,
+    return ProviderFallbackRunner(
+        build_provider_route_runner(
+            chain.primary,
             command=command,
             command_timeout_seconds=command_timeout_seconds,
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
-            agent_provider=spec.provider,
-            agent_model=spec.model,
-            agent_transport=spec.transport,
-            agent_endpoint_family=spec.endpoint_family,
-            agent_base_url=spec.base_url,
-            api_key_env=spec.api_key_env,
-            child_env_overrides=spec.child_env_overrides(),
-            execution_identity=default_execution_identity(
-                provider=spec.provider,
-                model=spec.model,
-                transport=spec.transport,
-                base_url=spec.base_url,
-            ),
-        )
+        ),
+        build_provider_route_runner(
+            chain.fallback,
+            command=command,
+            command_timeout_seconds=command_timeout_seconds,
+            setup_timeout_seconds=setup_timeout_seconds,
+            validation_timeout_seconds=validation_timeout_seconds,
+        ),
+    )
 
-    return ProviderFallbackRunner(build(chain.primary), build(chain.fallback))
+
+def build_provider_route_runner(
+    spec: ProviderRouteSpec,
+    *,
+    command: str | Sequence[str] | None,
+    command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
+    setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
+    validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+) -> ForgeAgentRunner:
+    """Build one route-pinned runner without adding a fallback edge."""
+
+    return ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model=spec.model,
+        command=command,
+        command_timeout_seconds=command_timeout_seconds,
+        setup_timeout_seconds=setup_timeout_seconds,
+        validation_timeout_seconds=validation_timeout_seconds,
+        agent_provider=spec.provider,
+        agent_model=spec.model,
+        agent_transport=spec.transport,
+        agent_endpoint_family=spec.endpoint_family,
+        agent_base_url=spec.base_url,
+        api_key_env=spec.api_key_env,
+        child_env_overrides=spec.child_env_overrides(),
+        execution_identity=default_execution_identity(
+            provider=spec.provider,
+            model=spec.model,
+            transport=spec.transport,
+            base_url=spec.base_url,
+        ),
+    )
 
 
 class ProviderFallbackRunner:

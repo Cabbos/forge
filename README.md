@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 88 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 89 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 88 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 89 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -179,7 +179,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：88 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：89 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |

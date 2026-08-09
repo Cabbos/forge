@@ -306,6 +306,25 @@ def test_cli_accepts_development_kimi_provider_chain(tmp_path: Path, capsys) -> 
     assert payload["total_tasks"] == 0
 
 
+def test_cli_dispatches_provider_ab_subcommand_without_touching_ordinary_runner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.cli import main
+
+    seen: list[list[str]] = []
+
+    def fake_provider_ab(argv: list[str]) -> int:
+        seen.append(argv)
+        return 7
+
+    monkeypatch.setattr("app.cli.provider_ab_main", fake_provider_ab)
+
+    result = main(["provider-ab", "--cases", "cases", "--output", "artifact.json"])
+
+    assert result == 7
+    assert seen == [["--cases", "cases", "--output", "artifact.json"]]
+
+
 def test_cli_invalid_provider_exits_two(capsys) -> None:
     from app.cli import main
 

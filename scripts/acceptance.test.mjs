@@ -125,6 +125,11 @@ test("acceptance script dry-run lists the final product gates", () => {
         "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cd apps/eval-runner && uv run pytest tests/test_provider_fallback.py tests/test_execution.py tests/test_execution_identity.py tests/test_cli.py -q",
     },
     {
+      label: "development Kimi/DeepSeek paired diagnostic contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_provider_ab.py tests/test_provider_fallback.py tests/test_execution.py tests/test_cli.py -q",
+    },
+    {
       label: "frontier harness contract evidence",
       command:
         'cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_harness_contracts.py tests/test_harness_telemetry.py tests/test_baseline_comparison.py tests/test_runner.py -k "h3_minimal or h3_planning or harness_contract or failure_taxonomy or harness_telemetry or compare or repair_overrun or minimal_policy or task_plan or task_execution or planning_policy"',

@@ -12,6 +12,7 @@ from app.experiments import experiment_artifact_metadata
 from app.forgebench import main as forgebench_main
 from app.holdout_cli import holdout_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
+from app.provider_ab import provider_ab_main
 from app.provider_fallback import ProviderChainSpec, named_provider_chain
 from app.red_team import is_red_team_task, red_team_failure_rate_for_traces
 from app.release_cli import release_main
@@ -250,6 +251,8 @@ def main(argv: list[str] | None = None) -> int:
         return holdout_main(raw_argv[1:])
     if raw_argv[:1] == ["release"]:
         return release_main(raw_argv[1:])
+    if raw_argv[:1] == ["provider-ab"]:
+        return provider_ab_main(raw_argv[1:])
 
     parser = argparse.ArgumentParser(description="Run Forge eval cases and print a JSON report.")
     parser.add_argument(

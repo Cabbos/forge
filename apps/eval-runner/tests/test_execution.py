@@ -102,6 +102,38 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
     assert seen["command"] == ["forge-headless"]
 
 
+def test_execute_tasks_wires_single_provider_route_into_development_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    route = named_provider_chain("kimi-k3-deepseek").primary
+    seen: dict[str, object] = {}
+
+    def build_route(received_route, **kwargs):
+        seen["route"] = received_route
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_route_runner", build_route)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model=route.model,
+        forge_command=["forge-headless"],
+        provider_route=route,
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["route"] == route
+    assert seen["command"] == ["forge-headless"]
+
+
 def test_execute_evaluation_stops_before_next_call_at_cost_boundary(
     tmp_path: Path,
 ) -> None:

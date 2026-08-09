@@ -16,7 +16,12 @@ from app.models import (
     TrustStatus,
 )
 from app.process_control import CancelRequested, never_cancelled
-from app.provider_fallback import ProviderChainSpec, build_provider_fallback_runner
+from app.provider_fallback import (
+    ProviderChainSpec,
+    ProviderRouteSpec,
+    build_provider_fallback_runner,
+    build_provider_route_runner,
+)
 from app.red_team import is_red_team_task, red_team_batch_passed
 from app.reporting import build_report
 from app.runner import EvalRunner, create_runner
@@ -34,6 +39,7 @@ class ExecutionOptions:
     validation_timeout_seconds: float
     require_red_team: bool
     provider_chain: ProviderChainSpec | None = None
+    provider_route: ProviderRouteSpec | None = None
     max_total_cost_usd: float | None = None
     require_known_cost: bool = False
 
@@ -51,7 +57,19 @@ def execute_tasks(
     cancel_requested: CancelRequested,
 ) -> list[AgentTrace]:
     runner: EvalRunner
-    if options.provider_chain is not None:
+    if options.provider_chain is not None and options.provider_route is not None:
+        raise ValueError("provider chain and single provider route are mutually exclusive")
+    if options.provider_route is not None:
+        if options.provider != EvalProvider.FORGE:
+            raise ValueError("provider routes require provider=forge")
+        runner = build_provider_route_runner(
+            options.provider_route,
+            command=options.forge_command,
+            command_timeout_seconds=options.command_timeout_seconds,
+            setup_timeout_seconds=options.setup_timeout_seconds,
+            validation_timeout_seconds=options.validation_timeout_seconds,
+        )
+    elif options.provider_chain is not None:
         if options.provider != EvalProvider.FORGE:
             raise ValueError("provider chains require provider=forge")
         runner = build_provider_fallback_runner(
