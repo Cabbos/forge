@@ -112,6 +112,14 @@ violations, and 31.5 median rounds. The round value predates the parallel-tool
 round accounting fix and is retained only as historical diagnostic evidence;
 this remains a development-split harness iteration, not a passing holdout or
 frontier result.
+
+The latest real Kimi K3 development diagnostic is recorded in
+[`forgebench-kimi-development-run-2026-08-10.md`](forgebench-kimi-development-run-2026-08-10.md).
+It completed all 10 development cases with 1.0000 success and verification,
+zero scope violations, 1.0000 known usage/cost rates, and `$0.6010896` of
+auditable Kimi spend under the explicit unknown-cost gate. It remains
+development-only evidence and does not alter the sealed H1/H2/H4 claim
+boundaries.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

@@ -1,5 +1,9 @@
 # Changelog
 
+- Recorded a real 10-case Kimi K3 development diagnostic with complete
+  verification, zero scope violations, known usage/cost for every trace, and
+  an auditable `$0.6010896` spend under the fail-closed cost gate; the result is
+  explicitly development-only and does not promote a holdout/frontier claim.
 - Added an explicit `--require-known-cost` threshold gate for ordinary evals;
   paid or budgeted runs can now fail closed when any provider trace omits a
   trustworthy cost instead of treating unknown spend as zero.
