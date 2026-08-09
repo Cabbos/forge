@@ -46,6 +46,10 @@ uv run python -m app.cli provider-ab \
   --max-total-runtime-seconds 1200
 ```
 
+`--max-total-cost-usd` is a cumulative ceiling for the complete paired run,
+covering both control and candidate; the second arm receives only the unused
+remainder and the run stops before another provider call when it is exhausted.
+
 The command intentionally does not use the operational Kimi→DeepSeek fallback:
 a paired comparison must not mix providers. For ordinary development runs, use
 `--provider-chain kimi-k3-deepseek`; that chain remains the Kimi-primary,
@@ -104,7 +108,7 @@ This is a current-harness smoke, not a model-quality or frontier claim.
 
 The follow-up smoke after run-contract provenance was added completed the same
 case with the contract bound in the artifact (`trials=1`, known-cost required,
-`$0.20` per-arm ceiling, 600-second wall-clock ceiling). Both arms remained
+`$0.20` paired ceiling, 600-second wall-clock ceiling). Both arms remained
 trusted, verified, and scope-clean; Kimi used 18 rounds and DeepSeek 21. The
 universal score delta was `+1.0` for `future_state_leakage_ok` (Kimi 1.0,
 DeepSeek 0.0), while functional correctness and all other reported universal

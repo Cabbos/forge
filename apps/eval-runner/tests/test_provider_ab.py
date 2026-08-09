@@ -398,9 +398,14 @@ def test_run_provider_ab_executes_two_route_pure_arms(
 
     monkeypatch.setattr("app.provider_ab.execute_evaluation", fake_execute)
 
-    result = run_provider_ab(cases_path=tmp_path / "cases.json", forge_command=["forge"])
+    result = run_provider_ab(
+        cases_path=tmp_path / "cases.json",
+        forge_command=["forge"],
+        max_total_cost_usd=0.02,
+    )
 
     assert [call.provider_route.provider for call in calls] == ["deepseek", "custom_openai"]
+    assert [call.max_total_cost_usd for call in calls] == [0.02, 0.01]
     assert all(call.provider_chain is None for call in calls)
     assert result.comparison.paired_attempts == 1
     assert len(result.comparison.source_commit) == 40
@@ -429,6 +434,40 @@ def test_run_provider_ab_rejects_non_positive_runtime_budget(tmp_path) -> None:
             forge_command=["forge"],
             max_total_runtime_seconds=0,
         )
+
+
+def test_run_provider_ab_stops_before_second_arm_when_pair_budget_is_spent(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    monkeypatch.setattr(
+        "app.provider_ab.load_cases",
+        lambda _path: [EvaluationTask(id="task-a", title="A", prompt="Do A.")],
+    )
+
+    def fake_execute(*, options, **_kwargs):
+        calls.append(options.provider_route.provider)
+        arm = (
+            _deepseek(["task-a"])
+            if options.provider_route.provider == "deepseek"
+            else _kimi(["task-a"])
+        )
+        return EvaluationExecution(
+            traces=list(arm.traces),
+            report=arm.report,
+            trust_result=arm.report.trust_result,
+        )
+
+    monkeypatch.setattr("app.provider_ab.execute_evaluation", fake_execute)
+
+    with pytest.raises(ProviderABError, match="paired_cost_budget_exhausted:kimi_k3"):
+        run_provider_ab(
+            cases_path=tmp_path / "cases.json",
+            forge_command=["forge"],
+            max_total_cost_usd=0.01,
+        )
+
+    assert calls == ["deepseek"]
 
 
 def test_provider_ab_cli_rejects_non_positive_runtime_budget() -> None:

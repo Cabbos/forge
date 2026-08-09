@@ -5,6 +5,9 @@
   controller-owned failure categories and candidate-minus-control deltas.
   Legacy aggregate labels cannot mask typed scope/progress failures; legacy
   artifacts keep their optional fields and remain offline-verifiable.
+- Tightened the provider A/B `--max-total-cost-usd` contract to a cumulative
+  control-plus-candidate ceiling; the second arm receives only remaining budget
+  and unknown/exhausted cost fails closed before another provider call.
 - Added a route-pure Kimi K3 versus DeepSeek V4 Flash paired diagnostic. It
   runs separate approved routes over the same ordered tasks, binds every trace
   to execution identity, rejects fallback contamination and unknown cost, and

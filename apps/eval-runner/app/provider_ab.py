@@ -245,8 +245,14 @@ def run_provider_ab(
     settings = get_settings()
 
     arms: list[ProviderABArm] = []
+    spent_cost_usd = 0.0
     for arm_id in ("deepseek_v4_flash", "kimi_k3"):
         route = APPROVED_PROVIDER_AB_ROUTES[arm_id]
+        remaining_cost_usd = None
+        if max_total_cost_usd is not None:
+            remaining_cost_usd = max_total_cost_usd - spent_cost_usd
+            if remaining_cost_usd <= 0:
+                raise ProviderABError(f"paired_cost_budget_exhausted:{arm_id}")
         execution = execute_evaluation(
             cases_path=cases_path,
             tasks=trial_tasks,
@@ -259,15 +265,27 @@ def run_provider_ab(
                 validation_timeout_seconds=settings.validation_timeout_seconds,
                 require_red_team=require_red_team,
                 provider_route=route,
-                max_total_cost_usd=max_total_cost_usd,
+                max_total_cost_usd=remaining_cost_usd,
                 require_known_cost=require_known_cost,
             ),
             cancel_requested=should_cancel,
         )
         if len(execution.traces) != len(trial_tasks):
+            if max_total_cost_usd is not None and any(
+                trace.cost_usd is None for trace in execution.traces
+            ):
+                raise ProviderABError(f"paired_cost_unknown:{arm_id}")
+            if "execution_stopped_at_cost_boundary" in execution.report.trust_result.blockers:
+                raise ProviderABError(f"paired_cost_budget_exhausted:{arm_id}")
             raise ProviderABError(
                 f"arm_incomplete:{arm_id}:{len(execution.traces)}/{len(trial_tasks)}"
             )
+        if max_total_cost_usd is not None:
+            if any(trace.cost_usd is None for trace in execution.traces):
+                raise ProviderABError(f"paired_cost_unknown:{arm_id}")
+            spent_cost_usd += sum(trace.cost_usd or 0.0 for trace in execution.traces)
+            if spent_cost_usd > max_total_cost_usd:
+                raise ProviderABError(f"paired_cost_budget_exceeded:{arm_id}")
         arms.append(
             ProviderABArm(
                 arm_id=arm_id,
@@ -477,7 +495,7 @@ def provider_ab_main(argv: list[str] | None = None) -> int:
         "--max-total-cost-usd",
         type=float,
         default=None,
-        help="Maximum cost per arm; partial arms fail closed and are not paired.",
+        help="Maximum cumulative cost across both arms; partial arms fail closed.",
     )
     parser.add_argument("--require-known-cost", action="store_true")
     parser.add_argument(
