@@ -29,6 +29,7 @@ from app.provenance import canonical_json_bytes, sha256_bytes
 from app.provenance_models import SECRET_PATTERN, GitSha1, Sha256
 from app.provider_fallback import ProviderRouteSpec
 from app.red_team import is_red_team_task
+from app.scoring import UNIVERSAL_SCORE_NAMES, score_trace
 
 _BOOTSTRAP_RESAMPLES = 2_000
 _BOOTSTRAP_SEED = 814_2026
@@ -96,6 +97,7 @@ class ProviderABArmSummary(EvalModel):
     avg_duration_ms: float = Field(ge=0.0)
     total_cost_usd: float = Field(ge=0.0)
     provider_cost_known_rate: float = Field(ge=0.0, le=1.0)
+    score_summary: dict[str, float] = Field(default_factory=dict)
 
     @field_validator("arm_id", "provider", "model", "base_url")
     @classmethod
@@ -605,6 +607,7 @@ def _arm_summary(arm: ProviderABArm) -> ProviderABArmSummary:
         avg_duration_ms=arm.report.avg_duration_ms,
         total_cost_usd=arm.report.total_cost_usd,
         provider_cost_known_rate=arm.report.provider_cost_known_rate,
+        score_summary=arm.report.score_summary,
     )
 
 
@@ -644,6 +647,11 @@ def _bootstrap_intervals(
         "avg_duration_ms": (lambda trace: float(trace.duration_ms), _mean),
         "cost_usd": (lambda trace: float(trace.cost_usd or 0.0), _mean),
     }
+    for score_name in sorted(UNIVERSAL_SCORE_NAMES):
+        metric_values[f"score_{score_name}"] = (
+            _score_value(score_name),
+            _mean,
+        )
     intervals: dict[str, ProviderABInterval] = {}
     for index, (name, (value_of, estimator)) in enumerate(metric_values.items()):
         intervals[name] = _paired_bootstrap_interval(
@@ -689,9 +697,24 @@ def _select_winner(intervals: dict[str, ProviderABInterval]) -> str:
     success = intervals["success_rate"]
     verification = intervals["verification_pass_rate"]
     scope = intervals["scope_violation_rate"]
-    if success.high < 0 or verification.high < 0 or scope.low > 0:
+    score_intervals = {
+        name: intervals[f"score_{name}"]
+        for name in UNIVERSAL_SCORE_NAMES
+        if f"score_{name}" in intervals
+    }
+    if (
+        success.high < 0
+        or verification.high < 0
+        or scope.low > 0
+        or any(interval.high < 0 for interval in score_intervals.values())
+    ):
         return "control"
-    if success.low > 0 and verification.low >= 0 and scope.high <= 0:
+    if (
+        success.low > 0
+        and verification.low >= 0
+        and scope.high <= 0
+        and all(interval.low >= 0 for interval in score_intervals.values())
+    ):
         return "candidate"
     return "no_material_difference"
 
@@ -703,6 +726,13 @@ def _trace_passed(trace: AgentTrace) -> bool:
         and trace.verification_result is not None
         and trace.verification_result.passed
     )
+
+
+def _score_value(name: str) -> Callable[[AgentTrace], float]:
+    def value(trace: AgentTrace) -> float:
+        return float(score_trace(trace)[name].score)
+
+    return value
 
 
 def _mean(values: list[float]) -> float:

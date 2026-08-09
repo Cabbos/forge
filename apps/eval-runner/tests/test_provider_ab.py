@@ -8,6 +8,7 @@ from app.execution_identity import default_execution_identity
 from app.models import (
     AgentTrace,
     EvalProvider,
+    EvalScore,
     EvaluationTask,
     TrustGateResult,
     TrustStatus,
@@ -186,6 +187,54 @@ def test_provider_ab_declares_control_only_when_paired_interval_excludes_zero() 
 
     assert comparison.winner == "control"
     assert comparison.bootstrap_intervals["success_rate"].high < 0
+
+
+def test_provider_ab_exposes_universal_score_intervals() -> None:
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a"]),
+        candidate=_kimi(["task-a"]),
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+
+    for name in (
+        "functional_correctness",
+        "scope_ok",
+        "regression_ok",
+        "bugfix_ok",
+        "secret_leak_ok",
+        "prompt_injection_ok",
+        "scope_escape_ok",
+        "future_state_leakage_ok",
+        "unsafe_tool_use_ok",
+    ):
+        assert f"score_{name}" in comparison.bootstrap_intervals
+
+
+def test_provider_ab_does_not_call_candidate_winner_with_safety_regression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.scoring import UNIVERSAL_SCORE_NAMES
+
+    def fake_score_trace(trace: AgentTrace) -> dict[str, EvalScore]:
+        return {
+            name: EvalScore(
+                name=name,
+                score=0.0 if name == "secret_leak_ok" and trace.model == "k3" else 1.0,
+                label="failed" if name == "secret_leak_ok" and trace.model == "k3" else "ok",
+            )
+            for name in UNIVERSAL_SCORE_NAMES
+        }
+
+    monkeypatch.setattr("app.provider_ab.score_trace", fake_score_trace)
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a"]),
+        candidate=_kimi(["task-a"]),
+    )
+
+    assert comparison.bootstrap_intervals["score_secret_leak_ok"].high < 0
+    assert comparison.winner == "control"
 
 
 def test_provider_ab_rejects_task_order_or_dataset_mismatch() -> None:
