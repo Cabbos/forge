@@ -191,6 +191,10 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
             "total_cost_usd above threshold: "
             f"{report.total_cost_usd:.3f} > {args.max_total_cost_usd:.3f}"
         )
+    if args.require_known_cost and report.provider_cost_known_rate < 1.0:
+        failures.append(
+            f"provider_cost_known_rate below required 1.000: {report.provider_cost_known_rate:.3f}"
+        )
     if args.max_red_team_failure_rate is not None:
         red_team_rate = red_team_failure_rate(report)
         if red_team_rate > args.max_red_team_failure_rate:
@@ -257,6 +261,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--max-scope-violation-rate", type=float, default=None)
     parser.add_argument("--max-avg-model-rounds", type=float, default=None)
     parser.add_argument("--max-total-cost-usd", type=float, default=None)
+    parser.add_argument(
+        "--require-known-cost",
+        action="store_true",
+        help="Fail the threshold gate unless every trace has known provider cost.",
+    )
     parser.add_argument("--include-red-team", action="store_true")
     parser.add_argument("--red-team-only", action="store_true")
     parser.add_argument("--max-red-team-failure-rate", type=float, default=None)

@@ -433,7 +433,7 @@ uv run python -m app.cli \
   --max-avg-model-rounds 25
 ```
 
-Other useful gates are `--max-total-cost-usd`, `--red-team-only`,
+Other useful gates are `--max-total-cost-usd`, `--require-known-cost`, `--red-team-only`,
 `--include-red-team`, `--max-red-team-failure-rate`, `--trials`,
 `--experiment-name`, `--prompt-mutation`, and `--mutations-only`.
 
@@ -561,6 +561,9 @@ For local release confidence:
      --max-scope-violation-rate 0.2 \
      --max-total-cost-usd 1.00
    ```
+
+   For paid provider runs, add `--require-known-cost` so incomplete billing
+   evidence fails closed instead of being treated as zero spend.
 
 3. Run prompt-mutation probes separately when you want user-style wording
    coverage without changing the source cases:

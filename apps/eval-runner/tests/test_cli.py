@@ -640,6 +640,31 @@ def test_cli_exits_nonzero_when_total_cost_exceeds_threshold(tmp_path: Path) -> 
     assert "total_cost_usd above threshold" in completed.stderr
 
 
+def test_cli_fails_closed_when_known_cost_is_required_but_missing(tmp_path: Path) -> None:
+    cases_dir = tmp_path / "eval_cases"
+    write_case(cases_dir, "unknown-cost-case")
+
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "app.cli",
+            "--cases",
+            str(cases_dir),
+            "--provider",
+            "mock",
+            "--require-known-cost",
+            "--report-only",
+        ],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert completed.returncode == 1
+    assert "provider_cost_known_rate below required 1.000" in completed.stderr
+
+
 def test_cli_excludes_red_team_cases_unless_requested(tmp_path: Path) -> None:
     cases_dir = tmp_path / "eval_cases"
     write_case(cases_dir, "normal-case", expected_success=True)

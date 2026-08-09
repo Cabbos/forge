@@ -1,5 +1,8 @@
 # Changelog
 
+- Added an explicit `--require-known-cost` threshold gate for ordinary evals;
+  paid or budgeted runs can now fail closed when any provider trace omits a
+  trustworthy cost instead of treating unknown spend as zero.
 - Added a bounded development provider chain: Kimi `k3` can run through its
   OpenAI-compatible coding endpoint and fall back to a separately isolated
   DeepSeek runner only on authentication/quota responses. Fallback identity is
