@@ -287,6 +287,8 @@ def load_provider_ab_artifact(output_path: Path) -> ProviderABExecution:
         payload = json.loads(raw)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ProviderABError("artifact_json_invalid") from exc
+    if canonical_json_bytes(payload) + b"\n" != raw:
+        raise ProviderABError("artifact_not_canonical")
     if not isinstance(payload, dict) or set(payload) != {
         "schema_version",
         "kind",

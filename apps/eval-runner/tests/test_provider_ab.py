@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import pytest
@@ -12,6 +13,7 @@ from app.models import (
     TrustStatus,
     VerificationResult,
 )
+from app.provenance import sha256_bytes
 from app.provider_ab import (
     ProviderABArm,
     ProviderABError,
@@ -364,6 +366,18 @@ def test_provider_ab_artifact_verifier_round_trips_and_rejects_tamper(tmp_path) 
     assert verified.control.traces == control.traces
     output.write_bytes(output.read_bytes().replace(b'"task-a"', b'"task-b"', 1))
     with pytest.raises(ProviderABError, match="artifact_digest_mismatch"):
+        load_provider_ab_artifact(output)
+
+    write_provider_ab_artifact(
+        output,
+        comparison=comparison,
+        control=control,
+        candidate=candidate,
+    )
+    noncanonical = json.dumps(json.loads(output.read_text()), indent=2).encode() + b"\n"
+    output.write_bytes(noncanonical)
+    output.with_suffix(".json.sha256").write_text(sha256_bytes(noncanonical) + "\n")
+    with pytest.raises(ProviderABError, match="artifact_not_canonical"):
         load_provider_ab_artifact(output)
 
 
