@@ -20,6 +20,7 @@ from app.provider_ab import (
     ProviderABError,
     compare_provider_ab,
     load_provider_ab_artifact,
+    provider_ab_main,
     provider_ab_verify_main,
     run_provider_ab,
     write_provider_ab_artifact,
@@ -289,14 +290,16 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     calls: list[object] = []
+    cancel_callbacks: list[object] = []
 
     monkeypatch.setattr(
         "app.provider_ab.load_cases",
         lambda _path: [EvaluationTask(id="task-a", title="A", prompt="Do A.")],
     )
 
-    def fake_execute(*, options, **_kwargs):
+    def fake_execute(*, options, cancel_requested, **_kwargs):
         calls.append(options)
+        cancel_callbacks.append(cancel_requested)
         arm = (
             _deepseek(["task-a"])
             if options.provider_route.provider == "deepseek"
@@ -318,6 +321,32 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     assert len(result.comparison.source_commit) == 40
     assert len(result.comparison.dirty_state_sha256) == 64
     assert result.comparison.task_ids == ["task-a"]
+    assert len(cancel_callbacks) == 2
+    assert all(callable(callback) for callback in cancel_callbacks)
+
+
+def test_run_provider_ab_rejects_non_positive_runtime_budget(tmp_path) -> None:
+    with pytest.raises(ProviderABError, match="max_total_runtime_seconds_must_be_positive"):
+        run_provider_ab(
+            cases_path=tmp_path / "cases.json",
+            forge_command=["forge"],
+            max_total_runtime_seconds=0,
+        )
+
+
+def test_provider_ab_cli_rejects_non_positive_runtime_budget() -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        provider_ab_main(
+            [
+                "--cases",
+                "cases",
+                "--output",
+                "artifact.json",
+                "--max-total-runtime-seconds",
+                "0",
+            ]
+        )
+    assert exc_info.value.code == 2
 
 
 def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:

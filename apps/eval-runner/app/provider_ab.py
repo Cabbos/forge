@@ -11,6 +11,7 @@ import argparse
 import json
 import os
 import subprocess
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from app.datasets import dataset_fingerprint
 from app.execution import ExecutionOptions, execute_evaluation
 from app.execution_identity import default_execution_identity, validate_execution_identity_event
 from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
+from app.process_control import CancelRequested, never_cancelled
 from app.provenance import canonical_json_bytes, sha256_bytes
 from app.provenance_models import SECRET_PATTERN, GitSha1, Sha256
 from app.provider_fallback import ProviderRouteSpec
@@ -168,12 +170,25 @@ def run_provider_ab(
     require_red_team: bool = False,
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
+    max_total_runtime_seconds: float | None = None,
+    cancel_requested: CancelRequested = never_cancelled,
     repository_root: Path | None = None,
 ) -> ProviderABExecution:
     """Run route-pure DeepSeek control and Kimi candidate arms over one dataset."""
 
     if trials < 1:
         raise ProviderABError("trials_must_be_positive")
+    if max_total_runtime_seconds is not None and max_total_runtime_seconds <= 0:
+        raise ProviderABError("max_total_runtime_seconds_must_be_positive")
+    deadline = (
+        time.monotonic() + max_total_runtime_seconds
+        if max_total_runtime_seconds is not None
+        else None
+    )
+
+    def should_cancel() -> bool:
+        return cancel_requested() or (deadline is not None and time.monotonic() >= deadline)
+
     tasks = load_cases(cases_path)
     if red_team_only:
         tasks = [task for task in tasks if is_red_team_task(task)]
@@ -207,6 +222,7 @@ def run_provider_ab(
                 max_total_cost_usd=max_total_cost_usd,
                 require_known_cost=require_known_cost,
             ),
+            cancel_requested=should_cancel,
         )
         arms.append(
             ProviderABArm(
@@ -405,12 +421,20 @@ def provider_ab_main(argv: list[str] | None = None) -> int:
         help="Maximum cost per arm; partial arms fail closed and are not paired.",
     )
     parser.add_argument("--require-known-cost", action="store_true")
+    parser.add_argument(
+        "--max-total-runtime-seconds",
+        type=float,
+        default=None,
+        help="Cancel both arms after this wall-clock budget; incomplete pairs fail closed.",
+    )
     parser.add_argument("--report-only", action="store_true")
     args = parser.parse_args(argv)
     if args.trials < 1:
         parser.error("--trials must be at least 1")
     if args.include_red_team and args.red_team_only:
         parser.error("--include-red-team and --red-team-only are mutually exclusive")
+    if args.max_total_runtime_seconds is not None and args.max_total_runtime_seconds <= 0:
+        parser.error("--max-total-runtime-seconds must be positive")
 
     try:
         settings = get_settings()
@@ -423,6 +447,7 @@ def provider_ab_main(argv: list[str] | None = None) -> int:
             require_red_team=args.require_red_team,
             max_total_cost_usd=args.max_total_cost_usd,
             require_known_cost=args.require_known_cost,
+            max_total_runtime_seconds=args.max_total_runtime_seconds,
         )
         digest = write_provider_ab_artifact(
             args.output,

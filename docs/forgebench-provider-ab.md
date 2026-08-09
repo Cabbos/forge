@@ -33,7 +33,8 @@ uv run python -m app.cli provider-ab \
   --output /tmp/forge-provider-ab.json \
   --trials 1 \
   --require-known-cost \
-  --max-total-cost-usd 0.20
+  --max-total-cost-usd 0.20 \
+  --max-total-runtime-seconds 1200
 ```
 
 The command intentionally does not use the operational Kimi→DeepSeek fallback:
@@ -45,6 +46,8 @@ never serialized into the artifact.
 `winner` is `candidate` or `control` only when the quality-gated interval
 excludes zero without a verification or scope regression. Otherwise it is
 `no_material_difference`; incomplete or untrusted evidence is `blocked`.
+If the wall-clock budget expires, the run is cancelled and no incomplete pair
+is published.
 
 The offline contract is:
 
