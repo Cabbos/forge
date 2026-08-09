@@ -488,6 +488,51 @@ def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
     assert result.error is None
 
 
+def test_forge_runner_applies_isolated_provider_env_overrides_to_preflight(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "provider_env_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, sys\n"
+            "assert os.environ['FORGE_HEADLESS_PROVIDER'] == 'custom_openai'\n"
+            "assert os.environ['FORGE_HEADLESS_MODEL'] == 'k3'\n"
+            "assert os.environ['FORGE_CUSTOM_OPENAI_BASE_URL'] == 'https://example.test/v1'\n"
+            "assert os.environ['FORGE_CUSTOM_OPENAI_API_KEY'] == 'env-only-secret'\n"
+            "json.dump({'credential_preflight': {"
+            "'ok': True, 'provider': 'custom_openai', 'model': 'k3', "
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="custom_openai",
+        agent_model="k3",
+        child_env_overrides={
+            "FORGE_HEADLESS_PROVIDER": "custom_openai",
+            "FORGE_HEADLESS_MODEL": "k3",
+            "FORGE_CUSTOM_OPENAI_BASE_URL": "https://example.test/v1",
+            "FORGE_CUSTOM_OPENAI_API_KEY": "env-only-secret",
+        },
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "custom_openai"
+    assert result.model == "k3"
+    assert result.provider_call_started is False
+
+
+def test_forge_runner_rejects_provider_env_overrides_that_break_isolation() -> None:
+    with pytest.raises(ValueError, match="isolated variable HOME"):
+        ForgeAgentRunner(
+            command=[sys.executable, "-c", ""],
+            child_env_overrides={"HOME": "/tmp/not-isolated"},
+        )
+
+
 def test_forge_runner_writes_secret_free_route_config_and_payload(
     tmp_path: Path,
 ) -> None:

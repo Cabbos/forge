@@ -4,7 +4,7 @@ import shlex
 import shutil
 import sqlite3
 import tempfile
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from datetime import datetime
 from fnmatch import fnmatchcase
 from pathlib import Path
@@ -52,6 +52,41 @@ from app.workspace_observer import (
 DEFAULT_FORGE_TIMEOUT_SECONDS = 900
 DEFAULT_SETUP_TIMEOUT_SECONDS = 300
 DEFAULT_VALIDATION_TIMEOUT_SECONDS = 300
+_ISOLATED_CHILD_ENV_KEYS = frozenset(
+    {
+        "HOME",
+        "USERPROFILE",
+        "CARGO_HOME",
+        "RUSTUP_HOME",
+        "FORGE_EVAL_RUNTIME_STATE",
+        "XDG_CACHE_HOME",
+        "BUN_INSTALL_CACHE_DIR",
+        "UV_CACHE_DIR",
+        "UV_NO_CONFIG",
+        "UV_PROJECT_ENVIRONMENT",
+        "PYTHONDONTWRITEBYTECODE",
+        "PYTHONPYCACHEPREFIX",
+        "PATH",
+        "FORGE_EVAL_REAL_UV",
+    }
+)
+
+
+def _validate_child_env_overrides(
+    overrides: Mapping[str, str] | None,
+) -> dict[str, str]:
+    if overrides is None:
+        return {}
+    normalized: dict[str, str] = {}
+    for key, value in overrides.items():
+        if not isinstance(key, str) or not key or "=" in key or "\x00" in key:
+            raise ValueError("child environment override has an invalid variable name")
+        if key in _ISOLATED_CHILD_ENV_KEYS:
+            raise ValueError(f"child environment override cannot replace isolated variable {key}")
+        if not isinstance(value, str) or "\x00" in value:
+            raise ValueError("child environment override has an invalid variable value")
+        normalized[key] = value
+    return normalized
 
 
 def _install_uv_scope_wrapper(runtime_state: Path, child_env: dict[str, str]) -> dict[str, str]:
@@ -334,6 +369,7 @@ class ForgeAgentRunner:
         harness_policy: HarnessPolicyV1 | None = None,
         use_provider_credential_store: bool = False,
         execution_identity: ExecutionIdentityV1 | dict[str, Any] | None = None,
+        child_env_overrides: Mapping[str, str] | None = None,
     ) -> None:
         self.provider = EvalProvider(provider)
         self.model = model
@@ -351,6 +387,7 @@ class ForgeAgentRunner:
         self.max_repair_attempts = max_repair_attempts
         self.harness_policy = harness_policy or HarnessPolicyV1()
         self.use_provider_credential_store = use_provider_credential_store
+        self.child_env_overrides = _validate_child_env_overrides(child_env_overrides)
         self.execution_identity = (
             ExecutionIdentityV1.model_validate(execution_identity)
             if execution_identity is not None
@@ -407,6 +444,7 @@ class ForgeAgentRunner:
                     "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
+            child_env.update(self.child_env_overrides)
             payload = {
                 "mode": "credential_preflight",
                 "provider": self.agent_provider,
@@ -588,6 +626,7 @@ class ForgeAgentRunner:
                     "UV_PROJECT_ENVIRONMENT": str(runtime_state / "uv-project-env"),
                 }
             )
+            child_env.update(self.child_env_overrides)
             child_env = _install_uv_scope_wrapper(runtime_state, child_env)
             setup_outputs = run_setup_commands(
                 task,
