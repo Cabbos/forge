@@ -41,6 +41,11 @@ from app.models import (
 )
 from app.patches import replay_patch
 from app.process_control import CancelRequested, never_cancelled, run_bounded_process
+from app.provider_usage import (
+    estimate_provider_cost_usd,
+    is_kimi_k3_usage,
+    kimi_k3_pricing_snapshot,
+)
 from app.sandbox import scrub_future_repo_state
 from app.trace import duration_ms, utc_now
 from app.workspace_observer import (
@@ -986,6 +991,23 @@ class ForgeAgentRunner:
             if payload.get("forge_run_evidence") is not None
             else None
         )
+        cost_usd = payload.get("cost_usd")
+        if cost_usd is None:
+            usage_events = (
+                forge_run_evidence.provider_usage.get("events")
+                if forge_run_evidence is not None
+                else None
+            )
+            if not isinstance(usage_events, list):
+                usage_events = [
+                    event
+                    for event in raw_events
+                    if isinstance(event, dict) and event.get("event_type") == "provider_usage"
+                ]
+            usage_events = [event for event in usage_events if isinstance(event, dict)]
+            cost_usd = estimate_provider_cost_usd(usage_events)
+            if is_kimi_k3_usage(usage_events):
+                raw_events.append(kimi_k3_pricing_snapshot())
         if all_validation_outputs:
             last_validation = (
                 first_failed_output(all_validation_outputs) or all_validation_outputs[-1]
@@ -1198,7 +1220,7 @@ class ForgeAgentRunner:
             validation_attempts=payload.get("validation_attempts", 0),
             input_tokens=payload.get("input_tokens"),
             output_tokens=payload.get("output_tokens"),
-            cost_usd=payload.get("cost_usd"),
+            cost_usd=cost_usd,
             forge_run_evidence=forge_run_evidence,
             workspace_observation=workspace_observation,
             sandbox_scrub=sandbox_scrub,

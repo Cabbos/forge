@@ -49,6 +49,15 @@ The Kimi route is an explicit ordinary-development eval route with its own
 typed execution identity; it is not a third H1/H2 DeepSeek arm and cannot alter
 the locked comparison or holdout route set.
 
+Kimi K3 cost evidence is frozen from the official pricing page at
+<https://platform.kimi.ai/docs/pricing/chat-k3> (retrieved 2026-08-10):
+`$0.30` per million cache-hit input tokens, `$3.00` per million cache-miss
+input tokens, and `$15.00` per million output tokens. The coding endpoint may
+omit cache-hit metadata, so the evaluator prices that input conservatively as
+cache-miss; the trace records the source URL, retrieval date, and policy without
+recording credentials. Malformed or incomplete usage remains unknown rather
+than being converted to a zero-cost claim.
+
 The source credential remains in CCSwitch; a local operator may resolve it into
 an environment variable for the lifetime of a single runner process. Never
 print that variable or place it in a committed file.

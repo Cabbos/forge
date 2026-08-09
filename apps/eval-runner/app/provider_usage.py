@@ -8,6 +8,28 @@ from app.models import AgentTrace, EvalModel
 
 _TOKENS_PER_MILLION = Decimal(1_000_000)
 _KNOWN_REASONS = {"provider_reported"}
+KIMI_K3_PRICE_SOURCE = "https://platform.kimi.ai/docs/pricing/chat-k3"
+KIMI_K3_PRICING_RETRIEVED_AT = "2026-08-10"
+KIMI_K3_INPUT_CACHE_HIT_USD_PER_MILLION = Decimal("0.30")
+KIMI_K3_INPUT_CACHE_MISS_USD_PER_MILLION = Decimal("3.00")
+KIMI_K3_OUTPUT_USD_PER_MILLION = Decimal("15.00")
+
+
+def kimi_k3_pricing_snapshot() -> dict[str, str]:
+    """Return the secret-free frozen price evidence attached to live traces."""
+
+    return {
+        "event_type": "eval_provider_pricing",
+        "provider": "custom_openai",
+        "model": "k3",
+        "currency": "USD",
+        "source_url": KIMI_K3_PRICE_SOURCE,
+        "retrieved_at": KIMI_K3_PRICING_RETRIEVED_AT,
+        "input_cache_hit_usd_per_million": str(KIMI_K3_INPUT_CACHE_HIT_USD_PER_MILLION),
+        "input_cache_miss_usd_per_million": str(KIMI_K3_INPUT_CACHE_MISS_USD_PER_MILLION),
+        "output_usd_per_million": str(KIMI_K3_OUTPUT_USD_PER_MILLION),
+        "missing_cache_metadata_policy": "conservative_cache_miss",
+    }
 
 
 class ProviderUsageAccounting(EvalModel):
@@ -131,6 +153,70 @@ def account_provider_usage(
         cost_cny=cost_cny,
         per_task_cap_exceeded=cost_cny > profile.max_cost_cny_per_task,
     )
+
+
+def estimate_provider_cost_usd(provider_events: list[dict[str, Any]]) -> float | None:
+    """Estimate cost from canonical usage without inventing missing token facts.
+
+    Kimi K3's official price table is frozen above for the ordinary development
+    chain.  Kimi's coding route currently reports total input/output tokens but
+    may omit cache-hit counts; that case is priced conservatively as all cache
+    miss input.  Providers that report billing-grade micros are trusted directly.
+    """
+
+    canonical_events = [
+        event
+        for event in provider_events
+        if event.get("provider_id") is not None and event.get("model") is not None
+    ]
+    if not canonical_events:
+        return None
+
+    reported_micros = [event.get("estimated_cost_micros") for event in canonical_events]
+    if all(_is_token_count(value) for value in reported_micros):
+        return float(sum(reported_micros, 0) / Decimal(1_000_000))
+
+    identities = {(event.get("provider_id"), event.get("model")) for event in canonical_events}
+    if identities != {("custom_openai", "k3")}:
+        return None
+
+    input_cache_hit = 0
+    input_cache_miss = 0
+    output_tokens = 0
+    for event in canonical_events:
+        input_tokens = event.get("input_tokens")
+        output = event.get("output_tokens")
+        if not _is_token_count(input_tokens) or not _is_token_count(output):
+            return None
+        cache_hit = event.get("cache_read_tokens")
+        # Missing cache metadata is conservatively treated as a miss, so the
+        # budget cannot understate spend.  This is explicit in the artifact's
+        # frozen Kimi price-profile documentation.
+        if cache_hit is None:
+            cache_hit = 0
+        if not _is_token_count(cache_hit) or cache_hit > input_tokens:
+            return None
+        input_cache_hit += cache_hit
+        input_cache_miss += input_tokens - cache_hit
+        output_tokens += output
+
+    cost = (
+        Decimal(input_cache_hit) * KIMI_K3_INPUT_CACHE_HIT_USD_PER_MILLION
+        + Decimal(input_cache_miss) * KIMI_K3_INPUT_CACHE_MISS_USD_PER_MILLION
+        + Decimal(output_tokens) * KIMI_K3_OUTPUT_USD_PER_MILLION
+    ) / _TOKENS_PER_MILLION
+    return float(cost)
+
+
+def is_kimi_k3_usage(provider_events: list[dict[str, Any]]) -> bool:
+    canonical_events = [
+        event
+        for event in provider_events
+        if event.get("provider_id") is not None and event.get("model") is not None
+    ]
+    return bool(canonical_events) and {
+        (event.get("provider_id"), event.get("model")) for event in canonical_events
+    } == {("custom_openai", "k3")}
 
 
 def _event_kind(event: dict[str, Any]) -> Any:

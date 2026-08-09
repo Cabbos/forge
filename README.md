@@ -218,7 +218,7 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 - 桌面 e2e 是 mock IPC 的产品契约冒烟，不是真实模型端到端；真实模型路径走 eval smoke（`eval:forge:smoke:real`）。
 - `eval_cases/` 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性；frontier scoring 只使用冻结的 ForgeBench real-coding split。20-case holdout 尚未执行付费 campaign，red-team 检查仍是启发式规则。
 - gateway 默认 local ownership：`gateway_can_resume` 保持 false，只读 owner 切片需要显式人工批准或 dev-only flag；commit / merge / push 始终人工把关。
-- 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、未绑定价格表的 billing 级用量核算（token usage 与 cost known rate 会分开报告，provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
+- 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、未绑定价格表的 billing 级用量核算（Kimi K3 development route 使用冻结的官方价格快照；其他未绑定价格表的 provider 仍将 token usage 与 cost known rate 分开报告，provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
 
 ## 文档地图
 

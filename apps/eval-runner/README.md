@@ -480,8 +480,9 @@ usage unknown conflict scoring so unknown token usage keeps an explicit reason
 and does not carry invented token or cost values,
 development reports also expose `total_input_tokens`, `total_output_tokens`,
 `provider_usage_known_rate`, and `provider_cost_known_rate`; a provider such as
-Kimi can therefore prove token usage while its unpinned price remains explicitly
-unknown instead of appearing as a free run,
+Kimi K3 now carries a frozen official price snapshot in the trace and prices
+missing cache metadata conservatively as cache-miss input; providers without a
+frozen price profile remain explicitly unknown instead of appearing as free runs,
 provider usage value validation for negative or malformed token/cost facts,
 failure evidence scoring for category/reason alignment,
 continuity lessons scoring for formed lesson metadata,

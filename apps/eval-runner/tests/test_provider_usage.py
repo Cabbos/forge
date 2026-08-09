@@ -7,7 +7,14 @@ import pytest
 
 from app.harness_profiles import HarnessProfileV1, load_harness_profile
 from app.models import AgentTrace, EvalProvider, ForgeRunEvidence
-from app.provider_usage import account_provider_usage, provider_events_from_trace
+from app.provider_usage import (
+    KIMI_K3_PRICE_SOURCE,
+    account_provider_usage,
+    estimate_provider_cost_usd,
+    is_kimi_k3_usage,
+    kimi_k3_pricing_snapshot,
+    provider_events_from_trace,
+)
 
 PROFILE_PATH = (
     Path(__file__).parents[1]
@@ -80,6 +87,73 @@ def test_prices_cache_hit_miss_and_output_in_cny(profile: HarnessProfileV1) -> N
     assert accounting.status == "known"
     assert accounting.blockers == []
     assert accounting.model_dump(mode="json")["cost_cny"] == "0.955"
+
+
+def test_kimi_k3_cost_uses_conservative_cache_miss_when_cache_is_omitted() -> None:
+    cost = estimate_provider_cost_usd(
+        [
+            provider_event(
+                provider_id="custom_openai",
+                model="k3",
+                input_tokens=1_000,
+                cache_read_tokens=None,
+                cache_creation_tokens=None,
+                output_tokens=100,
+                source="openai_compatible",
+                reason="pricing_unknown",
+            )
+        ]
+    )
+
+    assert KIMI_K3_PRICE_SOURCE.endswith("chat-k3")
+    assert cost == pytest.approx(0.0045)
+
+
+def test_kimi_k3_cost_applies_reported_cache_hits() -> None:
+    cost = estimate_provider_cost_usd(
+        [
+            provider_event(
+                provider_id="custom_openai",
+                model="k3",
+                input_tokens=1_000,
+                cache_read_tokens=600,
+                cache_creation_tokens=None,
+                output_tokens=100,
+                source="openai_compatible",
+                reason="pricing_unknown",
+            )
+        ]
+    )
+
+    assert cost == pytest.approx(0.00288)
+
+
+def test_cost_estimate_stays_unknown_for_incomplete_or_foreign_usage() -> None:
+    assert (
+        estimate_provider_cost_usd(
+            [provider_event(provider_id="custom_openai", model="k3", input_tokens=None)]
+        )
+        is None
+    )
+    assert estimate_provider_cost_usd([provider_event(provider_id="other", model="k3")]) is None
+
+
+def test_kimi_pricing_snapshot_is_secret_free_and_typed() -> None:
+    snapshot = kimi_k3_pricing_snapshot()
+
+    assert is_kimi_k3_usage([provider_event(provider_id="custom_openai", model="k3")])
+    assert snapshot == {
+        "event_type": "eval_provider_pricing",
+        "provider": "custom_openai",
+        "model": "k3",
+        "currency": "USD",
+        "source_url": KIMI_K3_PRICE_SOURCE,
+        "retrieved_at": "2026-08-10",
+        "input_cache_hit_usd_per_million": "0.30",
+        "input_cache_miss_usd_per_million": "3.00",
+        "output_usd_per_million": "15.00",
+        "missing_cache_metadata_policy": "conservative_cache_miss",
+    }
 
 
 def test_openai_usage_treats_cache_read_as_inclusive_input(
