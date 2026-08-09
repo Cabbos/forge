@@ -1,5 +1,8 @@
 # Changelog
 
+- Recorded a post-isolation real Kimi K3 smoke: the development config-parser
+  case passed with zero scope violations and known `$0.0521442` cost after
+  controller-side validation commands were moved into the isolated environment.
 - Forge eval setup, validation, regression, and post-validation commands now
   inherit the same isolated runtime environment and `uv` scope wrapper as the
   headless agent. This closes the boundary that let controller-side checks

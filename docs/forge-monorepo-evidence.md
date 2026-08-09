@@ -126,6 +126,12 @@ zero scope violations, 1.0000 known usage/cost rates, and `$0.6010896` of
 auditable Kimi spend under the explicit unknown-cost gate. It remains
 development-only evidence and does not alter the sealed H1/H2/H4 claim
 boundaries.
+
+The post-isolation Kimi regression smoke is recorded in
+[`forgebench-kimi-isolation-smoke-2026-08-10.md`](forgebench-kimi-isolation-smoke-2026-08-10.md):
+the config-parser case passed with 1.0000 verification, zero scope violations,
+known cost, and both runtime/cache isolation events after the controller-side
+environment fix.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all
