@@ -1622,6 +1622,49 @@ def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
     } in trace.raw_events
 
 
+def test_forge_runner_uses_isolated_env_for_setup_and_validation(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "src" / "app.py").write_text("before\n", encoding="utf-8")
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, pathlib, sys\n"
+        "payload=json.load(sys.stdin)\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "(workspace/'src'/'app.py').write_text('after\\n')\n"
+        "json.dump({'final_answer':'done','model_rounds':1,'changed_files':['src/app.py'],"
+        "'file_diffs':[{'path':'src/app.py','change_type':'modified','diff':"
+        "'diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n+++ b/src/app.py\\n'"
+        "'@@ -1 +1 @@\\n-before\\n+after\\n'}]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    env_assertion = (
+        "python -c \"import os; assert os.environ['FORGE_TEST_SENTINEL'] == 'isolated'\""
+    )
+    task = EvaluationTask(
+        id="isolated-command-env",
+        title="Isolated command environment",
+        prompt="Change src/app.py only.",
+        fixture_path=str(fixture),
+        setup_commands=[env_assertion],
+        validation_commands=[env_assertion],
+        expected_files_changed=["src/app.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model="local-forge",
+        command=[sys.executable, str(agent)],
+        child_env_overrides={"FORGE_TEST_SENTINEL": "isolated"},
+    ).run_task(task)
+
+    assert trace.error is None
+    assert trace.scope_violations == []
+    assert all(output.exit_code == 0 for output in trace.shell_outputs)
+
+
 def test_forge_runner_runtime_files_never_become_changed_files(tmp_path: Path) -> None:
     fixture = tmp_path / "fixture"
     fixture.mkdir()

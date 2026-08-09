@@ -66,6 +66,12 @@ directory is filtered by both workspace observers; source files remain in the
 observed and replayed patch boundary. This closes the cache false-positive
 path without weakening fail-closed report/observation mismatch checks.
 
+The controller-side setup, validation, regression, and post-validation commands
+now use the same isolated environment and `uv` scope wrapper as the headless
+agent. This prevents verification tooling from reintroducing `.venv`, `uv.lock`,
+or cache artifacts into the observed workspace after the agent itself has been
+isolated.
+
 The first post-fix paid pair (`bda5d977`) reached six trusted attempts per arm
 before both arms stopped at the same unknown-cost multi-file API interruption;
 recovery reserved the bounded ceiling and performed no replay. The resulting

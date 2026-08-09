@@ -1,5 +1,9 @@
 # Changelog
 
+- Forge eval setup, validation, regression, and post-validation commands now
+  inherit the same isolated runtime environment and `uv` scope wrapper as the
+  headless agent. This closes the boundary that let controller-side checks
+  create `.venv`, `uv.lock`, or cache artifacts inside the observed workspace.
 - Budgeted ordinary evals now enforce the cumulative cost boundary before the
   next provider call: reaching the cap or encountering unknown cost stops the
   remaining tasks and records `execution_stopped_at_cost_boundary` instead of

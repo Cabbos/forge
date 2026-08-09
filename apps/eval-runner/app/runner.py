@@ -646,6 +646,7 @@ class ForgeAgentRunner:
                 workspace,
                 timeout_seconds=self.setup_timeout_seconds,
                 cancel_requested=cancel_requested,
+                env=child_env,
             )
             setup_failure = next(
                 (output for output in setup_outputs if output.exit_code != 0),
@@ -827,6 +828,7 @@ class ForgeAgentRunner:
                     started_at,
                     setup_outputs,
                     workspace,
+                    child_env,
                     workspace_observation,
                     sandbox_scrub,
                     continuity_database_path,
@@ -892,6 +894,7 @@ class ForgeAgentRunner:
         started_at: datetime,
         setup_outputs: list[ShellOutput],
         workspace: Path,
+        command_env: Mapping[str, str],
         workspace_observation: WorkspaceObservation,
         sandbox_scrub: LeakageCheck,
         continuity_database_path: Path | None,
@@ -908,24 +911,28 @@ class ForgeAgentRunner:
             workspace,
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
+            env=command_env,
         )
         regression_outputs = run_shell_commands(
             task.pass_to_pass_commands,
             workspace,
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
+            env=command_env,
         )
         fix_outputs = run_shell_commands(
             task.fail_to_pass_commands,
             workspace,
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
+            env=command_env,
         )
         post_validation_outputs = run_post_validation_commands(
             task,
             workspace,
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
+            env=command_env,
         )
         hidden_verifier_outputs = (
             [
@@ -948,6 +955,7 @@ class ForgeAgentRunner:
             workspace,
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
+            env=command_env,
         )
         all_validation_outputs = [
             *validation_outputs,
@@ -1731,12 +1739,14 @@ def run_setup_commands(
     *,
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
+    env: Mapping[str, str] | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.setup_commands,
         workspace,
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
+        env=env,
     )
 
 
@@ -1746,12 +1756,14 @@ def run_validation_commands(
     *,
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
+    env: Mapping[str, str] | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.validation_commands,
         workspace,
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
+        env=env,
     )
 
 
@@ -1761,12 +1773,14 @@ def run_post_validation_commands(
     *,
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
+    env: Mapping[str, str] | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.post_validation_commands,
         workspace,
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
+        env=env,
     )
 
 
@@ -1813,6 +1827,7 @@ def run_shell_commands(
     *,
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
+    env: Mapping[str, str] | None = None,
 ) -> list[ShellOutput]:
     outputs: list[ShellOutput] = []
     for command in commands:
@@ -1822,6 +1837,7 @@ def run_shell_commands(
             timeout_seconds=timeout_seconds,
             cancel_requested=cancel_requested,
             shell=True,
+            env=env,
         )
         outputs.append(
             ShellOutput(
