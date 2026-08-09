@@ -1,5 +1,10 @@
 # Changelog
 
+- Added a bounded development provider chain: Kimi `k3` can run through its
+  OpenAI-compatible coding endpoint and fall back to a separately isolated
+  DeepSeek runner only on authentication/quota responses. Fallback identity is
+  recorded without raw provider text or credentials; locked H1/H2 and holdout
+  evidence remain single-provider and unchanged.
 - The paid H1 scope-firewall diagnostic now records a runtime-local `uv` shim
   and exact allowlist boundary reaching 30/30 scope-clean development attempts;
   the median-round gate remains explicitly unmet and no holdout/frontier claim is
