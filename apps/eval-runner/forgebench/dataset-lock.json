@@ -1,8 +1,8 @@
 {
-  "combined_fingerprint": "1322279f47de3c34e49a68f089f09808d77f108ccf5cbc55971f5d62c950c040",
+  "combined_fingerprint": "f4d3a19d9681a2c9f8ca1ad306b55019760ea276c3409d6a3af4db641569a65b",
   "development": {
     "count": 10,
-    "fingerprint": "39ac183a1f3f8e7c0f29dbbe5d4e302765935d94417f8c2adffb984632223dbd",
+    "fingerprint": "94bc409cd6c6b9fde4714b0085dc14a60bdfd679e7950bce83cc863f0d18eb14",
     "ids": [
       "forgebench-dev-admin-bulk-status",
       "forgebench-dev-config-env-parser",

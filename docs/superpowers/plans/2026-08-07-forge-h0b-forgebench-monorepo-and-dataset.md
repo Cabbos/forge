@@ -562,7 +562,7 @@ Assert that the development split contains exactly these IDs and no holdout task
 | `forgebench-dev-task-api-bulk-update` | Python feature | `services/task-api/task_api/service.py`, `repository.py` | mixed valid/invalid bulk update rolls back |
 | `forgebench-dev-worker-retry-backoff` | Python bug fix | `services/event-worker/event_worker/retry.py` | capped exponential retry has no off-by-one |
 | `forgebench-dev-ui-priority-badge` | TSX accessibility | `packages/ui/src/priority-badge.tsx` | label and class match every priority |
-| `forgebench-dev-config-env-parser` | config fix | `packages/config/src/env.ts` | blank, nonnumeric, and out-of-range ports fail |
+| `forgebench-dev-config-env-parser` | config fix | `packages/config/src/env.ts` | blank, nonnumeric, non-canonical, and out-of-range ports fail |
 | `forgebench-dev-release-artifact-manifest` | shell-heavy tooling | `tools/release/build-manifest.ts` | sorted files and SHA-256 output are reproducible |
 | `forgebench-dev-contract-event-schema` | cross-service contract | `packages/domain/src/task.ts`, `services/event-worker/event_worker/consumer.py` | v2 optional fields preserve v1 consumers |
 | `forgebench-dev-idempotent-no-op` | correct no-change | no source path | existing behavior is proven and workspace stays clean |
