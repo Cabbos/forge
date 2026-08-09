@@ -1,5 +1,10 @@
 # Changelog
 
+- Added secret-free H4 release diagnostics to the frontier decision artifact:
+  deterministic p95 rounds/duration and known-cost tails, typed failure and
+  provider-error concentration, trust blockers, H3 telemetry, and sorted
+  per-case detail. Diagnostics are explanatory only; malformed evidence and
+  threshold failures remain fail-closed.
 - Added contract-bound provider A/B tail evidence: new diagnostics include
   deterministic median/p95 round, duration, and cost summaries plus per-arm
   controller-owned failure categories and candidate-minus-control deltas.

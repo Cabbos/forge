@@ -42,6 +42,13 @@ profile/dataset fingerprints, a valid provenance chain, and a passing clean
 full-monorepo verification. A standalone aggregate JSON is not accepted, and
 the command never starts a provider call.
 
+When attempt artifacts are available, the release decision also carries a
+secret-free `holdout_diagnostics` section: deterministic p95 model rounds and
+duration, median/p95 known costs, bounded provider-error codes, typed failure
+concentration, trust-blocker counts, H3 telemetry, and sorted per-case
+diagnostics. These fields explain a pass or failure but never relax or bypass
+the locked H4 thresholds; malformed diagnostic input is itself fail-closed.
+
 The paid campaign boundary is explicit and resumable. Initialize it only from
 the pinned development comparison and the checked-in sealed split. The
 comparison schema binds both arm identities, all 30 typed paired outcomes, and

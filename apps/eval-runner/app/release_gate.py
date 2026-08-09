@@ -12,13 +12,18 @@ import json
 from pathlib import Path
 from typing import Literal
 
+from app.baseline import _load_attempt_artifacts
 from app.campaign_verify import CampaignVerification, verify_campaign
 from app.harness_profiles import (
     HarnessProfileError,
     harness_profile_fingerprint,
     load_harness_profile,
 )
-from app.holdout_campaign import HoldoutVerification, verify_holdout_campaign
+from app.holdout_campaign import (
+    HoldoutVerification,
+    verify_holdout_campaign,
+)
+from app.holdout_diagnostics import HoldoutDiagnosticsV1, summarize_holdout_artifacts
 from app.holdout_gate import (
     HoldoutGateDecisionV1,
     HoldoutGateReportV1,
@@ -43,6 +48,7 @@ class FrontierReleaseDecisionV1(EvalModel):
     dataset_fingerprint: Sha256 | None = None
     harness_fingerprint: Sha256 | None = None
     holdout_report_fingerprint: Sha256 | None = None
+    holdout_diagnostics: HoldoutDiagnosticsV1 | None = None
 
 
 def evaluate_frontier_release(
@@ -73,11 +79,24 @@ def evaluate_frontier_release(
         profile_path=profile_path,
         require_current_source=False,
     )
+    holdout_diagnostics: HoldoutDiagnosticsV1 | None = None
+    blockers: list[str] = []
+    attempts_path = holdout_campaign_root / "attempts"
+    if attempts_path.is_dir():
+        try:
+            holdout_diagnostics = summarize_holdout_artifacts(
+                tuple(_load_attempt_artifacts(attempts_path).values())
+            )
+        except (OSError, ValueError, json.JSONDecodeError):
+            # Keep this separate from the threshold decision, but make a
+            # malformed verified-campaign evidence surface visible and fail closed.
+            if holdout_campaign.ok:
+                blockers.append("holdout_campaign:diagnostics_unavailable")
     integration = verify_campaign(
         campaign_root,
         run_full_verification=run_full_verification,
     )
-    blockers = [f"holdout:{item}" for item in holdout_gate.blockers]
+    blockers = blockers + [f"holdout:{item}" for item in holdout_gate.blockers]
     blockers.extend(f"holdout_campaign:{item}" for item in holdout_campaign.blockers)
     if not holdout_campaign.ok:
         blockers.append("holdout_campaign:verification_failed")
@@ -143,6 +162,7 @@ def evaluate_frontier_release(
         dataset_fingerprint=dataset_fingerprint,
         harness_fingerprint=harness_fingerprint,
         holdout_report_fingerprint=report_fingerprint,
+        holdout_diagnostics=holdout_diagnostics,
     )
 
 
