@@ -16,6 +16,9 @@ The controller requires one matching `eval_execution_identity` event per trace,
 rejects fallback events, requires known provider cost, and refuses to publish a
 winner when either arm is not trusted. Pairing uses `(repetition, task_id)`;
 task-order, dataset-fingerprint, route, and attempt-count drift fail closed.
+The comparison also records its run contract (trials, cost/runtime ceilings,
+known-cost requirement, and red-team selection) so the paid experiment can be
+reconstructed from the artifact rather than inferred from the shell command.
 The report includes deterministic paired bootstrap intervals for success,
 verification, scope, rounds, duration, cost, and every universal score dimension;
 the candidate cannot win when any safety score regresses. It also writes a

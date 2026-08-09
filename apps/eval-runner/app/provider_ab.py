@@ -68,6 +68,24 @@ class ProviderABArm:
     report: BacktestReport
 
 
+class ProviderABRunContract(EvalModel):
+    """Controller parameters that define one paid paired experiment."""
+
+    trials: int = Field(ge=1)
+    max_total_cost_usd: float | None = Field(default=None, gt=0.0)
+    require_known_cost: bool = False
+    max_total_runtime_seconds: float | None = Field(default=None, gt=0.0)
+    include_red_team: bool = False
+    red_team_only: bool = False
+    require_red_team: bool = False
+
+    @model_validator(mode="after")
+    def validate_selection(self) -> ProviderABRunContract:
+        if self.include_red_team and self.red_team_only:
+            raise ValueError("provider A/B run contract cannot include and select red-team-only")
+        return self
+
+
 class ProviderABInterval(EvalModel):
     estimate: float
     low: float
@@ -117,6 +135,7 @@ class ProviderABComparison(EvalModel):
     dataset_fingerprint: Sha256
     source_commit: GitSha1 = "0" * 40
     dirty_state_sha256: Sha256 = "0" * 64
+    run_contract: ProviderABRunContract | None = None
     task_ids: list[str] = Field(default_factory=list)
     paired_attempts: int = Field(ge=1)
     control: ProviderABArmSummary
@@ -202,6 +221,15 @@ def run_provider_ab(
     source_commit, dirty_state_sha256 = _git_source_identity(
         (repository_root or Path(__file__).resolve().parents[2]).resolve()
     )
+    run_contract = ProviderABRunContract(
+        trials=trials,
+        max_total_cost_usd=max_total_cost_usd,
+        require_known_cost=require_known_cost,
+        max_total_runtime_seconds=max_total_runtime_seconds,
+        include_red_team=include_red_team,
+        red_team_only=red_team_only,
+        require_red_team=require_red_team,
+    )
     settings = get_settings()
 
     arms: list[ProviderABArm] = []
@@ -245,6 +273,7 @@ def run_provider_ab(
             candidate=candidate,
             source_commit=source_commit,
             dirty_state_sha256=dirty_state_sha256,
+            run_contract=run_contract,
             task_ids=[task.id for task in tasks],
         ),
     )
@@ -267,6 +296,7 @@ def write_provider_ab_artifact(
             candidate=candidate,
             source_commit=comparison.source_commit,
             dirty_state_sha256=comparison.dirty_state_sha256,
+            run_contract=comparison.run_contract,
             task_ids=comparison.task_ids,
         )
     except ProviderABError as exc:
@@ -373,6 +403,7 @@ def load_provider_ab_artifact(output_path: Path) -> ProviderABExecution:
             candidate=candidate,
             source_commit=comparison.source_commit,
             dirty_state_sha256=comparison.dirty_state_sha256,
+            run_contract=comparison.run_contract,
             task_ids=comparison.task_ids,
         )
     except ProviderABError as exc:
@@ -484,6 +515,7 @@ def compare_provider_ab(
     candidate: ProviderABArm,
     source_commit: str | None = None,
     dirty_state_sha256: str | None = None,
+    run_contract: ProviderABRunContract | None = None,
     task_ids: list[str] | None = None,
 ) -> ProviderABComparison:
     """Compare two complete, route-pure executions over the same task order."""
@@ -506,6 +538,10 @@ def compare_provider_ab(
     expected_task_ids = task_ids if task_ids is not None else base_task_ids
     if expected_task_ids != base_task_ids:
         raise ProviderABError("task_ids_mismatch")
+    if run_contract is not None and run_contract.trials * len(expected_task_ids) != len(
+        control.traces
+    ):
+        raise ProviderABError("run_contract_attempt_count_mismatch")
     source_commit = source_commit or "0" * 40
     dirty_state_sha256 = dirty_state_sha256 or "0" * 64
 
@@ -522,6 +558,7 @@ def compare_provider_ab(
         dataset_fingerprint=control.dataset_fingerprint,
         source_commit=source_commit,  # type: ignore[arg-type]
         dirty_state_sha256=dirty_state_sha256,  # type: ignore[arg-type]
+        run_contract=run_contract,
         task_ids=expected_task_ids,
         paired_attempts=len(control.traces),
         control=control_summary,

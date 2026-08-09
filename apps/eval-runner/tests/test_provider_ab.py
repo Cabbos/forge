@@ -18,6 +18,7 @@ from app.provenance import sha256_bytes
 from app.provider_ab import (
     ProviderABArm,
     ProviderABError,
+    ProviderABRunContract,
     compare_provider_ab,
     load_provider_ab_artifact,
     provider_ab_main,
@@ -189,6 +190,24 @@ def test_provider_ab_declares_control_only_when_paired_interval_excludes_zero() 
 
     assert comparison.winner == "control"
     assert comparison.bootstrap_intervals["success_rate"].high < 0
+
+
+def test_provider_ab_binds_run_contract_to_comparison() -> None:
+    contract = ProviderABRunContract(
+        trials=1,
+        max_total_cost_usd=0.2,
+        require_known_cost=True,
+        max_total_runtime_seconds=600.0,
+        include_red_team=True,
+        require_red_team=True,
+    )
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a"]),
+        candidate=_kimi(["task-a"]),
+        run_contract=contract,
+    )
+
+    assert comparison.run_contract == contract
 
 
 def test_provider_ab_exposes_universal_score_intervals() -> None:
