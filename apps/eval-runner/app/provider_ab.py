@@ -224,6 +224,10 @@ def run_provider_ab(
             ),
             cancel_requested=should_cancel,
         )
+        if len(execution.traces) != len(trial_tasks):
+            raise ProviderABError(
+                f"arm_incomplete:{arm_id}:{len(execution.traces)}/{len(trial_tasks)}"
+            )
         arms.append(
             ProviderABArm(
                 arm_id=arm_id,

@@ -349,6 +349,28 @@ def test_provider_ab_cli_rejects_non_positive_runtime_budget() -> None:
     assert exc_info.value.code == 2
 
 
+def test_run_provider_ab_reports_incomplete_arm_without_pairing(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(
+        "app.provider_ab.load_cases",
+        lambda _path: [EvaluationTask(id="task-a", title="A", prompt="Do A.")],
+    )
+    empty_report = build_report([])
+
+    def fake_execute(**_kwargs):
+        return EvaluationExecution(
+            traces=[],
+            report=empty_report,
+            trust_result=empty_report.trust_result,
+        )
+
+    monkeypatch.setattr("app.provider_ab.execute_evaluation", fake_execute)
+
+    with pytest.raises(ProviderABError, match="arm_incomplete:deepseek_v4_flash:0/1"):
+        run_provider_ab(cases_path=tmp_path / "cases.json", forge_command=["forge"])
+
+
 def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:
     control = _deepseek(["task-a"])
     candidate = _kimi(["task-a"])
