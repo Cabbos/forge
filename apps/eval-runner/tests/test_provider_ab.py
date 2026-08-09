@@ -270,7 +270,13 @@ def test_run_provider_ab_executes_two_route_pure_arms(
 def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:
     control = _deepseek(["task-a"])
     candidate = _kimi(["task-a"])
-    comparison = compare_provider_ab(control=control, candidate=candidate)
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
 
     output = tmp_path / "provider-ab.json"
     digest = write_provider_ab_artifact(
@@ -283,6 +289,20 @@ def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:
     assert output.exists()
     assert output.with_suffix(".json.sha256").read_text().strip() == digest
     assert "api_key" not in output.read_text().lower()
+
+
+def test_provider_ab_artifact_rejects_missing_source_provenance(tmp_path) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    comparison = compare_provider_ab(control=control, candidate=candidate)
+
+    with pytest.raises(ProviderABError, match="source_provenance_missing"):
+        write_provider_ab_artifact(
+            tmp_path / "provider-ab.json",
+            comparison=comparison,
+            control=control,
+            candidate=candidate,
+        )
 
 
 def test_provider_ab_binds_source_and_task_contract_to_comparison() -> None:

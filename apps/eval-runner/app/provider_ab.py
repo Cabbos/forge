@@ -237,6 +237,9 @@ def write_provider_ab_artifact(
 ) -> str:
     """Write canonical paired evidence and its digest sidecar."""
 
+    if comparison.source_commit == "0" * 40 or comparison.dirty_state_sha256 == "0" * 64:
+        raise ProviderABError("source_provenance_missing")
+
     payload = {
         "schema_version": 1,
         "kind": "provider_ab_diagnostic",
