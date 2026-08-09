@@ -241,6 +241,18 @@ def write_provider_ab_artifact(
 
     if comparison.source_commit == "0" * 40 or comparison.dirty_state_sha256 == "0" * 64:
         raise ProviderABError("source_provenance_missing")
+    try:
+        recomputed = compare_provider_ab(
+            control=control,
+            candidate=candidate,
+            source_commit=comparison.source_commit,
+            dirty_state_sha256=comparison.dirty_state_sha256,
+            task_ids=comparison.task_ids,
+        )
+    except ProviderABError as exc:
+        raise ProviderABError(f"comparison_invalid:{exc}") from exc
+    if recomputed != comparison:
+        raise ProviderABError("comparison_mismatch")
 
     payload = {
         "schema_version": 1,

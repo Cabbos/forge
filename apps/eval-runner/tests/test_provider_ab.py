@@ -357,6 +357,27 @@ def test_provider_ab_artifact_rejects_missing_source_provenance(tmp_path) -> Non
         )
 
 
+def test_provider_ab_artifact_rejects_tampered_comparison_summary(tmp_path) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+    tampered = comparison.model_copy(update={"winner": "candidate"})
+
+    with pytest.raises(ProviderABError, match="comparison_mismatch"):
+        write_provider_ab_artifact(
+            tmp_path / "provider-ab.json",
+            comparison=tampered,
+            control=control,
+            candidate=candidate,
+        )
+
+
 def test_provider_ab_artifact_rejects_secret_like_trace_content(tmp_path) -> None:
     control = _deepseek(["task-a"])
     candidate = _kimi(["task-a"])
