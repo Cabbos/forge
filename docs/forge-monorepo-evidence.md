@@ -78,6 +78,12 @@ separate from the frozen DeepSeek H1/H2 profiles: each arm is single-provider,
 fallback events invalidate the pair, unknown cost blocks publication, and the
 comparison remains diagnostic-only.
 
+The current-source smoke recorded there also exercises the universal-score
+comparison, canonical artifact verifier, secret scrub, and bounded wall-clock
+runner. It completed one trusted pair with identical universal scores and
+`no_material_difference`; the artifact is bound to its source commit and can be
+re-verified offline without provider calls.
+
 The first live paired smoke used one development case per arm. Both arms were
 trusted, verified, and scope-clean with known cost and no fallback; the
 quality-gated result was `no_material_difference` (artifact digest
