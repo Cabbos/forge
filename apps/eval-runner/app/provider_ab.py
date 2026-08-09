@@ -72,10 +72,10 @@ class ProviderABRunContract(EvalModel):
     """Controller parameters that define one paid paired experiment."""
 
     trials: int = Field(ge=1)
-    # ``None`` keeps pre-contract artifacts verifiable. New runs set this to
-    # two so a single paired observation cannot be reported as intelligence
-    # superiority (or regression) on its own.
-    minimum_paired_attempts: int | None = Field(default=None, ge=2)
+    # New callers default to two so a single paired observation cannot be
+    # reported as intelligence superiority (or regression) on its own. The
+    # artifact loader explicitly injects ``None`` for pre-contract payloads.
+    minimum_paired_attempts: int | None = Field(default=2, ge=2)
     max_total_cost_usd: float | None = Field(default=None, gt=0.0)
     require_known_cost: bool = False
     max_total_runtime_seconds: float | None = Field(default=None, gt=0.0)
@@ -374,7 +374,19 @@ def load_provider_ab_artifact(output_path: Path) -> ProviderABExecution:
     try:
         if payload["schema_version"] != 1 or payload["kind"] != "provider_ab_diagnostic":
             raise ProviderABError("artifact_schema_invalid")
-        comparison = ProviderABComparison.model_validate(payload["comparison"])
+        comparison_payload = payload["comparison"]
+        if not isinstance(comparison_payload, dict):
+            raise ProviderABError("artifact_schema_invalid")
+        # Schema v1 artifacts emitted before the paired-attempt contract did
+        # not carry this field. Preserve their legacy diagnostic semantics
+        # while keeping direct/new contract construction fail-closed.
+        legacy_contract = comparison_payload.get("run_contract")
+        if isinstance(legacy_contract, dict) and "minimum_paired_attempts" not in legacy_contract:
+            comparison_payload = {
+                **comparison_payload,
+                "run_contract": {**legacy_contract, "minimum_paired_attempts": None},
+            }
+        comparison = ProviderABComparison.model_validate(comparison_payload)
         control_payload = payload["control"]
         candidate_payload = payload["candidate"]
         if not isinstance(control_payload, dict) or not isinstance(candidate_payload, dict):

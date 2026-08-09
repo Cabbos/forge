@@ -14,7 +14,7 @@ from app.models import (
     TrustStatus,
     VerificationResult,
 )
-from app.provenance import sha256_bytes
+from app.provenance import canonical_json_bytes, sha256_bytes
 from app.provider_ab import (
     ProviderABArm,
     ProviderABError,
@@ -223,6 +223,10 @@ def test_provider_ab_contract_blocks_single_pair_capability_claim() -> None:
 
     assert comparison.winner == "blocked"
     assert "insufficient_paired_attempts:1/2" in comparison.blockers
+
+
+def test_provider_ab_contract_defaults_to_two_paired_attempts() -> None:
+    assert ProviderABRunContract(trials=1).minimum_paired_attempts == 2
 
 
 def test_provider_ab_contract_reports_failure_category_delta() -> None:
@@ -562,6 +566,37 @@ def test_provider_ab_artifact_verifier_round_trips_and_rejects_tamper(tmp_path) 
     output.with_suffix(".json.sha256").write_text(sha256_bytes(noncanonical) + "\n")
     with pytest.raises(ProviderABError, match="artifact_not_canonical"):
         load_provider_ab_artifact(output)
+
+
+def test_provider_ab_verifier_preserves_legacy_contract_without_minimum(tmp_path) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    legacy_contract = ProviderABRunContract(trials=1, minimum_paired_attempts=None)
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        run_contract=legacy_contract,
+        task_ids=["task-a"],
+    )
+    output = tmp_path / "legacy-provider-ab.json"
+    write_provider_ab_artifact(
+        output,
+        comparison=comparison,
+        control=control,
+        candidate=candidate,
+    )
+    payload = json.loads(output.read_text())
+    del payload["comparison"]["run_contract"]["minimum_paired_attempts"]
+    raw = canonical_json_bytes(payload) + b"\n"
+    output.write_bytes(raw)
+    output.with_suffix(".json.sha256").write_text(sha256_bytes(raw) + "\n")
+
+    verified = load_provider_ab_artifact(output)
+
+    assert verified.comparison.run_contract is not None
+    assert verified.comparison.run_contract.minimum_paired_attempts is None
 
 
 def test_provider_ab_verify_cli_is_offline_and_secret_free(tmp_path, capsys) -> None:
