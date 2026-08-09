@@ -20,6 +20,7 @@ from app.provider_ab import (
     ProviderABError,
     compare_provider_ab,
     load_provider_ab_artifact,
+    provider_ab_verify_main,
     run_provider_ab,
     write_provider_ab_artifact,
 )
@@ -449,6 +450,32 @@ def test_provider_ab_artifact_verifier_round_trips_and_rejects_tamper(tmp_path) 
     output.with_suffix(".json.sha256").write_text(sha256_bytes(noncanonical) + "\n")
     with pytest.raises(ProviderABError, match="artifact_not_canonical"):
         load_provider_ab_artifact(output)
+
+
+def test_provider_ab_verify_cli_is_offline_and_secret_free(tmp_path, capsys) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+    output = tmp_path / "provider-ab.json"
+    write_provider_ab_artifact(
+        output,
+        comparison=comparison,
+        control=control,
+        candidate=candidate,
+    )
+
+    assert provider_ab_verify_main(["--artifact", str(output)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["ok"] is True
+    assert payload["artifact_sha256"] == sha256_bytes(output.read_bytes())
+    assert "traces" not in payload
+    assert "api_key" not in json.dumps(payload).lower()
 
 
 def test_provider_ab_binds_source_and_task_contract_to_comparison() -> None:
