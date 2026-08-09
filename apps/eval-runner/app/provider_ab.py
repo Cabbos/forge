@@ -72,6 +72,10 @@ class ProviderABRunContract(EvalModel):
     """Controller parameters that define one paid paired experiment."""
 
     trials: int = Field(ge=1)
+    # ``None`` keeps pre-contract artifacts verifiable. New runs set this to
+    # two so a single paired observation cannot be reported as intelligence
+    # superiority (or regression) on its own.
+    minimum_paired_attempts: int | None = Field(default=None, ge=2)
     max_total_cost_usd: float | None = Field(default=None, gt=0.0)
     require_known_cost: bool = False
     max_total_runtime_seconds: float | None = Field(default=None, gt=0.0)
@@ -223,6 +227,7 @@ def run_provider_ab(
     )
     run_contract = ProviderABRunContract(
         trials=trials,
+        minimum_paired_attempts=2,
         max_total_cost_usd=max_total_cost_usd,
         require_known_cost=require_known_cost,
         max_total_runtime_seconds=max_total_runtime_seconds,
@@ -551,6 +556,15 @@ def compare_provider_ab(
     intervals = _bootstrap_intervals(control.traces, candidate.traces)
     deltas = {name: interval.estimate for name, interval in intervals.items()}
     blockers = _trust_blockers(control, "control") + _trust_blockers(candidate, "candidate")
+    if (
+        run_contract is not None
+        and run_contract.minimum_paired_attempts is not None
+        and len(control.traces) < run_contract.minimum_paired_attempts
+    ):
+        blockers.append(
+            "insufficient_paired_attempts:"
+            f"{len(control.traces)}/{run_contract.minimum_paired_attempts}"
+        )
     winner = "blocked" if blockers else _select_winner(intervals)
     return ProviderABComparison(
         control_arm_id=control.arm_id,

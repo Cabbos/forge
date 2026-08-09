@@ -49,6 +49,8 @@ never serialized into the artifact.
 `winner` is `candidate` or `control` only when the quality-gated interval
 excludes zero without a verification or scope regression. Otherwise it is
 `no_material_difference`; incomplete or untrusted evidence is `blocked`.
+Contract-bound runs also require at least two paired attempts before making a
+capability claim; a one-pair smoke is recorded but remains `blocked`.
 If the wall-clock budget expires, the run is cancelled and no incomplete pair
 is published.
 

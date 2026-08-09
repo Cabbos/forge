@@ -195,6 +195,7 @@ def test_provider_ab_declares_control_only_when_paired_interval_excludes_zero() 
 def test_provider_ab_binds_run_contract_to_comparison() -> None:
     contract = ProviderABRunContract(
         trials=1,
+        minimum_paired_attempts=2,
         max_total_cost_usd=0.2,
         require_known_cost=True,
         max_total_runtime_seconds=600.0,
@@ -208,6 +209,20 @@ def test_provider_ab_binds_run_contract_to_comparison() -> None:
     )
 
     assert comparison.run_contract == contract
+
+
+def test_provider_ab_contract_blocks_single_pair_capability_claim() -> None:
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a"], passed=[False]),
+        candidate=_kimi(["task-a"], passed=[True]),
+        run_contract=ProviderABRunContract(
+            trials=1,
+            minimum_paired_attempts=2,
+        ),
+    )
+
+    assert comparison.winner == "blocked"
+    assert "insufficient_paired_attempts:1/2" in comparison.blockers
 
 
 def test_provider_ab_exposes_universal_score_intervals() -> None:
@@ -340,6 +355,8 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     assert len(result.comparison.source_commit) == 40
     assert len(result.comparison.dirty_state_sha256) == 64
     assert result.comparison.task_ids == ["task-a"]
+    assert result.comparison.run_contract is not None
+    assert result.comparison.run_contract.minimum_paired_attempts == 2
     assert len(cancel_callbacks) == 2
     assert all(callable(callback) for callback in cancel_callbacks)
 
