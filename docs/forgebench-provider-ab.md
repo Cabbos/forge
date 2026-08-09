@@ -21,8 +21,9 @@ known-cost requirement, and red-team selection) so the paid experiment can be
 reconstructed from the artifact rather than inferred from the shell command.
 The report includes deterministic paired bootstrap intervals for success,
 verification, scope, rounds, duration, cost, and every universal score dimension;
-contract-bound arm summaries also include deterministic median and p95 rounds,
-duration, and cost so long-tail convergence failures remain visible;
+contract-bound arm summaries also include deterministic standard-median and
+nearest-rank p95 rounds, duration, and cost so long-tail convergence failures
+remain visible;
 they also carry per-arm controller-owned failure categories and
 candidate-minus-control category deltas for choosing the next harness
 intervention; legacy aggregate labels cannot hide a typed scope or progress

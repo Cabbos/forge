@@ -8,6 +8,8 @@
 - Included bounded H3 harness telemetry in new paired A/B arm summaries:
   tool-call histograms/repetition, context sizes/duplication, stagnation
   redirects/stops, verifier freshness, and repair-bound compliance.
+- Aligned paired-report medians with the baseline comparison's standard median;
+  p95 remains deterministic nearest-rank, including for even-sized samples.
 - Tightened the provider A/B `--max-total-cost-usd` contract to a cumulative
   control-plus-candidate ceiling; the second arm receives only remaining budget
   and unknown/exhausted cost fails closed before another provider call.

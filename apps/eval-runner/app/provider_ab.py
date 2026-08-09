@@ -17,6 +17,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from random import Random
+from statistics import median
 from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
@@ -762,40 +763,16 @@ def _arm_summary(arm: ProviderABArm, *, include_distribution: bool = False) -> P
 def _distribution_summary(traces: tuple[AgentTrace, ...]) -> dict[str, float]:
     """Return deterministic median/p95 tail metrics for a new run contract."""
 
+    rounds = [float(trace.model_rounds) for trace in traces]
+    durations = [float(trace.duration_ms) for trace in traces]
+    costs = [float(trace.cost_usd or 0.0) for trace in traces]
     return {
-        metric: _quantile(values, quantile)
-        for metric, values, quantile in (
-            (
-                "median_model_rounds",
-                [float(trace.model_rounds) for trace in traces],
-                0.50,
-            ),
-            (
-                "median_duration_ms",
-                [float(trace.duration_ms) for trace in traces],
-                0.50,
-            ),
-            (
-                "median_cost_usd",
-                [float(trace.cost_usd or 0.0) for trace in traces],
-                0.50,
-            ),
-            (
-                "p95_model_rounds",
-                [float(trace.model_rounds) for trace in traces],
-                0.95,
-            ),
-            (
-                "p95_duration_ms",
-                [float(trace.duration_ms) for trace in traces],
-                0.95,
-            ),
-            (
-                "p95_cost_usd",
-                [float(trace.cost_usd or 0.0) for trace in traces],
-                0.95,
-            ),
-        )
+        "median_model_rounds": float(median(rounds)) if rounds else 0.0,
+        "median_duration_ms": float(median(durations)) if durations else 0.0,
+        "median_cost_usd": float(median(costs)) if costs else 0.0,
+        "p95_model_rounds": _quantile(rounds, 0.95),
+        "p95_duration_ms": _quantile(durations, 0.95),
+        "p95_cost_usd": _quantile(costs, 0.95),
     }
 
 

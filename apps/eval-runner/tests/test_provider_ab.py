@@ -20,6 +20,7 @@ from app.provider_ab import (
     ProviderABArm,
     ProviderABError,
     ProviderABRunContract,
+    _distribution_summary,
     compare_provider_ab,
     load_provider_ab_artifact,
     provider_ab_main,
@@ -228,6 +229,25 @@ def test_provider_ab_contract_blocks_single_pair_capability_claim() -> None:
 
 def test_provider_ab_contract_defaults_to_two_paired_attempts() -> None:
     assert ProviderABRunContract(trials=1).minimum_paired_attempts == 2
+
+
+def test_provider_ab_distribution_uses_standard_even_sample_median() -> None:
+    first = _trace(
+        task_id="task-a",
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="anthropic_messages",
+        endpoint_family="anthropic",
+        base_url="https://api.deepseek.com/anthropic",
+    )
+    second = first.model_copy(update={"model_rounds": 4, "duration_ms": 300, "cost_usd": 0.03})
+
+    summary = _distribution_summary((first, second))
+
+    assert summary["median_model_rounds"] == 3.0
+    assert summary["median_duration_ms"] == 200.0
+    assert summary["median_cost_usd"] == 0.02
+    assert summary["p95_model_rounds"] == 4.0
 
 
 def test_provider_ab_contract_reports_failure_category_delta() -> None:
