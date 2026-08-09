@@ -1099,6 +1099,50 @@ mod tests {
     }
 
     #[test]
+    fn trace_payload_prefers_latest_turn_outcome_over_stale_loop_failure() {
+        let mut turn = AgentTurnState::new(
+            "turn-current".to_string(),
+            "session-current".to_string(),
+            "/tmp/workspace".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Finish the task".to_string(),
+        );
+        turn.verification.status = AgentVerificationStatus::Passed;
+        turn.verification.command = Some("pytest".to_string());
+        turn.verification.exit_code = Some(0);
+
+        let mut stale_task = crate::loop_runtime::LoopTaskRecord::new_for_test(
+            "loop-stale",
+            "stale loop projection",
+        );
+        stale_task.status = crate::loop_runtime::LoopTaskStatus::Failed;
+
+        let payload = trace::build_trace_payload(types::TracePayloadInput {
+            task_id: "latest-turn-authority".to_string(),
+            prompt: "Finish the task".to_string(),
+            provider: "forge".to_string(),
+            model: "local-forge".to_string(),
+            raw_events: Vec::new(),
+            loop_task: Some(stale_task),
+            latest_turn: Some(turn),
+            file_diffs: Vec::new(),
+            changed_files: Vec::new(),
+            final_answer: "Done".to_string(),
+            duration_ms: 50,
+            continuity_formed_count: None,
+            continuity_error: None,
+            repair_attempts_used: 0,
+            validation_attempts: 1,
+        });
+
+        assert_eq!(payload["failure_category"], "none");
+        assert_eq!(payload["forge_run_evidence"]["failure_category"], "none");
+    }
+
+    #[test]
     fn workspace_snapshot_diff_reports_added_modified_and_deleted_files() {
         let before = std::collections::HashMap::from([
             (

@@ -1441,6 +1441,7 @@ json.dump(
         fixture_path=str(fixture),
         context_files=["src/app.py"],
         verification_command="pytest",
+        validation_commands=["python3 -c 'print(1)'"],
         expected_files_changed=["src/app.py"],
         forbidden_files_changed=[".env"],
     )
@@ -1470,6 +1471,11 @@ json.dump(
     assert trace.forge_run_evidence.session_id == "session-1"
     assert trace.forge_run_evidence.loop_task_id == "loop-1"
     assert trace.forge_run_evidence.normalized_goal == "modify-and-verify"
+    assert trace.forge_run_evidence.verification is not None
+    assert trace.verification_result.command == "python3 -c 'print(1)'"
+    assert trace.forge_run_evidence.verification["command"] == "python3 -c 'print(1)'"
+    assert trace.forge_run_evidence.verification["agent_reported"]["command"] == "pytest"
+    assert trace.forge_run_evidence.shell_outputs[-1]["source"] == "controller_verification"
 
 
 def test_forge_runner_detects_unreported_forbidden_workspace_change(tmp_path: Path) -> None:

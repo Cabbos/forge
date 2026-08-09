@@ -1204,6 +1204,30 @@ class ForgeAgentRunner:
             }
         )
 
+        if forge_run_evidence is not None:
+            controller_shell_outputs = [
+                {
+                    "event_id": f"controller-verification-{index}",
+                    "source": "controller_verification",
+                    **output.model_dump(mode="json"),
+                }
+                for index, output in enumerate(all_validation_outputs, start=1)
+            ]
+            evidence_updates: dict[str, Any] = {
+                "shell_outputs": [
+                    *forge_run_evidence.shell_outputs,
+                    *controller_shell_outputs,
+                ],
+                "failure_category": failure_category.value,
+                "failure_reason": failure_reason,
+            }
+            if verification_result is not None:
+                evidence_updates["verification"] = {
+                    "agent_reported": forge_run_evidence.verification,
+                    **verification_result.model_dump(mode="json"),
+                }
+            forge_run_evidence = forge_run_evidence.model_copy(update=evidence_updates)
+
         harness_evidence = harness_contract_evidence(
             task_context_files=prepared_context_files,
             workspace=workspace,

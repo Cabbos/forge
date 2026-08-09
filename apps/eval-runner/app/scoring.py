@@ -182,7 +182,10 @@ def schema_identity_score(evidence: ForgeRunEvidence) -> EvalScore:
         findings.append("source:missing_source")
     if not evidence.session_id:
         findings.append("session_id:missing_session_id")
-    if not evidence.loop_task_id:
+    if evidence.source == "forge_headless_trace":
+        if not evidence.turn_id:
+            findings.append("turn_id:missing_turn_id")
+    elif not evidence.loop_task_id:
         findings.append("loop_task_id:missing_loop_task_id")
 
     findings.extend(prepared_context_identity_findings(evidence))
@@ -250,6 +253,7 @@ def permission_decision_evidence_score(evidence: ForgeRunEvidence) -> EvalScore:
 
 
 def permission_decision_findings(decision: dict) -> list[str]:
+    decision = normalized_permission_decision(decision)
     findings: list[str] = []
     if not first_string(
         decision,
@@ -271,7 +275,7 @@ def permission_decision_findings(decision: dict) -> list[str]:
         findings.append("missing_workspace")
     if not first_string(decision, ["reason", "rationale", "explanation", "why"]):
         findings.append("missing_reason")
-    if not first_string(decision, ["risk", "risk_level", "risk_label"]):
+    if not first_string(decision, ["risk", "risk_level", "risk_label", "risk_tier"]):
         findings.append("missing_risk")
 
     if permission_decision_is_file_operation(decision) and not as_list(
@@ -289,6 +293,21 @@ def permission_decision_findings(decision: dict) -> list[str]:
         ):
             findings.append("full_access_allows_sensitive_operation")
     return findings
+
+
+def normalized_permission_decision(decision: dict) -> dict:
+    """Flatten controller-owned nested permission evidence for scoring.
+
+    Headless traces preserve the original event envelope under ``evidence`` so
+    replay consumers can distinguish it from the event identity.  Scoring
+    needs the same fields at the decision level; merge without overwriting
+    envelope fields such as ``approved`` or ``block_id``.
+    """
+
+    nested = decision.get("evidence")
+    if not isinstance(nested, dict):
+        return decision
+    return {**nested, **decision}
 
 
 def permission_decision_id(decision: dict, index: int) -> str:
@@ -317,9 +336,7 @@ def permission_decision_is_file_operation(decision: dict) -> bool:
     operation = (
         first_string(decision, ["operation", "action", "tool", "tool_name", "command_kind"]) or ""
     ).casefold()
-    return any(
-        marker in operation for marker in ["delete", "edit", "file", "patch", "rename", "write"]
-    )
+    return any(marker in operation for marker in ["delete", "edit", "patch", "rename", "write"])
 
 
 def permission_decision_allows(decision: dict) -> bool:
@@ -1859,6 +1876,7 @@ def context_source_keys(evidence: ForgeRunEvidence) -> list[str]:
 
     turn_context = evidence.prepared_context.get("turn_context")
     if isinstance(turn_context, dict):
+        prepared_keys = set(keys)
         for source in as_list(turn_context.get("sources")):
             key = first_string(
                 source,
@@ -1871,7 +1889,7 @@ def context_source_keys(evidence: ForgeRunEvidence) -> list[str]:
                     "label",
                 ],
             )
-            if key:
+            if key and f"context:{key}" not in prepared_keys:
                 keys.append(f"context:{key}")
     return keys
 

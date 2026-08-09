@@ -863,6 +863,53 @@ def test_forge_runtime_scores_grade_permission_decision_evidence() -> None:
     assert scores["forge_permission_decision_evidence_ok"].label == "ok"
 
 
+def test_forge_runtime_scores_flatten_nested_read_permission_evidence() -> None:
+    from app.scoring import score_trace
+
+    trace = make_trace(
+        "forge-permission-nested-read",
+        passed=True,
+        duration_ms=10,
+        tool_count=1,
+        confirm_requests=0,
+    ).model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                session_id="session-1",
+                turn_id="turn-1",
+                prepared_context={
+                    "turn_prepared": {
+                        "context_estimate": {"sources": [{"kind": "user_input", "label": "prompt"}]}
+                    },
+                    "turn_context": {"sources": [{"kind": "user_input", "label": "prompt"}]},
+                },
+                permission_decisions=[
+                    {
+                        "block_id": "permission-1",
+                        "approved": True,
+                        "evidence": {
+                            "permission_mode": "manual_confirm",
+                            "operation": "read_file",
+                            "workspace_path": "/tmp/forge-runtime",
+                            "reason": "Read-only inspection is allowed.",
+                            "risk_tier": "normal",
+                            "affected_files": [],
+                        },
+                    }
+                ],
+                verification={"command": "pytest", "passed": True},
+                provider_usage={"input_tokens": 10, "output_tokens": 2},
+                failure_category="none",
+            )
+        }
+    )
+
+    scores = score_trace(trace)
+
+    assert scores["forge_permission_decision_evidence_ok"].label == "ok"
+    assert scores["forge_context_duplication_ok"].label == "ok"
+
+
 def test_forge_runtime_scores_explain_permission_decision_evidence_failures() -> None:
     from app.scoring import score_trace
 

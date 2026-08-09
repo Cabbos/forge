@@ -47,8 +47,12 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
             } => {
                 last_event_was_tool_start = false;
                 let pending = pending_tools.remove(block_id).unwrap_or_default();
+                let command = format_tool_command(&pending.name, &pending.input);
                 summary.tool_calls.push(serde_json::json!({
-                    "command": format_tool_command(&pending.name, &pending.input),
+                    "call_id": block_id,
+                    "tool_name": command,
+                    "status": if *is_error { "error" } else { "ok" },
+                    "command": command,
                     "stdout": result,
                     "stderr": if *is_error { result.as_str() } else { "" },
                     "exit_code": if *is_error { 1 } else { 0 },
@@ -85,6 +89,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 last_event_was_tool_start = false;
                 let pending = pending_shells.remove(block_id).unwrap_or_default();
                 summary.shell_outputs.push(serde_json::json!({
+                    "shell_id": block_id,
                     "command": pending.command,
                     "stdout": pending.stdout,
                     "stderr": "",
@@ -222,8 +227,12 @@ pub(crate) fn tool_call_from_turn_tool(tool: &AgentToolTrace) -> serde_json::Val
         .ended_at_ms
         .map(|ended| ended.saturating_sub(tool.started_at_ms))
         .unwrap_or(0);
+    let command = format_turn_tool_command(tool);
     serde_json::json!({
-        "command": format_turn_tool_command(tool),
+        "call_id": tool.tool_call_id,
+        "tool_name": command,
+        "status": if tool.is_error { "error" } else { "ok" },
+        "command": command,
         "stdout": tool.result_summary.clone().unwrap_or_default(),
         "stderr": if tool.is_error {
             tool.result_summary.clone().unwrap_or_default()

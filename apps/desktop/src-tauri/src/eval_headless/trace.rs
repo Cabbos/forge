@@ -22,6 +22,15 @@ pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json
     if let Some(turn) = input.latest_turn.as_ref() {
         tool_calls = super::summary::enrich_tool_calls_with_turn_tools(tool_calls, &turn.tools);
     }
+    let trace_tool_calls = tool_calls
+        .iter()
+        .map(trace_shell_or_tool_output)
+        .collect::<Vec<_>>();
+    let trace_shell_outputs = event_summary
+        .shell_outputs
+        .iter()
+        .map(trace_shell_or_tool_output)
+        .collect::<Vec<_>>();
     let file_diffs = input
         .file_diffs
         .into_iter()
@@ -34,11 +43,20 @@ pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json
         })
         .collect::<Vec<_>>();
     let changed_files = input.changed_files;
-    let evidence_failure_category = input
-        .loop_task
-        .as_ref()
-        .map(loop_task_failure_category)
-        .unwrap_or_else(|| failure_category.clone());
+    // The latest turn is authoritative for this attempt's terminal outcome.
+    // A loop task can retain an older completion/verification status while a
+    // headless repair or controller verification has already produced the
+    // current turn result.  Only fall back to the loop projection when there
+    // is no turn-level outcome to report.
+    let evidence_failure_category = if input.latest_turn.is_some() {
+        failure_category.clone()
+    } else {
+        input
+            .loop_task
+            .as_ref()
+            .map(loop_task_failure_category)
+            .unwrap_or_else(|| failure_category.clone())
+    };
     let forge_run_evidence = forge_run_evidence(ForgeRunEvidenceInput {
         task_id: &input.task_id,
         prompt: &input.prompt,
@@ -68,8 +86,8 @@ pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json
             .iter()
             .filter_map(|event| serde_json::to_value(event).ok())
             .collect::<Vec<_>>(),
-        "tool_calls": tool_calls,
-        "shell_outputs": event_summary.shell_outputs,
+        "tool_calls": trace_tool_calls,
+        "shell_outputs": trace_shell_outputs,
         "file_diffs": file_diffs,
         "changed_files": changed_files,
         "verification_result": verification_result,
@@ -90,6 +108,19 @@ pub fn build_trace_payload(input: super::types::TracePayloadInput) -> serde_json
         "failure_category": failure_category,
         "duration_ms": input.duration_ms,
     })
+}
+
+fn trace_shell_or_tool_output(value: &serde_json::Value) -> serde_json::Value {
+    let Some(object) = value.as_object() else {
+        return value.clone();
+    };
+    let mut bounded = serde_json::Map::new();
+    for key in ["command", "stdout", "stderr", "exit_code", "duration_ms"] {
+        if let Some(value) = object.get(key) {
+            bounded.insert(key.to_string(), value.clone());
+        }
+    }
+    serde_json::Value::Object(bounded)
 }
 
 struct ForgeRunEvidenceInput<'a> {
@@ -113,6 +144,10 @@ fn forge_run_evidence(input: ForgeRunEvidenceInput<'_>) -> serde_json::Value {
     serde_json::json!({
         "schema_version": 2,
         "source": "forge_headless_trace",
+        "session_id": input.latest_turn.map(|turn| turn.session_id.clone()),
+        "turn_id": input.latest_turn.map(|turn| turn.turn_id.clone()),
+        "loop_task_id": input.loop_task.as_ref().map(|task| task.id.clone()),
+        "workspace_path": input.latest_turn.map(|turn| turn.workspace_path.clone()),
         "prompt": input.prompt,
         "normalized_goal": input.latest_turn
             .map(|turn| turn.user_goal.as_str())
@@ -256,8 +291,26 @@ fn prepared_context_evidence(
     latest_turn: Option<&AgentTurnState>,
     event_summary: &super::types::EventSummary,
 ) -> serde_json::Value {
+    let turn_prepared = latest_turn_prepared(events).or_else(|| {
+        latest_turn.map(|turn| {
+            serde_json::json!({
+                "source": "agent_turn_context_snapshot",
+                "session_id": turn.session_id,
+                "run_id": turn.turn_id,
+                "project_path": turn.workspace_path,
+                "user_text": turn.user_goal,
+                "activation_text": turn.user_goal,
+                "context_estimate": {
+                    "used_tokens": turn.context.estimated_tokens.unwrap_or_default(),
+                    "budget_tokens": turn.context.budget_tokens,
+                    "sources": turn.context.sources,
+                    "omitted_sources": turn.context.omitted_sources,
+                },
+            })
+        })
+    });
     serde_json::json!({
-        "turn_prepared": latest_turn_prepared(events),
+        "turn_prepared": turn_prepared,
         "turn_context": latest_turn.map(|turn| {
             serde_json::json!({
                 "sources": turn.context.sources,
