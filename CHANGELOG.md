@@ -9,6 +9,10 @@
   1/1 success and verification, zero scope violations, `trusted: true`, and
   known `$0.032733` cost. This is development-only trust-path evidence, not a
   new paired or frontier-quality result.
+- Recorded a complete trusted Kimi K3 development diagnostic after the golden
+  self-check correction: 10/10 success and verification, zero scope
+  violations, all ten traces on Kimi with no fallback, 10.4 average rounds,
+  known `$0.468318` cost, and no trust blockers. It remains diagnostic-only.
 - Added an eval-only headless write policy. Forge now copies the controller's
   allowed/forbidden file contract into the Rust permission emitter and blocks
   out-of-scope file writes, deletes, and mutating shell confirmations before

@@ -160,6 +160,14 @@ record: Kimi K3 completed the config-parser case with 1.0000 success and
 verification, zero scope violations, known `$0.032733` cost, and
 `trusted: true` with no blockers. It validates the trust path only and remains
 development-only evidence.
+
+The first complete trusted Kimi run after the correction is recorded in
+[`forgebench-kimi-trusted-development-2026-08-10.md`](forgebench-kimi-trusted-development-2026-08-10.md):
+all 10 development cases passed verification with zero scope violations,
+10.4 average model rounds, known `$0.468318` cost, no fallback events, and
+`trusted: true`. All ten execution-identity events resolved to Kimi, but this
+is still a single development diagnostic rather than a paired or frontier
+result.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all
