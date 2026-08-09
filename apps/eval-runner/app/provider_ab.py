@@ -122,6 +122,10 @@ class ProviderABArmSummary(EvalModel):
     total_cost_usd: float = Field(ge=0.0)
     provider_cost_known_rate: float = Field(ge=0.0, le=1.0)
     score_summary: dict[str, float] = Field(default_factory=dict)
+    # Populated for contract-bound runs. An empty mapping keeps artifacts
+    # written before the distribution contract backward-compatible.
+    distribution_summary: dict[str, float] = Field(default_factory=dict)
+    failure_categories: dict[str, int] = Field(default_factory=dict)
 
     @field_validator("arm_id", "provider", "model", "base_url")
     @classmethod
@@ -154,6 +158,7 @@ class ProviderABComparison(EvalModel):
         ],
     ]
     deltas: dict[str, float]
+    failure_category_deltas: dict[str, int] = Field(default_factory=dict)
     bootstrap_intervals: dict[str, ProviderABInterval]
     winner: Literal["control", "candidate", "no_material_difference", "blocked"]
     blockers: list[str] = Field(default_factory=list)
@@ -550,8 +555,16 @@ def compare_provider_ab(
     source_commit = source_commit or "0" * 40
     dirty_state_sha256 = dirty_state_sha256 or "0" * 64
 
-    control_summary = _arm_summary(control)
-    candidate_summary = _arm_summary(candidate)
+    include_distribution = (
+        run_contract is not None and run_contract.minimum_paired_attempts is not None
+    )
+    control_summary = _arm_summary(control, include_distribution=include_distribution)
+    candidate_summary = _arm_summary(candidate, include_distribution=include_distribution)
+    failure_category_deltas = (
+        _failure_category_deltas(control_summary, candidate_summary)
+        if include_distribution
+        else {}
+    )
     outcome_changes = _outcome_changes(control.traces, candidate.traces)
     intervals = _bootstrap_intervals(control.traces, candidate.traces)
     deltas = {name: interval.estimate for name, interval in intervals.items()}
@@ -579,6 +592,7 @@ def compare_provider_ab(
         candidate=candidate_summary,
         outcome_changes=outcome_changes,
         deltas=deltas,
+        failure_category_deltas=failure_category_deltas,
         bootstrap_intervals=intervals,
         winner=winner,  # type: ignore[arg-type]
         blockers=sorted(set(blockers)),
@@ -680,7 +694,7 @@ def _trust_blockers(arm: ProviderABArm, label: str) -> list[str]:
     return blockers
 
 
-def _arm_summary(arm: ProviderABArm) -> ProviderABArmSummary:
+def _arm_summary(arm: ProviderABArm, *, include_distribution: bool = False) -> ProviderABArmSummary:
     route = APPROVED_PROVIDER_AB_ROUTES[arm.arm_id]
     return ProviderABArmSummary(
         arm_id=arm.arm_id,
@@ -700,7 +714,71 @@ def _arm_summary(arm: ProviderABArm) -> ProviderABArmSummary:
         total_cost_usd=arm.report.total_cost_usd,
         provider_cost_known_rate=arm.report.provider_cost_known_rate,
         score_summary=arm.report.score_summary,
+        distribution_summary=(
+            _distribution_summary(arm.traces) if include_distribution else {}
+        ),
+        failure_categories=(arm.report.failure_categories if include_distribution else {}),
     )
+
+
+def _distribution_summary(traces: tuple[AgentTrace, ...]) -> dict[str, float]:
+    """Return deterministic median/p95 tail metrics for a new run contract."""
+
+    return {
+        metric: _quantile(values, quantile)
+        for metric, values, quantile in (
+            (
+                "median_model_rounds",
+                [float(trace.model_rounds) for trace in traces],
+                0.50,
+            ),
+            (
+                "median_duration_ms",
+                [float(trace.duration_ms) for trace in traces],
+                0.50,
+            ),
+            (
+                "median_cost_usd",
+                [float(trace.cost_usd or 0.0) for trace in traces],
+                0.50,
+            ),
+            (
+                "p95_model_rounds",
+                [float(trace.model_rounds) for trace in traces],
+                0.95,
+            ),
+            (
+                "p95_duration_ms",
+                [float(trace.duration_ms) for trace in traces],
+                0.95,
+            ),
+            (
+                "p95_cost_usd",
+                [float(trace.cost_usd or 0.0) for trace in traces],
+                0.95,
+            ),
+        )
+    }
+
+
+def _quantile(values: list[float], quantile: float) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    rank = min(len(ordered) - 1, max(0, int(quantile * len(ordered) + 0.999999) - 1))
+    return ordered[rank]
+
+
+def _failure_category_deltas(
+    control: ProviderABArmSummary,
+    candidate: ProviderABArmSummary,
+) -> dict[str, int]:
+    categories = set(control.failure_categories) | set(candidate.failure_categories)
+    return {
+        category: candidate.failure_categories.get(category, 0)
+        - control.failure_categories.get(category, 0)
+        for category in sorted(categories)
+    }
 
 
 def _outcome_changes(

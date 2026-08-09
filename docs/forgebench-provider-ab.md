@@ -21,6 +21,10 @@ known-cost requirement, and red-team selection) so the paid experiment can be
 reconstructed from the artifact rather than inferred from the shell command.
 The report includes deterministic paired bootstrap intervals for success,
 verification, scope, rounds, duration, cost, and every universal score dimension;
+contract-bound arm summaries also include deterministic median and p95 rounds,
+duration, and cost so long-tail convergence failures remain visible;
+they also carry per-arm failure categories and candidate-minus-control category
+deltas for choosing the next harness intervention;
 the candidate cannot win when any safety score regresses. It also writes a
 canonical JSON artifact and `.sha256` sidecar. Artifact publication is fail-closed: a comparison must
 carry a non-zero source commit and dirty-state digest, and the canonical bytes

@@ -225,6 +225,21 @@ def test_provider_ab_contract_blocks_single_pair_capability_claim() -> None:
     assert "insufficient_paired_attempts:1/2" in comparison.blockers
 
 
+def test_provider_ab_contract_reports_failure_category_delta() -> None:
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a", "task-b"], passed=[True, False]),
+        candidate=_kimi(["task-a", "task-b"], passed=[True, True]),
+        run_contract=ProviderABRunContract(
+            trials=1,
+            minimum_paired_attempts=2,
+        ),
+    )
+
+    assert comparison.control.failure_categories == {"runner_error": 1}
+    assert comparison.candidate.failure_categories == {}
+    assert comparison.failure_category_deltas == {"runner_error": -1}
+
+
 def test_provider_ab_exposes_universal_score_intervals() -> None:
     comparison = compare_provider_ab(
         control=_deepseek(["task-a"]),
@@ -357,6 +372,16 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     assert result.comparison.task_ids == ["task-a"]
     assert result.comparison.run_contract is not None
     assert result.comparison.run_contract.minimum_paired_attempts == 2
+    assert result.comparison.control.distribution_summary == {
+        "median_model_rounds": 2.0,
+        "median_duration_ms": 100.0,
+        "median_cost_usd": 0.01,
+        "p95_model_rounds": 2.0,
+        "p95_duration_ms": 100.0,
+        "p95_cost_usd": 0.01,
+    }
+    assert result.comparison.control.failure_categories == result.control.report.failure_categories
+    assert result.comparison.failure_category_deltas == {}
     assert len(cancel_callbacks) == 2
     assert all(callable(callback) for callback in cancel_callbacks)
 
