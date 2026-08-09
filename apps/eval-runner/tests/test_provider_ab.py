@@ -265,6 +265,39 @@ def test_provider_ab_contract_reports_failure_category_delta() -> None:
     assert comparison.failure_category_deltas == {"runner_error": -1}
 
 
+def test_provider_ab_contract_reports_bounded_provider_error_delta() -> None:
+    control = _deepseek(["task-a"], passed=[False])
+    control_trace = control.traces[0].model_copy(
+        update={
+            "error": "HTTP 429: provider token=should-not-appear",
+            "raw_events": [
+                *control.traces[0].raw_events,
+                {
+                    "event_type": "provider_error",
+                    "error": "HTTP 429: provider token=should-not-appear",
+                },
+            ],
+        }
+    )
+    control = ProviderABArm(
+        arm_id=control.arm_id,
+        dataset_fingerprint=control.dataset_fingerprint,
+        traces=(control_trace,),
+        report=control.report,
+    )
+
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=_kimi(["task-a"]),
+        run_contract=ProviderABRunContract(trials=1, minimum_paired_attempts=2),
+    )
+
+    assert comparison.control.provider_errors == {"rate_limit": 1}
+    assert comparison.candidate.provider_errors == {}
+    assert comparison.provider_error_deltas == {"rate_limit": -1}
+    assert all("token" not in key for key in comparison.control.provider_errors)
+
+
 def test_provider_ab_prefers_controller_failure_taxonomy_over_legacy_report() -> None:
     control = _deepseek(["task-a"], passed=[False])
     trace = control.traces[0].model_copy(

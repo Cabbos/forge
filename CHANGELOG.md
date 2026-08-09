@@ -3,6 +3,9 @@
 - Added contract-bound provider A/B tail evidence: new diagnostics include
   deterministic median/p95 round, duration, and cost summaries plus per-arm
   controller-owned failure categories and candidate-minus-control deltas.
+  They now also retain bounded provider-error codes and deltas, keeping
+  authentication/rate-limit/timeout evidence useful without serializing raw
+  provider messages or credentials.
   Legacy aggregate labels cannot mask typed scope/progress failures; legacy
   artifacts keep their optional fields and remain offline-verifiable.
 - Included bounded H3 harness telemetry in new paired A/B arm summaries:

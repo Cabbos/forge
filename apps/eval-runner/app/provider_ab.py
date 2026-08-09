@@ -34,6 +34,7 @@ from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
 from app.process_control import CancelRequested, never_cancelled
 from app.provenance import canonical_json_bytes, sha256_bytes
 from app.provenance_models import SECRET_PATTERN, GitSha1, Sha256
+from app.provider_errors import summarize_provider_errors
 from app.provider_fallback import ProviderRouteSpec
 from app.red_team import is_red_team_task
 from app.scoring import UNIVERSAL_SCORE_NAMES, score_trace
@@ -131,6 +132,7 @@ class ProviderABArmSummary(EvalModel):
     # written before the distribution contract backward-compatible.
     distribution_summary: dict[str, float] = Field(default_factory=dict)
     failure_categories: dict[str, int] = Field(default_factory=dict)
+    provider_errors: dict[str, int] = Field(default_factory=dict)
     harness_telemetry: HarnessTelemetrySummary | None = None
 
     @field_validator("arm_id", "provider", "model", "base_url")
@@ -139,6 +141,14 @@ class ProviderABArmSummary(EvalModel):
         if not value.strip():
             raise ValueError("provider A/B identity fields must be non-empty")
         return value
+
+    @model_validator(mode="after")
+    def validate_diagnostic_counts(self) -> ProviderABArmSummary:
+        for field_name in ("failure_categories", "provider_errors"):
+            values = getattr(self, field_name)
+            if any(not key.strip() or value < 0 for key, value in values.items()):
+                raise ValueError(f"provider A/B {field_name} must contain nonnegative counts")
+        return self
 
 
 class ProviderABComparison(EvalModel):
@@ -165,6 +175,7 @@ class ProviderABComparison(EvalModel):
     ]
     deltas: dict[str, float]
     failure_category_deltas: dict[str, int] = Field(default_factory=dict)
+    provider_error_deltas: dict[str, int] = Field(default_factory=dict)
     bootstrap_intervals: dict[str, ProviderABInterval]
     winner: Literal["control", "candidate", "no_material_difference", "blocked"]
     blockers: list[str] = Field(default_factory=list)
@@ -184,6 +195,9 @@ class ProviderABComparison(EvalModel):
             raise ValueError("blocked provider A/B comparison requires blockers")
         if self.winner != "blocked" and self.blockers:
             raise ValueError("unblocked provider A/B comparison cannot contain blockers")
+        for field_name in ("failure_category_deltas", "provider_error_deltas"):
+            if any(not key.strip() for key in getattr(self, field_name)):
+                raise ValueError(f"provider A/B {field_name} keys must be non-empty")
         return self
 
 
@@ -597,9 +611,10 @@ def compare_provider_ab(
     control_summary = _arm_summary(control, include_distribution=include_distribution)
     candidate_summary = _arm_summary(candidate, include_distribution=include_distribution)
     failure_category_deltas = (
-        _failure_category_deltas(control_summary, candidate_summary)
-        if include_distribution
-        else {}
+        _failure_category_deltas(control_summary, candidate_summary) if include_distribution else {}
+    )
+    provider_error_deltas = (
+        _provider_error_deltas(control_summary, candidate_summary) if include_distribution else {}
     )
     outcome_changes = _outcome_changes(control.traces, candidate.traces)
     intervals = _bootstrap_intervals(control.traces, candidate.traces)
@@ -629,6 +644,7 @@ def compare_provider_ab(
         outcome_changes=outcome_changes,
         deltas=deltas,
         failure_category_deltas=failure_category_deltas,
+        provider_error_deltas=provider_error_deltas,
         bootstrap_intervals=intervals,
         winner=winner,  # type: ignore[arg-type]
         blockers=sorted(set(blockers)),
@@ -750,10 +766,9 @@ def _arm_summary(arm: ProviderABArm, *, include_distribution: bool = False) -> P
         total_cost_usd=arm.report.total_cost_usd,
         provider_cost_known_rate=arm.report.provider_cost_known_rate,
         score_summary=arm.report.score_summary,
-        distribution_summary=(
-            _distribution_summary(arm.traces) if include_distribution else {}
-        ),
+        distribution_summary=(_distribution_summary(arm.traces) if include_distribution else {}),
         failure_categories=(_failure_categories(arm) if include_distribution else {}),
+        provider_errors=(_provider_errors(arm) if include_distribution else {}),
         harness_telemetry=(
             summarize_harness_telemetry(arm.traces) if include_distribution else None
         ),
@@ -796,6 +811,17 @@ def _failure_category_deltas(
     }
 
 
+def _provider_error_deltas(
+    control: ProviderABArmSummary,
+    candidate: ProviderABArmSummary,
+) -> dict[str, int]:
+    codes = set(control.provider_errors) | set(candidate.provider_errors)
+    return {
+        code: candidate.provider_errors.get(code, 0) - control.provider_errors.get(code, 0)
+        for code in sorted(codes)
+    }
+
+
 def _failure_categories(arm: ProviderABArm) -> dict[str, int]:
     """Prefer controller taxonomy over legacy aggregate labels."""
 
@@ -811,6 +837,13 @@ def _failure_categories(arm: ProviderABArm) -> dict[str, int]:
             category = "scope_violation" if trace.scope_violations else "runner_error"
         categories[category] += 1
     return dict(sorted(categories.items()))
+
+
+def _provider_errors(arm: ProviderABArm) -> dict[str, int]:
+    errors: Counter[str] = Counter()
+    for trace in arm.traces:
+        errors.update(summarize_provider_errors(trace.raw_events, trace.error))
+    return dict(sorted(errors.items()))
 
 
 def _outcome_changes(

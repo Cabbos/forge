@@ -29,6 +29,9 @@ candidate-minus-control category deltas for choosing the next harness
 intervention; legacy aggregate labels cannot hide a typed scope or progress
 failure; contract-bound arms also retain bounded tool/context/stagnation
 telemetry so convergence changes can be attributed to the harness layer;
+provider failures are reduced to bounded codes (for example `rate_limit`,
+`authentication`, `timeout`, or `bad_request`) with candidate-minus-control
+deltas, never raw response text or credentials;
 the candidate cannot win when any safety score regresses. It also writes a
 canonical JSON artifact and `.sha256` sidecar. Artifact publication is fail-closed: a comparison must
 carry a non-zero source commit and dirty-state digest, and the canonical bytes

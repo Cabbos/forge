@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from collections import Counter
 from collections.abc import Callable
 from math import ceil
@@ -29,6 +28,7 @@ from app.harness_telemetry import summarize_harness_telemetry
 from app.metrics import trace_passed
 from app.models import EvalModel
 from app.provenance import canonical_json_bytes, sha256_bytes
+from app.provider_errors import summarize_provider_errors
 
 _MODEL_T = TypeVar("_MODEL_T", bound=EvalModel)
 _REPORT_NAME = "baseline-report.json"
@@ -46,15 +46,6 @@ _ROUTE_FIELDS = {"profile_id", "transport", "endpoint_family", "base_url"}
 _BOOTSTRAP_RESAMPLES = 2_000
 _BOOTSTRAP_SEED = 20260808
 ComparisonMode = Literal["transport_ab_v1", "policy_ab_v1"]
-_SAFE_PROVIDER_ERROR_CODE = re.compile(r"^[a-z0-9][a-z0-9_.:-]{0,63}$")
-_PROVIDER_ERROR_EVENT_TYPES = frozenset(
-    {
-        "provider_error",
-        "provider_call_error",
-        "provider_request_error",
-        "api_error",
-    }
-)
 
 
 class BaselineComparisonError(ValueError):
@@ -411,18 +402,9 @@ def _build_metrics(
         if category is not None:
             failure_categories[category] += 1
         trust_blockers.update(artifact.trust_result.blockers)
-        saw_provider_error_event = False
-        for event in artifact.trace.raw_events:
-            event_type = str(event.get("event_type", "")).lower()
-            if event_type in _PROVIDER_ERROR_EVENT_TYPES or event.get("provider_error") is True:
-                saw_provider_error_event = True
-                provider_errors[_provider_error_event_code(event, event_type)] += 1
-        if (
-            not saw_provider_error_event
-            and artifact.trace.error
-            and _looks_like_provider_error(artifact.trace.error)
-        ):
-            provider_errors[_provider_error_text_code(artifact.trace.error)] += 1
+        provider_errors.update(
+            summarize_provider_errors(artifact.trace.raw_events, artifact.trace.error)
+        )
     return BaselineComparisonMetrics(
         trusted_attempts=report.trusted_attempts,
         trusted_success_rate=report.trusted_success_rate,
@@ -553,48 +535,6 @@ def _mean(values: list[float]) -> float:
 
 def _outcome(artifact: BaselineAttemptArtifact) -> str:
     return "success" if trace_passed(artifact.trace) else "failure"
-
-
-def _provider_error_event_code(event: dict[str, Any], event_type: str) -> str:
-    code = str(event.get("code") or event.get("error_type") or "").strip().lower()
-    if _SAFE_PROVIDER_ERROR_CODE.fullmatch(code):
-        return f"code:{code}"
-    error = event.get("error")
-    if isinstance(error, str) and _looks_like_provider_error(error):
-        return _provider_error_text_code(error)
-    if event_type in _PROVIDER_ERROR_EVENT_TYPES:
-        return event_type
-    return "provider_error"
-
-
-def _looks_like_provider_error(error: str) -> bool:
-    normalized = error.lower()
-    return any(
-        token in normalized
-        for token in (
-            "provider",
-            "api",
-            "anthropic",
-            "openai",
-            "rate_limit",
-            "rate limit",
-            "http ",
-            "timeout",
-        )
-    )
-
-
-def _provider_error_text_code(error: str) -> str:
-    normalized = error.lower()
-    if "rate_limit" in normalized or "rate limit" in normalized or "429" in normalized:
-        return "rate_limit"
-    if "timeout" in normalized or "timed out" in normalized:
-        return "timeout"
-    if any(token in normalized for token in ("401", "403", "unauthorized", "forbidden")):
-        return "authentication"
-    if any(token in normalized for token in ("400", "404", "422", "bad request")):
-        return "bad_request"
-    return "provider_error"
 
 
 def _load_artifacts(path: Path) -> dict[str, BaselineAttemptArtifact]:
