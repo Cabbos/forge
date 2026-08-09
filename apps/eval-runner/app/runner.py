@@ -761,6 +761,10 @@ class ForgeAgentRunner:
                 "workspace_path": str(workspace),
                 "runtime_state_path": str(runtime_state),
                 "continuity_database_path": str(continuity_database_path),
+                "write_policy": {
+                    "allowed_files": list(task.expected_files_changed),
+                    "forbidden_files": list(task.forbidden_files_changed),
+                },
             }
             provider_route = self._provider_route_payload()
             if provider_route is not None:
@@ -974,6 +978,13 @@ class ForgeAgentRunner:
             if not _is_ephemeral_cache_path(diff.path)
         ]
         raw_events = list(payload.get("raw_events", []))
+        write_policy_blocks = payload.get("eval_write_policy_blocks", [])
+        if isinstance(write_policy_blocks, list):
+            raw_events.extend(
+                block
+                for block in write_policy_blocks
+                if isinstance(block, dict) and block.get("event_type") == "eval_write_policy_block"
+            )
         if self.execution_identity is not None and payload.get("error") is None:
             execution_event = next(
                 (

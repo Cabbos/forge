@@ -219,6 +219,7 @@ pub fn build_headless_request_from_trigger(
         model: trigger.model.clone(),
         provider_route: None,
         execution_identity: None,
+        write_policy: None,
         profile_id: trigger.profile_id.clone(),
         use_provider_credential_store: false,
         workspace_path,

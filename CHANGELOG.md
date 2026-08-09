@@ -1,5 +1,10 @@
 # Changelog
 
+- Added an eval-only headless write policy. Forge now copies the controller's
+  allowed/forbidden file contract into the Rust permission emitter and blocks
+  out-of-scope file writes, deletes, and mutating shell confirmations before
+  execution, with typed `eval_write_policy_block` evidence. Ordinary desktop
+  requests remain unchanged; observer and patch replay remain authoritative.
 - Recorded a post-isolation real Kimi K3 smoke: the development config-parser
   case passed with zero scope violations and known `$0.0521442` cost after
   controller-side validation commands were moved into the isolated environment.

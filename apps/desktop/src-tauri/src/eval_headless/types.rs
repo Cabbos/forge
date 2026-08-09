@@ -72,6 +72,21 @@ pub struct EvalProviderRoute {
     pub base_url: String,
 }
 
+/// Eval-only write policy copied from the controller's task contract.
+///
+/// Ordinary desktop requests leave this unset.  When present, the headless
+/// runner rejects file/shell confirmations that could mutate a path outside
+/// the controller-owned allowlist.  The final workspace observer remains the
+/// authoritative evidence layer; this policy is an earlier safety boundary,
+/// not a replacement for post-run observation.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct EvalWritePolicy {
+    #[serde(default)]
+    pub allowed_files: Vec<String>,
+    #[serde(default)]
+    pub forbidden_files: Vec<String>,
+}
+
 /// Controller-owned request dimensions that must be copied into every paid
 /// eval trace.  This is additive to the route identity and intentionally does
 /// not alter ordinary desktop requests.
@@ -162,6 +177,10 @@ pub struct EvalHeadlessRequest {
     /// Ordinary desktop callers leave this unset.
     #[serde(default)]
     pub execution_identity: Option<EvalExecutionIdentity>,
+    /// Optional eval-only write boundary.  It is intentionally absent from
+    /// ordinary desktop requests so normal permission behavior is unchanged.
+    #[serde(default)]
+    pub write_policy: Option<EvalWritePolicy>,
     /// Optional profile id for future runtime profile selection.
     /// Not yet wired to agent session creation; stored for forward-compat.
     #[serde(default)]

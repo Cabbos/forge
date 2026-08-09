@@ -1633,6 +1633,7 @@ def test_forge_runner_uses_isolated_env_for_setup_and_validation(
         "import json, pathlib, sys\n"
         "payload=json.load(sys.stdin)\n"
         "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "assert payload['write_policy'] == {'allowed_files':['src/app.py'],'forbidden_files':[]}\n"
         "(workspace/'src'/'app.py').write_text('after\\n')\n"
         "json.dump({'final_answer':'done','model_rounds':1,'changed_files':['src/app.py'],"
         "'file_diffs':[{'path':'src/app.py','change_type':'modified','diff':"

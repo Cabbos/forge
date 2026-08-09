@@ -20,7 +20,7 @@ use crate::settings;
 
 pub use types::{
     EvalHeadlessMode, EvalHeadlessRequest, EvalHeadlessTask, EvalProviderRoute,
-    EvalProviderTransport, HeadlessFileDiff, TracePayloadInput,
+    EvalProviderTransport, EvalWritePolicy, HeadlessFileDiff, TracePayloadInput,
 };
 
 pub use trace::{build_trace_payload, insert_agent_identity, insert_failure_fields};
@@ -257,7 +257,13 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
 
     let session = Arc::new(session);
-    let emitter = Arc::new(runner::HeadlessEventEmitter::new(pending_confirms));
+    let emitter = Arc::new(match request.write_policy.as_ref() {
+        Some(policy) => runner::HeadlessEventEmitter::new_with_write_policy(
+            pending_confirms,
+            runner::HeadlessWritePolicy::from_request(&workspace_path, policy),
+        ),
+        None => runner::HeadlessEventEmitter::new(pending_confirms),
+    });
     let validation_commands = validation::validation_commands_from_task(request.task.as_ref());
     let max_repair_attempts = validation::max_repair_attempts_from_task(request.task.as_ref());
     let timeout_secs = validation::resolve_timeout_secs(request.task.as_ref());
@@ -436,6 +442,25 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                 &agent_model,
                 route,
                 execution_identity,
+            );
+        }
+    }
+    if request.write_policy.is_some() {
+        let policy_blocks = emitter.drain_write_policy_blocks();
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "eval_write_policy_blocks".to_string(),
+                serde_json::Value::Array(
+                    policy_blocks
+                        .into_iter()
+                        .map(|block| {
+                            serde_json::json!({
+                                "event_type": "eval_write_policy_block",
+                                "reason": block.reason,
+                            })
+                        })
+                        .collect(),
+                ),
             );
         }
     }
@@ -1832,6 +1857,84 @@ deleted file mode 100644\n\
         assert_eq!(
             std::fs::read_to_string(workspace.join("created.txt")).unwrap(),
             "created by headless test"
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[tokio::test]
+    async fn headless_event_emitter_blocks_out_of_scope_write_permission() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-write-policy-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace should be created");
+        std::fs::create_dir_all(workspace.join("tests")).expect("test directory should exist");
+        let pending_confirms: types::PendingConfirms =
+            Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness =
+            crate::harness::Harness::new_with_pending(workspace.clone(), pending_confirms.clone());
+        let policy = runner::HeadlessWritePolicy::from_request(
+            &workspace,
+            &types::EvalWritePolicy {
+                allowed_files: vec!["src/allowed.txt".to_string()],
+                forbidden_files: vec![".forge/**".to_string()],
+            },
+        );
+        let emitter = Arc::new(runner::HeadlessEventEmitter::new_with_write_policy(
+            pending_confirms,
+            policy,
+        ));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            harness.execute_tool_with_emitter(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({
+                    "path": workspace.join("tests").join("unexpected.txt").to_string_lossy(),
+                    "content": "must not be written"
+                }),
+                emitter.clone(),
+                Some("tool-blocked-1"),
+                None,
+            ),
+        )
+        .await
+        .expect("write policy should resolve without hanging");
+
+        assert_eq!(result, "Permission denied by user");
+        assert!(!workspace.join("tests/unexpected.txt").exists());
+        let allowed_result = tokio::time::timeout(
+            Duration::from_secs(1),
+            harness.execute_tool_with_emitter(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({
+                    "path": workspace.join("src/allowed.txt").to_string_lossy(),
+                    "content": "allowed"
+                }),
+                emitter.clone(),
+                Some("tool-allowed-1"),
+                None,
+            ),
+        )
+        .await
+        .expect("allowed write should resolve without hanging");
+        assert!(
+            allowed_result.starts_with("File written:"),
+            "{allowed_result}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("src/allowed.txt")).unwrap(),
+            "allowed"
+        );
+        assert_eq!(
+            emitter
+                .drain_write_policy_blocks()
+                .into_iter()
+                .map(|block| block.reason)
+                .collect::<Vec<_>>(),
+            vec!["eval_write_policy_outside_allowed_paths:tests/unexpected.txt"]
         );
         let _ = std::fs::remove_dir_all(workspace);
     }
