@@ -57,3 +57,15 @@ known usage and no fallback events. DeepSeek completed in 10 model rounds at
 was `no_material_difference` because one pair cannot establish a quality
 difference. The canonical local artifact digest was
 `51db077aeba620ada4ef305669cbc3a9998a49fef03e79712aaeaed4403639cf`.
+
+A complete 10-case development split was then run once per arm from the same
+source and dataset fingerprint. Both arms were 10/10 trusted, 10/10 verified,
+scope-clean, known-cost, and fallback-free. DeepSeek averaged 16.7 model
+rounds, 64,454.9 ms per task, and `$0.028906`; Kimi averaged 13.5 rounds,
+62,729.3 ms, and `$0.6642198`. The paired delta was `-3.2` model rounds for
+Kimi, while the success and verification deltas were both `0.0`; bootstrap
+selected `no_material_difference` (round interval `[-6.0, -0.3]`, duration
+interval `[-24,987.5, 15,664.4]` ms). The raw local artifact digest was
+`e251d528d158443cb5d2f45ff6f85236969fcb41bd344d1a101f742937a64608`.
+This is the strongest current development evidence for an efficiency
+difference, not a claim of superior model intelligence or frontier quality.

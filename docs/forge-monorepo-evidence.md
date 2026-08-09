@@ -84,6 +84,13 @@ quality-gated result was `no_material_difference` (artifact digest
 `51db077aeba620ada4ef305669cbc3a9998a49fef03e79712aaeaed4403639cf`). This is
 route and harness evidence, not a model-quality or frontier claim.
 
+The complete 10-case paired development run also kept both arms at 10/10
+trusted, verified, scope-clean, known-cost, and fallback-free. Kimi used 13.5
+average model rounds versus DeepSeek's 16.7; success and verification were
+identical, so the quality gate selected `no_material_difference` rather than
+declaring a model winner. The raw artifact digest is
+`e251d528d158443cb5d2f45ff6f85236969fcb41bd344d1a101f742937a64608`.
+
 The first post-fix paid pair (`bda5d977`) reached six trusted attempts per arm
 before both arms stopped at the same unknown-cost multi-file API interruption;
 recovery reserved the bounded ceiling and performed no replay. The resulting

@@ -11,6 +11,12 @@
   `no_material_difference` (DeepSeek 10 rounds / `$0.002169`, Kimi K3 7 rounds /
   `$0.0355908`). One pair is intentionally insufficient to claim a model-quality
   difference.
+- Completed a full 10-case paired development run with both arms 10/10
+  trusted/verified, zero scope violations, known cost, and zero fallback events.
+  Kimi K3 averaged 13.5 rounds versus DeepSeek's 16.7, but success and
+  verification were identical; the paired gate therefore selected
+  `no_material_difference`. This is an efficiency signal, not a frontier or
+  superior-intelligence claim.
 - Fixed the deterministic ForgeBench golden self-check so cases with empty
   context use their declared output scope, while explicit no-op cases remain
   unchanged. This removes a false `harness_untrusted` blocker from real eval
