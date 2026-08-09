@@ -5,6 +5,9 @@
   controller-owned failure categories and candidate-minus-control deltas.
   Legacy aggregate labels cannot mask typed scope/progress failures; legacy
   artifacts keep their optional fields and remain offline-verifiable.
+- Included bounded H3 harness telemetry in new paired A/B arm summaries:
+  tool-call histograms/repetition, context sizes/duplication, stagnation
+  redirects/stops, verifier freshness, and repair-bound compliance.
 - Tightened the provider A/B `--max-total-cost-usd` contract to a cumulative
   control-plus-candidate ceiling; the second arm receives only remaining budget
   and unknown/exhausted cost fails closed before another provider call.

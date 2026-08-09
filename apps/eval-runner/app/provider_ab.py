@@ -21,12 +21,14 @@ from typing import Literal
 
 from pydantic import Field, field_validator, model_validator
 
+from app.baseline_models import HarnessTelemetrySummary
 from app.cases import CaseLoadError, expand_prompt_mutations, load_cases
 from app.config import get_settings
 from app.datasets import dataset_fingerprint
 from app.execution import ExecutionOptions, execute_evaluation
 from app.execution_identity import default_execution_identity, validate_execution_identity_event
 from app.harness_contracts import resolve_typed_failure_category
+from app.harness_telemetry import summarize_harness_telemetry
 from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
 from app.process_control import CancelRequested, never_cancelled
 from app.provenance import canonical_json_bytes, sha256_bytes
@@ -128,6 +130,7 @@ class ProviderABArmSummary(EvalModel):
     # written before the distribution contract backward-compatible.
     distribution_summary: dict[str, float] = Field(default_factory=dict)
     failure_categories: dict[str, int] = Field(default_factory=dict)
+    harness_telemetry: HarnessTelemetrySummary | None = None
 
     @field_validator("arm_id", "provider", "model", "base_url")
     @classmethod
@@ -750,6 +753,9 @@ def _arm_summary(arm: ProviderABArm, *, include_distribution: bool = False) -> P
             _distribution_summary(arm.traces) if include_distribution else {}
         ),
         failure_categories=(_failure_categories(arm) if include_distribution else {}),
+        harness_telemetry=(
+            summarize_harness_telemetry(arm.traces) if include_distribution else None
+        ),
     )
 
 

@@ -26,7 +26,8 @@ duration, and cost so long-tail convergence failures remain visible;
 they also carry per-arm controller-owned failure categories and
 candidate-minus-control category deltas for choosing the next harness
 intervention; legacy aggregate labels cannot hide a typed scope or progress
-failure;
+failure; contract-bound arms also retain bounded tool/context/stagnation
+telemetry so convergence changes can be attributed to the harness layer;
 the candidate cannot win when any safety score regresses. It also writes a
 canonical JSON artifact and `.sha256` sidecar. Artifact publication is fail-closed: a comparison must
 carry a non-zero source commit and dirty-state digest, and the canonical bytes

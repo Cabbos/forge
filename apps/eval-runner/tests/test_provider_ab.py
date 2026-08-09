@@ -423,6 +423,9 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     }
     assert result.comparison.control.failure_categories == result.control.report.failure_categories
     assert result.comparison.failure_category_deltas == {}
+    assert result.comparison.control.harness_telemetry is not None
+    assert result.comparison.control.harness_telemetry.attempts_with_contract == 0
+    assert result.comparison.control.harness_telemetry.contract_coverage == 0.0
     assert len(cancel_callbacks) == 2
     assert all(callable(callback) for callback in cancel_callbacks)
 
