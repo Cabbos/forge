@@ -9,6 +9,11 @@
   case completed with zero scope violations, nine model rounds, known usage and
   cost, and the explicit controller contract reaching the Rust eval boundary.
   This remains development-only evidence.
+- Recorded the complete 10-case Kimi K3 run after the write-policy change:
+  10/10 success and verification, zero scope violations, known usage/cost, and
+  `$0.5847462` total cost. The result is directionally similar to the prior
+  diagnostic, so it proves no regression and a safety-boundary improvement,
+  not a material model-quality gain.
 - Recorded a post-isolation real Kimi K3 smoke: the development config-parser
   case passed with zero scope violations and known `$0.0521442` cost after
   controller-side validation commands were moved into the isolated environment.
