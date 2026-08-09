@@ -132,6 +132,14 @@ The post-isolation Kimi regression smoke is recorded in
 the config-parser case passed with 1.0000 verification, zero scope violations,
 known cost, and both runtime/cache isolation events after the controller-side
 environment fix.
+
+The follow-up Kimi K3 write-policy smoke is recorded in
+[`forgebench-kimi-write-policy-smoke-2026-08-10.md`](forgebench-kimi-write-policy-smoke-2026-08-10.md):
+the controller contract reached the Rust eval-only permission boundary, the
+real config-parser case passed with zero scope violations, and the cost stayed
+known at `$0.0342186`. The run is development-only; the typed block path is
+covered by contract/unit tests because this clean run did not need to block an
+out-of-scope mutation.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

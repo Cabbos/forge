@@ -5,6 +5,10 @@
   out-of-scope file writes, deletes, and mutating shell confirmations before
   execution, with typed `eval_write_policy_block` evidence. Ordinary desktop
   requests remain unchanged; observer and patch replay remain authoritative.
+- Recorded a real Kimi K3 write-policy smoke at `$0.0342186`: one development
+  case completed with zero scope violations, nine model rounds, known usage and
+  cost, and the explicit controller contract reaching the Rust eval boundary.
+  This remains development-only evidence.
 - Recorded a post-isolation real Kimi K3 smoke: the development config-parser
   case passed with zero scope violations and known `$0.0521442` cost after
   controller-side validation commands were moved into the isolated environment.
