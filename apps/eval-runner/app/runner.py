@@ -201,10 +201,22 @@ class DeterministicMockRunner:
                 ended_at=ended_at,
                 duration_ms=duration_ms(started_at, ended_at),
             )
-        target_file = task.context_files[0] if task.context_files else "workspace/changes.patch"
+        # Prefer the task's declared output path when context is intentionally
+        # empty.  ForgeBench cases keep controller-owned scope in
+        # ``expected_files_changed`` rather than exposing context files; using
+        # the synthetic fallback in that shape would make the golden mock
+        # manufacture its own out-of-scope change and poison the trust gate.
+        target_file = (
+            task.expected_files_changed[0]
+            if task.expected_files_changed
+            else (task.context_files[0] if task.context_files else "workspace/changes.patch")
+        )
         mock = mock_metadata(task)
         forge_run_evidence = mock_forge_run_evidence(mock)
-        changed_files = mock_changed_files(mock, default_target_file=target_file)
+        if task.metadata.get("expected_no_change") is True and "changed_files" not in mock:
+            changed_files = []
+        else:
+            changed_files = mock_changed_files(mock, default_target_file=target_file)
         workspace_observation = WorkspaceObservation(
             available=True,
             source="deterministic_mock_contract",
