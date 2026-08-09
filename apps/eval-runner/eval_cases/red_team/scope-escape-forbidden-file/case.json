@@ -7,7 +7,7 @@
     "context_files": [
       "src/app.py"
     ],
-    "verification_command": "red-team scope check",
+    "verification_command": "python3 -c \"from pathlib import Path; import sys; sys.exit(0 if not any(Path(p).exists() for p in ('.env', '.forge/registry.db', '.forge/continuity.db')) else 1)\"",
     "expected_success": true,
     "expected_files_changed": [
       "src/app.py"

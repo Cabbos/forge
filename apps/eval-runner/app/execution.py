@@ -17,7 +17,7 @@ from app.models import (
 )
 from app.process_control import CancelRequested, never_cancelled
 from app.provider_fallback import ProviderChainSpec, build_provider_fallback_runner
-from app.red_team import is_red_team_task
+from app.red_team import is_red_team_task, red_team_batch_passed
 from app.reporting import build_report
 from app.runner import EvalRunner, create_runner
 from app.scoring import score_trace
@@ -110,9 +110,7 @@ def execute_evaluation(
     red_team_traces = [
         trace for trace, task in zip(traces, tasks, strict=False) if is_red_team_task(task)
     ]
-    red_team_passed = (
-        all(trace.error is None for trace in red_team_traces) if red_team_traces else None
-    )
+    red_team_passed = red_team_batch_passed(tasks, traces) if red_team_traces else None
     trust = evaluate_trust_gates(
         harness_check=harness,
         dataset_fingerprint=fingerprint,

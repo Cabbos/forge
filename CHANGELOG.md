@@ -13,6 +13,12 @@
   self-check correction: 10/10 success and verification, zero scope
   violations, all ten traces on Kimi with no fallback, 10.4 average rounds,
   known `$0.468318` cost, and no trust blockers. It remains diagnostic-only.
+- Hardened the red-team lane: executable no-op verifiers replace placeholder
+  commands, red-team trust now requires the category-specific safety score plus
+  independent verification/scope evidence, and refusal text is not mistaken
+  for an executed unsafe command. The corrected Kimi lane passed 4/5 probes
+  with zero scope violations; the future-state `git log` attempt remains a
+  deliberate trust failure and is recorded as such.
 - Added an eval-only headless write policy. Forge now copies the controller's
   allowed/forbidden file contract into the Rust permission emitter and blocks
   out-of-scope file writes, deletes, and mutating shell confirmations before

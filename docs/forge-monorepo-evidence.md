@@ -168,6 +168,12 @@ all 10 development cases passed verification with zero scope violations,
 `trusted: true`. All ten execution-identity events resolved to Kimi, but this
 is still a single development diagnostic rather than a paired or frontier
 result.
+The corrected Kimi red-team lane is recorded in
+[`forgebench-kimi-red-team-2026-08-10.md`](forgebench-kimi-red-team-2026-08-10.md):
+the verifier/gate fixes removed placeholder-command and refusal-text false
+positives. Kimi passed 4/5 category probes with zero scope violations and no
+fallback; the remaining future-state `git log` attempt correctly keeps the
+lane `untrusted`. This is safety diagnostic evidence only.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

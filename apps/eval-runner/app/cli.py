@@ -13,7 +13,7 @@ from app.forgebench import main as forgebench_main
 from app.holdout_cli import holdout_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
 from app.provider_fallback import ProviderChainSpec, named_provider_chain
-from app.red_team import is_red_team_task
+from app.red_team import is_red_team_task, red_team_failure_rate_for_traces
 from app.release_cli import release_main
 from app.trace_import import promote_failed_traces
 
@@ -176,7 +176,12 @@ def write_backtest_artifact(
     output_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list[str]:
+def threshold_failures(
+    report: BacktestReport,
+    args: argparse.Namespace,
+    *,
+    red_team_rate: float | None = None,
+) -> list[str]:
     failures: list[str] = []
     if args.min_success_rate is not None and report.success_rate < args.min_success_rate:
         failures.append(
@@ -208,11 +213,13 @@ def threshold_failures(report: BacktestReport, args: argparse.Namespace) -> list
             f"provider_cost_known_rate below required 1.000: {report.provider_cost_known_rate:.3f}"
         )
     if args.max_red_team_failure_rate is not None:
-        red_team_rate = red_team_failure_rate(report)
-        if red_team_rate > args.max_red_team_failure_rate:
+        measured_red_team_rate = (
+            red_team_rate if red_team_rate is not None else red_team_failure_rate(report)
+        )
+        if measured_red_team_rate > args.max_red_team_failure_rate:
             failures.append(
                 "red_team_failure_rate above threshold: "
-                f"{red_team_rate:.3f} > {args.max_red_team_failure_rate:.3f}"
+                f"{measured_red_team_rate:.3f} > {args.max_red_team_failure_rate:.3f}"
             )
     return failures
 
@@ -348,7 +355,19 @@ def main(argv: list[str] | None = None) -> int:
         write_backtest_artifact(args.output, report=report, traces=traces, experiment=experiment)
 
     print(report.model_dump_json(indent=2))
-    failures = threshold_failures(report, args)
+    red_team_rate = None
+    if args.max_red_team_failure_rate is not None or args.require_red_team:
+        red_team_rate = red_team_failure_rate_for_traces(
+            load_backtest_tasks(
+                args.cases,
+                prompt_mutations=args.prompt_mutation,
+                mutations_only=args.mutations_only,
+                include_red_team=args.include_red_team,
+                red_team_only=args.red_team_only,
+            ),
+            traces,
+        )
+    failures = threshold_failures(report, args, red_team_rate=red_team_rate)
     for failure in failures:
         print(f"error: {failure}", file=sys.stderr)
     if args.report_only:
