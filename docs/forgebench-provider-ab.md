@@ -80,3 +80,13 @@ interval `[-24,987.5, 15,664.4]` ms). The raw local artifact digest was
 `e251d528d158443cb5d2f45ff6f85236969fcb41bd344d1a101f742937a64608`.
 This is the strongest current development evidence for an efficiency
 difference, not a claim of superior model intelligence or frontier quality.
+
+After the runtime-budget, artifact-verifier, and universal-score changes, a
+fresh route-pure smoke on `forgebench-dev-domain-normalize-title` completed
+1/1 trusted, verified, and scope-clean on both arms. DeepSeek used 17 rounds,
+98,860 ms, and `$0.00489`; Kimi used 15 rounds, 69,779 ms, and `$0.0624`.
+All universal score deltas were `0.0`, so the one-pair decision remained
+`no_material_difference`. The current-source artifact digest is
+`4de283b60d15e3f6b816c56f18ba9e458c0c7cfc4a2bd7908a25f23d7dd92dd2`, bound to
+commit `0c953e292c58305f8d4a92e1524211863513651b`; the offline verifier passed.
+This is a current-harness smoke, not a model-quality or frontier claim.
