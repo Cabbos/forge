@@ -5,6 +5,10 @@
   unchanged. This removes a false `harness_untrusted` blocker from real eval
   reports without relaxing scope or trust gates; the full eval-runner suite is
   645/645.
+- Re-ran the corrected trust path with a real Kimi K3 config-parser smoke:
+  1/1 success and verification, zero scope violations, `trusted: true`, and
+  known `$0.032733` cost. This is development-only trust-path evidence, not a
+  new paired or frontier-quality result.
 - Added an eval-only headless write policy. Forge now copies the controller's
   allowed/forbidden file contract into the Rust permission emitter and blocks
   out-of-scope file writes, deletes, and mutating shell confirmations before

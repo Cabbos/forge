@@ -154,6 +154,12 @@ the golden mock now stays inside each case's declared output scope and treats
 explicit no-op cases as unchanged. The canonical 10-case development mock is
 now trusted with zero scope violations; this fixes evidence pollution but is
 not a new paid provider or holdout result.
+A fresh real-provider smoke after that correction is summarized in the same
+[`forgebench-golden-trust-self-check-2026-08-10.md`](forgebench-golden-trust-self-check-2026-08-10.md)
+record: Kimi K3 completed the config-parser case with 1.0000 success and
+verification, zero scope violations, known `$0.032733` cost, and
+`trusted: true` with no blockers. It validates the trust path only and remains
+development-only evidence.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all
