@@ -1,5 +1,9 @@
 # Changelog
 
+- Budgeted ordinary evals now enforce the cumulative cost boundary before the
+  next provider call: reaching the cap or encountering unknown cost stops the
+  remaining tasks and records `execution_stopped_at_cost_boundary` instead of
+  publishing a misleading partial success.
 - Recorded a real 10-case Kimi K3 development diagnostic with complete
   verification, zero scope violations, known usage/cost for every trace, and
   an auditable `$0.6010896` spend under the fail-closed cost gate; the result is

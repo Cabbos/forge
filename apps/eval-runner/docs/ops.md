@@ -229,7 +229,9 @@ in the same report. The report `score_summary` includes red-team labels such as
 
 Cost budgets can be enforced in CI with `--max-total-cost-usd`; add
 `--require-known-cost` for paid runs so incomplete billing evidence fails closed.
-The mock runner
+The execution loop checks this boundary before each subsequent provider call;
+when it stops early, the report carries `execution_stopped_at_cost_boundary`
+and is not treated as a complete trusted run. The mock runner
 can carry `metadata.mock.cost_usd`, while real Forge traces may emit `cost_usd`
 directly in the trace payload:
 

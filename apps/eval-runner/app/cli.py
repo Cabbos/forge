@@ -30,6 +30,8 @@ def run_backtest_with_traces(
     include_red_team: bool = False,
     red_team_only: bool = False,
     provider_chain: ProviderChainSpec | None = None,
+    max_total_cost_usd: float | None = None,
+    require_known_cost: bool = False,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
     execution = run_backtest_execution(
         cases_path,
@@ -42,6 +44,8 @@ def run_backtest_with_traces(
         include_red_team=include_red_team,
         red_team_only=red_team_only,
         provider_chain=provider_chain,
+        max_total_cost_usd=max_total_cost_usd,
+        require_known_cost=require_known_cost,
     )
     return execution.report, execution.traces
 
@@ -59,6 +63,8 @@ def run_backtest_execution(
     red_team_only: bool = False,
     require_red_team: bool = False,
     provider_chain: ProviderChainSpec | None = None,
+    max_total_cost_usd: float | None = None,
+    require_known_cost: bool = False,
 ) -> EvaluationExecution:
     tasks = load_backtest_tasks(
         cases_path,
@@ -81,6 +87,8 @@ def run_backtest_execution(
             validation_timeout_seconds=settings.validation_timeout_seconds,
             require_red_team=require_red_team,
             provider_chain=provider_chain,
+            max_total_cost_usd=max_total_cost_usd,
+            require_known_cost=require_known_cost,
         ),
     )
 
@@ -97,6 +105,8 @@ def run_backtest(
     include_red_team: bool = False,
     red_team_only: bool = False,
     provider_chain: ProviderChainSpec | None = None,
+    max_total_cost_usd: float | None = None,
+    require_known_cost: bool = False,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -109,6 +119,8 @@ def run_backtest(
         include_red_team=include_red_team,
         red_team_only=red_team_only,
         provider_chain=provider_chain,
+        max_total_cost_usd=max_total_cost_usd,
+        require_known_cost=require_known_cost,
     )
     return report
 
@@ -308,6 +320,8 @@ def main(argv: list[str] | None = None) -> int:
             red_team_only=args.red_team_only,
             require_red_team=args.require_red_team,
             provider_chain=provider_chain,
+            max_total_cost_usd=args.max_total_cost_usd,
+            require_known_cost=args.require_known_cost,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)

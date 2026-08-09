@@ -13,6 +13,7 @@ from app.models import (
     EvalProvider,
     EvaluationTask,
     TrustGateResult,
+    TrustStatus,
 )
 from app.process_control import CancelRequested, never_cancelled
 from app.provider_fallback import ProviderChainSpec, build_provider_fallback_runner
@@ -33,6 +34,8 @@ class ExecutionOptions:
     validation_timeout_seconds: float
     require_red_team: bool
     provider_chain: ProviderChainSpec | None = None
+    max_total_cost_usd: float | None = None
+    require_known_cost: bool = False
 
 
 @dataclass(frozen=True)
@@ -71,8 +74,22 @@ def execute_tasks(
     for task in tasks:
         if cancel_requested():
             break
+        if _cost_boundary_reached(traces, options):
+            break
         traces.append(runner.run_task(task, cancel_requested=cancel_requested))
+        if _cost_boundary_reached(traces, options):
+            break
     return traces
+
+
+def _cost_boundary_reached(traces: list[AgentTrace], options: ExecutionOptions) -> bool:
+    if options.require_known_cost and any(trace.cost_usd is None for trace in traces):
+        return True
+    if options.max_total_cost_usd is None:
+        return False
+    if any(trace.cost_usd is None for trace in traces):
+        return True
+    return sum(trace.cost_usd or 0.0 for trace in traces) >= options.max_total_cost_usd
 
 
 def execute_evaluation(
@@ -106,5 +123,13 @@ def execute_evaluation(
         require_red_team=options.require_red_team,
         score_coverage=report.score_coverage,
     )
+    if len(traces) < len(tasks) and _cost_boundary_reached(traces, options):
+        trust = trust.model_copy(
+            update={
+                "status": TrustStatus.UNKNOWN,
+                "trusted": False,
+                "blockers": sorted(set([*trust.blockers, "execution_stopped_at_cost_boundary"])),
+            }
+        )
     report = report.model_copy(update={"trust_result": trust})
     return EvaluationExecution(traces=traces, report=report, trust_result=trust)

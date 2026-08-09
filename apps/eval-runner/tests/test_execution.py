@@ -102,6 +102,46 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
     assert seen["command"] == ["forge-headless"]
 
 
+def test_execute_evaluation_stops_before_next_call_at_cost_boundary(
+    tmp_path: Path,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    task = load_cases(cases_path)[0]
+    first = task.model_copy(update={"metadata": {"mock": {"cost_usd": 1.0}}})
+    second = task.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=replace(mock_options(), max_total_cost_usd=1.0),
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.total_cost_usd == 1.0
+    assert execution.trust_result.status == TrustStatus.UNKNOWN
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
+def test_execute_evaluation_stops_after_unknown_cost_when_required(
+    tmp_path: Path,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    task = load_cases(cases_path)[0]
+    first = task
+    second = task.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=replace(mock_options(), require_known_cost=True),
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.provider_cost_known_rate == 0.0
+    assert execution.trust_result.status == TrustStatus.UNKNOWN
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
 def test_execute_evaluation_is_untrusted_when_observer_replay_self_check_fails(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
