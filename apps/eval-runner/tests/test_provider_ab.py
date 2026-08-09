@@ -262,6 +262,9 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     assert [call.provider_route.provider for call in calls] == ["deepseek", "custom_openai"]
     assert all(call.provider_chain is None for call in calls)
     assert result.comparison.paired_attempts == 1
+    assert len(result.comparison.source_commit) == 40
+    assert len(result.comparison.dirty_state_sha256) == 64
+    assert result.comparison.task_ids == ["task-a"]
 
 
 def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:
@@ -280,3 +283,17 @@ def test_provider_ab_artifact_has_canonical_sha256_sidecar(tmp_path) -> None:
     assert output.exists()
     assert output.with_suffix(".json.sha256").read_text().strip() == digest
     assert "api_key" not in output.read_text().lower()
+
+
+def test_provider_ab_binds_source_and_task_contract_to_comparison() -> None:
+    comparison = compare_provider_ab(
+        control=_deepseek(["task-a"]),
+        candidate=_kimi(["task-a"]),
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+
+    assert comparison.source_commit == "1" * 40
+    assert comparison.dirty_state_sha256 == "2" * 64
+    assert comparison.task_ids == ["task-a"]

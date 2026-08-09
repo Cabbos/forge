@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +26,7 @@ from app.execution import ExecutionOptions, execute_evaluation
 from app.execution_identity import default_execution_identity, validate_execution_identity_event
 from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
 from app.provenance import canonical_json_bytes, sha256_bytes
-from app.provenance_models import Sha256
+from app.provenance_models import GitSha1, Sha256
 from app.provider_fallback import ProviderRouteSpec
 from app.red_team import is_red_team_task
 
@@ -109,6 +111,9 @@ class ProviderABComparison(EvalModel):
     control_arm_id: str
     candidate_arm_id: str
     dataset_fingerprint: Sha256
+    source_commit: GitSha1 = "0" * 40
+    dirty_state_sha256: Sha256 = "0" * 64
+    task_ids: list[str] = Field(default_factory=list)
     paired_attempts: int = Field(ge=1)
     control: ProviderABArmSummary
     candidate: ProviderABArmSummary
@@ -133,6 +138,10 @@ class ProviderABComparison(EvalModel):
             raise ValueError("provider A/B arms must be distinct")
         if self.paired_attempts != len(self.outcome_changes):
             raise ValueError("provider A/B outcome count must match paired attempts")
+        if self.task_ids and self.task_ids != sorted(self.task_ids):
+            raise ValueError("provider A/B task ids must be sorted")
+        if len(self.task_ids) != len(set(self.task_ids)):
+            raise ValueError("provider A/B task ids must be unique")
         if self.winner == "blocked" and not self.blockers:
             raise ValueError("blocked provider A/B comparison requires blockers")
         if self.winner != "blocked" and self.blockers:
@@ -157,6 +166,7 @@ def run_provider_ab(
     require_red_team: bool = False,
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
+    repository_root: Path | None = None,
 ) -> ProviderABExecution:
     """Run route-pure DeepSeek control and Kimi candidate arms over one dataset."""
 
@@ -172,6 +182,9 @@ def run_provider_ab(
         raise ProviderABError("no_tasks_selected")
     trial_tasks = [task for _ in range(trials) for task in tasks]
     fingerprint = dataset_fingerprint(tasks)
+    source_commit, dirty_state_sha256 = _git_source_identity(
+        (repository_root or Path(__file__).resolve().parents[2]).resolve()
+    )
     settings = get_settings()
 
     arms: list[ProviderABArm] = []
@@ -205,7 +218,13 @@ def run_provider_ab(
     return ProviderABExecution(
         control=control,
         candidate=candidate,
-        comparison=compare_provider_ab(control=control, candidate=candidate),
+        comparison=compare_provider_ab(
+            control=control,
+            candidate=candidate,
+            source_commit=source_commit,
+            dirty_state_sha256=dirty_state_sha256,
+            task_ids=[task.id for task in tasks],
+        ),
     )
 
 
@@ -310,6 +329,9 @@ def compare_provider_ab(
     *,
     control: ProviderABArm,
     candidate: ProviderABArm,
+    source_commit: str | None = None,
+    dirty_state_sha256: str | None = None,
+    task_ids: list[str] | None = None,
 ) -> ProviderABComparison:
     """Compare two complete, route-pure executions over the same task order."""
 
@@ -327,6 +349,12 @@ def compare_provider_ab(
         raise ProviderABError("task_order_mismatch")
     if len(control.traces) != len(candidate.traces):
         raise ProviderABError("attempt_count_mismatch")
+    base_task_ids = sorted(set(control_ids))
+    expected_task_ids = task_ids if task_ids is not None else base_task_ids
+    if expected_task_ids != base_task_ids:
+        raise ProviderABError("task_ids_mismatch")
+    source_commit = source_commit or "0" * 40
+    dirty_state_sha256 = dirty_state_sha256 or "0" * 64
 
     control_summary = _arm_summary(control)
     candidate_summary = _arm_summary(candidate)
@@ -339,6 +367,9 @@ def compare_provider_ab(
         control_arm_id=control.arm_id,
         candidate_arm_id=candidate.arm_id,
         dataset_fingerprint=control.dataset_fingerprint,
+        source_commit=source_commit,  # type: ignore[arg-type]
+        dirty_state_sha256=dirty_state_sha256,  # type: ignore[arg-type]
+        task_ids=expected_task_ids,
         paired_attempts=len(control.traces),
         control=control_summary,
         candidate=candidate_summary,
@@ -389,6 +420,51 @@ def _validate_arm(arm: ProviderABArm) -> None:
             raise ProviderABError("execution_identity_mismatch") from exc
         if any(event.get("event_type") == "eval_provider_fallback" for event in trace.raw_events):
             raise ProviderABError("fallback_contamination")
+
+
+def _git_source_identity(repository_root: Path) -> tuple[str, str]:
+    """Return commit and a secret-free digest of the current dirty state."""
+
+    commit = _git_text(repository_root, "rev-parse", "HEAD")
+    status = _git_bytes(repository_root, "status", "--porcelain=v1", "--untracked-files=all", "-z")
+    diff = _git_bytes(repository_root, "diff", "--binary", "HEAD", "--", ".")
+    untracked: list[dict[str, str]] = []
+    for entry in (part for part in status.split(b"\0") if part):
+        if entry[:2] != b"??" or len(entry) < 4:
+            continue
+        relative_path = os.fsdecode(entry[3:])
+        candidate = repository_root / relative_path
+        if candidate.is_file():
+            untracked.append(
+                {"path": relative_path, "sha256": sha256_bytes(candidate.read_bytes())}
+            )
+    dirty_digest = sha256_bytes(
+        b"status\0"
+        + status
+        + b"\0diff\0"
+        + diff
+        + b"\0untracked\0"
+        + canonical_json_bytes(sorted(untracked, key=lambda item: item["path"]))
+    )
+    return commit, dirty_digest
+
+
+def _git_text(repository_root: Path, *args: str) -> str:
+    completed = subprocess.run(
+        ["git", *args], cwd=repository_root, text=True, capture_output=True, check=False
+    )
+    if completed.returncode != 0 or not completed.stdout.strip():
+        raise ProviderABError("source_identity_unavailable")
+    return completed.stdout.strip()
+
+
+def _git_bytes(repository_root: Path, *args: str) -> bytes:
+    completed = subprocess.run(
+        ["git", *args], cwd=repository_root, capture_output=True, check=False
+    )
+    if completed.returncode != 0:
+        raise ProviderABError("dirty_state_unavailable")
+    return completed.stdout
 
 
 def _trust_blockers(arm: ProviderABArm, label: str) -> list[str]:
