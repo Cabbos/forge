@@ -10,6 +10,7 @@ from app.models import (
     EvalProvider,
     EvalScore,
     EvaluationTask,
+    FailureCategory,
     TrustGateResult,
     TrustStatus,
     VerificationResult,
@@ -242,6 +243,37 @@ def test_provider_ab_contract_reports_failure_category_delta() -> None:
     assert comparison.control.failure_categories == {"runner_error": 1}
     assert comparison.candidate.failure_categories == {}
     assert comparison.failure_category_deltas == {"runner_error": -1}
+
+
+def test_provider_ab_prefers_controller_failure_taxonomy_over_legacy_report() -> None:
+    control = _deepseek(["task-a"], passed=[False])
+    trace = control.traces[0].model_copy(
+        update={
+            "failure_category": FailureCategory.SCOPE_VIOLATION,
+            "scope_violations": ["unexpected_change:generated.txt"],
+            "raw_events": [
+                *control.traces[0].raw_events,
+                {
+                    "event_type": "harness_contract_evidence",
+                    "failure_taxonomy": {"primary": "scope_violation"},
+                },
+            ],
+        }
+    )
+    control = ProviderABArm(
+        arm_id=control.arm_id,
+        dataset_fingerprint=control.dataset_fingerprint,
+        traces=(trace,),
+        report=control.report.model_copy(update={"failure_categories": {"runner_error": 1}}),
+    )
+
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=_kimi(["task-a"]),
+        run_contract=ProviderABRunContract(trials=1, minimum_paired_attempts=2),
+    )
+
+    assert comparison.control.failure_categories == {"scope_violation": 1}
 
 
 def test_provider_ab_exposes_universal_score_intervals() -> None:

@@ -2,8 +2,9 @@
 
 - Added contract-bound provider A/B tail evidence: new diagnostics include
   deterministic median/p95 round, duration, and cost summaries plus per-arm
-  failure categories and candidate-minus-control deltas. Legacy artifacts keep
-  their empty optional fields and remain offline-verifiable.
+  controller-owned failure categories and candidate-minus-control deltas.
+  Legacy aggregate labels cannot mask typed scope/progress failures; legacy
+  artifacts keep their optional fields and remain offline-verifiable.
 - Added a route-pure Kimi K3 versus DeepSeek V4 Flash paired diagnostic. It
   runs separate approved routes over the same ordered tasks, binds every trace
   to execution identity, rejects fallback contamination and unknown cost, and

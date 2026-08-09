@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,7 @@ from app.config import get_settings
 from app.datasets import dataset_fingerprint
 from app.execution import ExecutionOptions, execute_evaluation
 from app.execution_identity import default_execution_identity, validate_execution_identity_event
+from app.harness_contracts import resolve_typed_failure_category
 from app.models import AgentTrace, BacktestReport, EvalModel, EvalProvider
 from app.process_control import CancelRequested, never_cancelled
 from app.provenance import canonical_json_bytes, sha256_bytes
@@ -729,7 +731,7 @@ def _arm_summary(arm: ProviderABArm, *, include_distribution: bool = False) -> P
         distribution_summary=(
             _distribution_summary(arm.traces) if include_distribution else {}
         ),
-        failure_categories=(arm.report.failure_categories if include_distribution else {}),
+        failure_categories=(_failure_categories(arm) if include_distribution else {}),
     )
 
 
@@ -791,6 +793,23 @@ def _failure_category_deltas(
         - control.failure_categories.get(category, 0)
         for category in sorted(categories)
     }
+
+
+def _failure_categories(arm: ProviderABArm) -> dict[str, int]:
+    """Prefer controller taxonomy over legacy aggregate labels."""
+
+    categories: Counter[str] = Counter()
+    for trace in arm.traces:
+        if _trace_passed(trace):
+            continue
+        category = resolve_typed_failure_category(
+            trace.raw_events,
+            trace.failure_category.value,
+        )
+        if category in {None, "", "none", "passed"}:
+            category = "scope_violation" if trace.scope_violations else "runner_error"
+        categories[category] += 1
+    return dict(sorted(categories.items()))
 
 
 def _outcome_changes(
