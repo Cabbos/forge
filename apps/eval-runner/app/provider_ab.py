@@ -269,6 +269,109 @@ def write_provider_ab_artifact(
     return digest
 
 
+def load_provider_ab_artifact(output_path: Path) -> ProviderABExecution:
+    """Verify and load a provider A/B artifact without making provider calls."""
+
+    try:
+        raw = output_path.read_bytes()
+        sidecar = output_path.with_suffix(output_path.suffix + ".sha256")
+        sidecar_digest = sidecar.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise ProviderABError("artifact_read_failed") from exc
+    actual_digest = sha256_bytes(raw)
+    if sidecar_digest != actual_digest:
+        raise ProviderABError("artifact_digest_mismatch")
+    if SECRET_PATTERN.search(raw.decode("utf-8", errors="replace")) is not None:
+        raise ProviderABError("artifact_secret_detected")
+    try:
+        payload = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ProviderABError("artifact_json_invalid") from exc
+    if not isinstance(payload, dict) or set(payload) != {
+        "schema_version",
+        "kind",
+        "comparison",
+        "control",
+        "candidate",
+    }:
+        raise ProviderABError("artifact_schema_invalid")
+    try:
+        if payload["schema_version"] != 1 or payload["kind"] != "provider_ab_diagnostic":
+            raise ProviderABError("artifact_schema_invalid")
+        comparison = ProviderABComparison.model_validate(payload["comparison"])
+        control_payload = payload["control"]
+        candidate_payload = payload["candidate"]
+        if not isinstance(control_payload, dict) or not isinstance(candidate_payload, dict):
+            raise ProviderABError("artifact_schema_invalid")
+        if set(control_payload) != {"arm_id", "dataset_fingerprint", "report", "traces"}:
+            raise ProviderABError("artifact_schema_invalid")
+        if set(candidate_payload) != {"arm_id", "dataset_fingerprint", "report", "traces"}:
+            raise ProviderABError("artifact_schema_invalid")
+        control_traces = tuple(
+            AgentTrace.model_validate(item) for item in control_payload["traces"]
+        )
+        candidate_traces = tuple(
+            AgentTrace.model_validate(item) for item in candidate_payload["traces"]
+        )
+        control = ProviderABArm(
+            arm_id=control_payload["arm_id"],
+            dataset_fingerprint=control_payload["dataset_fingerprint"],
+            traces=control_traces,
+            report=BacktestReport.model_validate(control_payload["report"]),
+        )
+        candidate = ProviderABArm(
+            arm_id=candidate_payload["arm_id"],
+            dataset_fingerprint=candidate_payload["dataset_fingerprint"],
+            traces=candidate_traces,
+            report=BacktestReport.model_validate(candidate_payload["report"]),
+        )
+    except ProviderABError:
+        raise
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ProviderABError("artifact_schema_invalid") from exc
+    if comparison.source_commit == "0" * 40 or comparison.dirty_state_sha256 == "0" * 64:
+        raise ProviderABError("source_provenance_missing")
+    try:
+        recomputed = compare_provider_ab(
+            control=control,
+            candidate=candidate,
+            source_commit=comparison.source_commit,
+            dirty_state_sha256=comparison.dirty_state_sha256,
+            task_ids=comparison.task_ids,
+        )
+    except ProviderABError as exc:
+        raise ProviderABError(f"artifact_comparison_invalid:{exc}") from exc
+    if recomputed != comparison:
+        raise ProviderABError("artifact_comparison_mismatch")
+    return ProviderABExecution(control=control, candidate=candidate, comparison=comparison)
+
+
+def provider_ab_verify_main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description="Verify a provider A/B artifact without making provider calls."
+    )
+    parser.add_argument("--artifact", type=Path, required=True)
+    args = parser.parse_args(argv)
+    try:
+        result = load_provider_ab_artifact(args.artifact)
+        digest = sha256_bytes(args.artifact.read_bytes())
+    except (OSError, ValueError) as exc:
+        print(f"error: provider A/B artifact verification failed: {exc}")
+        return 1
+    print(
+        json.dumps(
+            {
+                "ok": True,
+                "artifact": str(args.artifact),
+                "artifact_sha256": digest,
+                "comparison": result.comparison.model_dump(mode="json"),
+            },
+            indent=2,
+        )
+    )
+    return 0
+
+
 def provider_ab_main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run a route-pure DeepSeek control versus Kimi k3 diagnostic comparison."

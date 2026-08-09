@@ -325,6 +325,25 @@ def test_cli_dispatches_provider_ab_subcommand_without_touching_ordinary_runner(
     assert seen == [["--cases", "cases", "--output", "artifact.json"]]
 
 
+def test_cli_dispatches_provider_ab_verify_subcommand(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.cli import main
+
+    seen: list[list[str]] = []
+
+    def fake_provider_ab_verify(argv: list[str]) -> int:
+        seen.append(argv)
+        return 8
+
+    monkeypatch.setattr("app.cli.provider_ab_verify_main", fake_provider_ab_verify)
+
+    result = main(["provider-ab-verify", "--artifact", "artifact.json"])
+
+    assert result == 8
+    assert seen == [["--artifact", "artifact.json"]]
+
+
 def test_cli_invalid_provider_exits_two(capsys) -> None:
     from app.cli import main
 

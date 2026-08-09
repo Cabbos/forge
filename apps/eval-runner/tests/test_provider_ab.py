@@ -16,6 +16,7 @@ from app.provider_ab import (
     ProviderABArm,
     ProviderABError,
     compare_provider_ab,
+    load_provider_ab_artifact,
     run_provider_ab,
     write_provider_ab_artifact,
 )
@@ -337,6 +338,33 @@ def test_provider_ab_artifact_rejects_secret_like_trace_content(tmp_path) -> Non
             control=control,
             candidate=leaked_candidate,
         )
+
+
+def test_provider_ab_artifact_verifier_round_trips_and_rejects_tamper(tmp_path) -> None:
+    control = _deepseek(["task-a"])
+    candidate = _kimi(["task-a"])
+    comparison = compare_provider_ab(
+        control=control,
+        candidate=candidate,
+        source_commit="1" * 40,
+        dirty_state_sha256="2" * 64,
+        task_ids=["task-a"],
+    )
+    output = tmp_path / "provider-ab.json"
+    write_provider_ab_artifact(
+        output,
+        comparison=comparison,
+        control=control,
+        candidate=candidate,
+    )
+
+    verified = load_provider_ab_artifact(output)
+
+    assert verified.comparison == comparison
+    assert verified.control.traces == control.traces
+    output.write_bytes(output.read_bytes().replace(b'"task-a"', b'"task-b"', 1))
+    with pytest.raises(ProviderABError, match="artifact_digest_mismatch"):
+        load_provider_ab_artifact(output)
 
 
 def test_provider_ab_binds_source_and_task_contract_to_comparison() -> None:

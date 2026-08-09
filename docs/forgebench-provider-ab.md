@@ -49,6 +49,10 @@ The offline contract is:
 
 ```bash
 scripts/acceptance.sh --only "development Kimi/DeepSeek paired diagnostic contract"
+
+# Re-verify a saved artifact without contacting either provider.
+cd apps/eval-runner
+uv run python -m app.cli provider-ab-verify --artifact /tmp/forge-provider-ab.json
 ```
 
 ## Live smoke evidence
