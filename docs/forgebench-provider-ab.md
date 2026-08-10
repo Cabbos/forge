@@ -32,7 +32,8 @@ telemetry so convergence changes can be attributed to the harness layer;
 provider failures are reduced to bounded codes (for example `rate_limit`,
 `authentication`, `timeout`, or `bad_request`) with candidate-minus-control
 deltas, never raw response text or credentials;
-the candidate cannot win when any safety score regresses. It also writes a
+the candidate cannot win when any safety or Forge evidence score regresses,
+and a score dimension present in only one arm blocks the comparison. It also writes a
 canonical JSON artifact and `.sha256` sidecar. Artifact publication is fail-closed: a comparison must
 carry a non-zero source commit and dirty-state digest, and the canonical bytes
 are scanned for token-like material before either the JSON or its digest sidecar
@@ -121,3 +122,31 @@ scores matched. This is a safety signal to investigate with more pairs, not a
 model-quality win. The verifier passed artifact
 `3eb92154dd6cf453cfcfc74f7727243f25e60c039af8cba43fff4d9b10b42c01`, bound to
 commit `3645ad1492f4307ff320cc93fea9b8be44eb9fed`.
+
+## Two-trial full development diagnostic
+
+The current worktree then ran all ten development cases twice per arm under
+the explicit contract (`trials=2`, known cost required, `$3.00` cumulative
+ceiling, 2,400-second wall-clock ceiling). The raw canonical artifact remains
+outside Git at
+`/tmp/forge-provider-ab-kimi-deepseek-2trials-20260810.json`; its SHA-256 is
+`9e15a76e93e01ca6aba1134c405ef66fffd796d192e32dace75ac813d4642f05`.
+
+| Metric | DeepSeek control | Kimi K3 candidate |
+| --- | ---: | ---: |
+| Attempts | 20 | 20 |
+| Success / verification | 20/20 | 19/20 |
+| Scope violations | 0 | 0 |
+| Average model rounds | 5.35 | 5.65 |
+| Average duration | 25,649.85 ms | 51,318.35 ms |
+| Known cost | `$0.023469` | `$0.5567196` |
+| Provider cost known rate | 1.0000 | 1.0000 |
+
+The only candidate failure was a second-trial admin bulk-status verification
+failure. Both arms stayed trusted, fallback-free, and at `1.0` for every
+universal safety/evidence aggregate that was emitted. The paired decision was
+`no_material_difference`: the sample does not support a model-quality win,
+and the candidate's one functional failure prevents a stronger claim. The
+current offline verifier also accepts this artifact after the comparison
+compatibility fix. This remains development evidence, not a holdout or
+frontier claim.

@@ -37,7 +37,7 @@ from app.provenance_models import SECRET_PATTERN, GitSha1, Sha256
 from app.provider_errors import summarize_provider_errors
 from app.provider_fallback import ProviderRouteSpec
 from app.red_team import is_red_team_task
-from app.scoring import UNIVERSAL_SCORE_NAMES, score_trace
+from app.scoring import KNOWN_SCORE_NAMES, UNIVERSAL_SCORE_NAMES, score_trace
 
 _BOOTSTRAP_RESAMPLES = 2_000
 _BOOTSTRAP_SEED = 814_2026
@@ -617,9 +617,11 @@ def compare_provider_ab(
         _provider_error_deltas(control_summary, candidate_summary) if include_distribution else {}
     )
     outcome_changes = _outcome_changes(control.traces, candidate.traces)
+    score_quality_blockers = _harness_score_blockers(control, candidate)
     intervals = _bootstrap_intervals(control.traces, candidate.traces)
     deltas = {name: interval.estimate for name, interval in intervals.items()}
     blockers = _trust_blockers(control, "control") + _trust_blockers(candidate, "candidate")
+    blockers.extend(score_quality_blockers)
     if (
         run_contract is not None
         and run_contract.minimum_paired_attempts is not None
@@ -846,6 +848,31 @@ def _provider_errors(arm: ProviderABArm) -> dict[str, int]:
     return dict(sorted(errors.items()))
 
 
+def _harness_score_blockers(
+    control: ProviderABArm,
+    candidate: ProviderABArm,
+) -> list[str]:
+    """Fail closed when conditional Forge evidence quality is incomparable.
+
+    Universal safety scores are always expected. Forge evidence scores are
+    conditional on the trace contract, so an arm that emits a known score
+    while the other arm omits it is a contract mismatch rather than a reason
+    to silently treat the missing evidence as zero.
+    """
+
+    known = KNOWN_SCORE_NAMES - {"budget_ok"}
+    control_names = set(control.report.score_summary)
+    candidate_names = set(candidate.report.score_summary)
+    mismatched = sorted((control_names ^ candidate_names) & known)
+    blockers = [f"score_presence_mismatch:{name}" for name in mismatched]
+    for name in sorted((control_names & candidate_names & known) - UNIVERSAL_SCORE_NAMES):
+        control_score = control.report.score_summary[name]
+        candidate_score = candidate.report.score_summary[name]
+        if candidate_score < control_score:
+            blockers.append(f"candidate_score_regression:{name}")
+    return blockers
+
+
 def _outcome_changes(
     control: tuple[AgentTrace, ...], candidate: tuple[AgentTrace, ...]
 ) -> dict[str, str]:
@@ -865,7 +892,8 @@ def _outcome_changes(
 
 
 def _bootstrap_intervals(
-    control: tuple[AgentTrace, ...], candidate: tuple[AgentTrace, ...]
+    control: tuple[AgentTrace, ...],
+    candidate: tuple[AgentTrace, ...],
 ) -> dict[str, ProviderABInterval]:
     metric_values: dict[
         str, tuple[Callable[[AgentTrace], float], Callable[[list[float]], float]]

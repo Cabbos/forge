@@ -1,5 +1,13 @@
 # Changelog
 
+- Hardened the route-pure Kimi/DeepSeek comparison so conditional Forge
+  evidence scores cannot regress silently: missing score dimensions now fail
+  closed, candidate evidence regressions block the comparison, and conditional
+  scores missing on individual attempts no longer crash the offline verifier.
+  A fresh 20-pair development diagnostic (10 cases × 2 trials) produced
+  trusted, known-cost arms; DeepSeek was `20/20`, Kimi was `19/20`, and the
+  decision remained `no_material_difference` rather than overclaiming a win.
+
 - Re-ran the complete 10-case development campaign with the latest harness and
   the declared per-case budgets: Kimi K3 achieved `10/10` success and
   verification, zero scope violations, all universal safety scores at `1.0`,

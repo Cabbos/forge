@@ -11,6 +11,7 @@ from app.models import (
     EvalScore,
     EvaluationTask,
     FailureCategory,
+    ForgeRunEvidence,
     TrustGateResult,
     TrustStatus,
     VerificationResult,
@@ -192,6 +193,96 @@ def test_provider_ab_declares_control_only_when_paired_interval_excludes_zero() 
 
     assert comparison.winner == "control"
     assert comparison.bootstrap_intervals["success_rate"].high < 0
+
+
+def test_provider_ab_blocks_candidate_when_harness_evidence_score_regresses() -> None:
+    control = _deepseek(["task-a"], passed=[False])
+    candidate = _kimi(["task-a"], passed=[True])
+
+    control_trace = control.traces[0].model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                source="forge_headless_trace",
+                session_id="control-session",
+                turn_id="control-turn",
+                verification={
+                    "command": "python -c 'pass'",
+                    "passed": False,
+                    "exit_code": 1,
+                },
+            )
+        }
+    )
+    candidate_trace = candidate.traces[0].model_copy(
+        update={
+            "forge_run_evidence": ForgeRunEvidence(
+                source="forge_headless_trace",
+                session_id="candidate-session",
+                turn_id="candidate-turn",
+                verification={
+                    "command": "python -c 'pass'",
+                    "passed": True,
+                    "exit_code": 1,
+                },
+            )
+        }
+    )
+    control = ProviderABArm(
+        arm_id=control.arm_id,
+        dataset_fingerprint=control.dataset_fingerprint,
+        traces=(control_trace,),
+        report=build_report([control_trace]).model_copy(
+            update={"trust_result": TrustGateResult(status=TrustStatus.TRUSTED, trusted=True)}
+        ),
+    )
+    candidate = ProviderABArm(
+        arm_id=candidate.arm_id,
+        dataset_fingerprint=candidate.dataset_fingerprint,
+        traces=(candidate_trace,),
+        report=build_report([candidate_trace]).model_copy(
+            update={"trust_result": TrustGateResult(status=TrustStatus.TRUSTED, trusted=True)}
+        ),
+    )
+
+    comparison = compare_provider_ab(control=control, candidate=candidate)
+
+    assert (
+        "candidate_score_regression:forge_verification_evidence_quality_ok" in comparison.blockers
+    )
+    assert comparison.winner == "blocked"
+
+
+def test_provider_ab_handles_conditional_harness_score_missing_on_one_attempt() -> None:
+    evidence = ForgeRunEvidence(
+        source="forge_headless_trace",
+        session_id="session",
+        turn_id="turn",
+        verification={
+            "command": "python -c 'pass'",
+            "passed": True,
+            "exit_code": 0,
+        },
+    )
+
+    def attach_first_attempt(arm: ProviderABArm) -> ProviderABArm:
+        trace = arm.traces[0].model_copy(update={"forge_run_evidence": evidence})
+        traces = (trace, arm.traces[1])
+        return ProviderABArm(
+            arm_id=arm.arm_id,
+            dataset_fingerprint=arm.dataset_fingerprint,
+            traces=traces,
+            report=build_report(list(traces)).model_copy(
+                update={"trust_result": TrustGateResult(status=TrustStatus.TRUSTED, trusted=True)}
+            ),
+        )
+
+    comparison = compare_provider_ab(
+        control=attach_first_attempt(_deepseek(["task-a", "task-b"])),
+        candidate=attach_first_attempt(_kimi(["task-a", "task-b"])),
+    )
+
+    assert comparison.winner == "no_material_difference"
+    assert "score_forge_verification_evidence_quality_ok" not in comparison.bootstrap_intervals
 
 
 def test_provider_ab_binds_run_contract_to_comparison() -> None:
