@@ -2,6 +2,7 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Iterator
 from pathlib import Path
 
 IGNORED_TREE_PARTS = frozenset(
@@ -23,11 +24,8 @@ def canonical_tree_manifest(root: Path) -> list[dict[str, str | int]]:
         raise ValueError(f"artifact tree is not a directory: {root}")
 
     entries: list[dict[str, str | int]] = []
-    paths = sorted(root.rglob("*"), key=lambda path: path.relative_to(root).as_posix())
-    for path in paths:
+    for path in _iter_tree_paths(root):
         relative = path.relative_to(root)
-        if any(part in IGNORED_TREE_PARTS for part in relative.parts):
-            continue
         if path.is_symlink():
             kind = "symlink"
             content = os.fsencode(os.readlink(path))
@@ -45,6 +43,35 @@ def canonical_tree_manifest(root: Path) -> list[dict[str, str | int]]:
             }
         )
     return entries
+
+
+def _iter_tree_paths(root: Path) -> Iterator[Path]:
+    """Yield artifact paths without descending into ignored trees.
+
+    ``Path.rglob`` first walks every directory and only lets callers filter
+    the resulting paths.  That is unsafe for live Git worktrees: Git may pack
+    or prune ``.git/objects`` between directory enumeration and stat, causing
+    an otherwise unrelated digest to fail with ``FileNotFoundError``.  Prune
+    ignored directories at the directory boundary instead.
+    """
+
+    def visit(directory: Path) -> Iterator[Path]:
+        try:
+            children = sorted(os.scandir(directory), key=lambda entry: entry.name)
+        except FileNotFoundError:
+            return
+        for child in children:
+            if child.name in IGNORED_TREE_PARTS:
+                continue
+            path = Path(child.path)
+            if child.is_symlink():
+                yield path
+            elif child.is_dir(follow_symlinks=False):
+                yield from visit(path)
+            else:
+                yield path
+
+    yield from visit(root)
 
 
 def canonical_manifest_digest(manifest: object) -> str:
