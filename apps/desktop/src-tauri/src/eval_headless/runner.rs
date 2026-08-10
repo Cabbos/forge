@@ -13,6 +13,7 @@ use crate::continuity::{
     build_episode_from_turn, build_send_input_reflection_event, continuity_events_from_turn,
     continuity_lessons_from_turn, ContinuityEvent, ContinuityService, ReflectionOutcome,
 };
+use crate::harness::shell_policy::{classify_shell_command_in_workspace, ShellPolicyDecision};
 use crate::protocol::events::StreamEvent;
 
 use super::types::{
@@ -128,6 +129,9 @@ impl HeadlessWritePolicy {
         let Some(remainder) = strip_workspace_cd(&normalized, &self.workspace) else {
             return false;
         };
+        if is_workspace_inspection_pipeline(remainder, &self.workspace) {
+            return true;
+        }
         let parts = remainder
             .split(" && ")
             .map(str::trim)
@@ -140,6 +144,75 @@ impl HeadlessWritePolicy {
                     .any(|allowed| allowed == part)
             })
     }
+}
+
+fn is_workspace_inspection_pipeline(command: &str, workspace: &Path) -> bool {
+    if command.is_empty()
+        || command.contains(';')
+        || command.contains("&&")
+        || command.contains("||")
+        || command.contains('&')
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains('(')
+        || command.contains(')')
+        || command.contains('`')
+        || command.contains("$(")
+    {
+        return false;
+    }
+
+    command.split('|').all(|segment| {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            return false;
+        }
+        match classify_shell_command_in_workspace(segment, workspace) {
+            ShellPolicyDecision::AllowInspection => true,
+            ShellPolicyDecision::RequireExplicitConfirmation { .. }
+            | ShellPolicyDecision::Block { .. } => is_bounded_read_helper(segment),
+        }
+    })
+}
+
+fn is_bounded_read_helper(command: &str) -> bool {
+    let mut tokens = command.split_whitespace();
+    let program = loop {
+        let Some(token) = tokens.next() else {
+            return false;
+        };
+        if token.contains('=') && !token.starts_with('-') {
+            continue;
+        }
+        break token.trim_matches(['\'', '"']).to_ascii_lowercase();
+    };
+    if !matches!(program.as_str(), "head" | "tail") {
+        return false;
+    }
+
+    let mut count_required = false;
+    for token in tokens {
+        let token = token.trim_matches(['\'', '"']);
+        if count_required {
+            if !token.chars().all(|value| value.is_ascii_digit()) {
+                return false;
+            }
+            count_required = false;
+            continue;
+        }
+        if token == "-n" {
+            count_required = true;
+        } else if token == "-"
+            || token.strip_prefix('-').is_some_and(|value| {
+                !value.is_empty() && value.chars().all(|value| value.is_ascii_digit())
+            })
+        {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    !count_required
 }
 
 fn normalize_pattern(path: &str) -> String {
@@ -609,6 +682,48 @@ mod tests {
         );
         assert_eq!(
             policy.denial_reason("shell_cmd", Some(&unapproved)),
+            Some("eval_write_policy_blocked_unapproved_shell_command".to_string())
+        );
+
+        let inspection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | head -50",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(policy.denial_reason("shell_cmd", Some(&inspection)), None);
+
+        let inspection_injection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && head README.md & rm -rf .",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&inspection_injection)),
+            Some("eval_write_policy_blocked_mutating_confirmation".to_string())
+        );
+
+        let external_inspection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!("cd {} && head /etc/passwd", workspace.display())
+            }),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("shell_cmd", Some(&external_inspection)),
             Some("eval_write_policy_blocked_unapproved_shell_command".to_string())
         );
 

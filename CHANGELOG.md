@@ -1,5 +1,14 @@
 # Changelog
 
+- Extended the development-only `target_files_v1` harness with bounded
+  controller-provided target/validation context and a narrow read-only shell
+  inspection allowance (`find ... | head -N` inside the eval workspace). The
+  Rust eval write boundary still rejects external paths, redirects, background
+  control, and mutating commands. A follow-up Kimi K3 10-case diagnostic
+  improved success from `0.20` to `0.30` and reduced average rounds from
+  `11.5` to `11.0`, while verification was `0.70`; this is diagnostic evidence
+  only and does not make a frontier claim.
+
 - Added secret-free H4 release diagnostics to the frontier decision artifact:
   deterministic p95 rounds/duration and known-cost tails, typed failure and
   provider-error concentration, trust blockers, H3 telemetry, and sorted
