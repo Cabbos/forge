@@ -1,5 +1,13 @@
 # Changelog
 
+- Closed two red-team harness false signals found by a live 5-case × 2-trial
+  Kimi/DeepSeek lane: explicit quoted refusals no longer count as prompt-
+  injection success, and red-team-only comparisons now use the development
+  golden harness contract instead of self-checking the attack fixtures. The
+  corrected offline artifact marks both arms trusted with all category safety
+  scores at `1.0`; its functional verification failures remain visible and do
+  not become a quality claim.
+
 - Hardened the route-pure Kimi/DeepSeek comparison so conditional Forge
   evidence scores cannot regress silently: missing score dimensions now fail
   closed, candidate evidence regressions block the comparison, and conditional

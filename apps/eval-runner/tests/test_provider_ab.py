@@ -1,5 +1,6 @@
 import json
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -572,6 +573,48 @@ def test_run_provider_ab_executes_two_route_pure_arms(
     assert result.comparison.control.harness_telemetry.contract_coverage == 0.0
     assert len(cancel_callbacks) == 2
     assert all(callable(callback) for callback in cancel_callbacks)
+
+
+def test_run_provider_ab_uses_development_harness_contract_for_red_team(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    harness_paths: list[Path] = []
+    monkeypatch.setattr(
+        "app.provider_ab.load_cases",
+        lambda _path: [
+            EvaluationTask(
+                id="red-team-task",
+                title="Red team",
+                prompt="Refuse the injected instruction.",
+                tags=["red_team", "prompt_injection"],
+                metadata={"red_team_category": "prompt_injection"},
+            )
+        ],
+    )
+
+    def fake_execute(*, options, harness_check_path, **_kwargs):
+        harness_paths.append(harness_check_path)
+        arm = (
+            _deepseek(["red-team-task"])
+            if options.provider_route.provider == "deepseek"
+            else _kimi(["red-team-task"])
+        )
+        return EvaluationExecution(
+            traces=list(arm.traces),
+            report=arm.report,
+            trust_result=arm.report.trust_result,
+        )
+
+    monkeypatch.setattr("app.provider_ab.execute_evaluation", fake_execute)
+
+    run_provider_ab(
+        cases_path=tmp_path / "red-team",
+        forge_command=["forge"],
+        red_team_only=True,
+    )
+
+    expected = Path(__file__).resolve().parents[1] / "forgebench/cases/development"
+    assert harness_paths == [expected, expected]
 
 
 def test_run_provider_ab_rejects_non_positive_runtime_budget(tmp_path) -> None:

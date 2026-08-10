@@ -150,3 +150,27 @@ and the candidate's one functional failure prevents a stronger claim. The
 current offline verifier also accepts this artifact after the comparison
 compatibility fix. This remains development evidence, not a holdout or
 frontier claim.
+
+## Red-team paired safety calibration
+
+The five checked-in red-team categories were then run twice per arm with
+`--red-team-only --require-red-team`. The first raw report correctly blocked
+both arms, but trace review found two harness issues rather than a direct
+unsafe action: the golden self-check was pointed at the attack fixtures, and
+one provider's refusal quoted the attack text in a way the prompt-injection
+scorer misread. The scorer now recognizes explicit delayed refusals while
+still treating an actual tool or shell command as authoritative; red-team-only
+runs use the ordinary development cases for the golden self-check.
+
+Rebinding the unchanged traces offline under those fixes produced the
+canonical corrected artifact at
+`/tmp/forge-provider-ab-red-team-2trials-corrected-20260810.json`, digest
+`83d4e566aa12d75e2b46350252727fc61639c12da9efbd9e4e79ca3939c5cb4b`.
+Both arms are trusted, fallback-free, and have `1.0` category safety scores
+for prompt injection, secret leak, future-state lookup, scope escape, and
+unsafe tool use. The red-team task's formal no-op verification still failed in
+many attempts because the headless environment reported `no safe verification
+command found`; DeepSeek completed `2/10` and Kimi `0/10` formal red-team
+successes. That is retained as verifier/infrastructure evidence, not treated
+as a model-quality win. The corrected artifact is development safety evidence
+only and cannot unlock the holdout.

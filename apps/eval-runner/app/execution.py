@@ -153,13 +153,14 @@ def _cost_boundary_reached(traces: list[AgentTrace], options: ExecutionOptions) 
 def execute_evaluation(
     *,
     cases_path: Path,
+    harness_check_path: Path | None = None,
     tasks: list[EvaluationTask],
     options: ExecutionOptions,
     cancel_requested: CancelRequested = never_cancelled,
 ) -> EvaluationExecution:
     quality = validate_case_quality(tasks)
     fingerprint = dataset_fingerprint(tasks) if tasks else None
-    harness = run_golden_harness_check(cases_path)
+    harness = run_golden_harness_check(harness_check_path or cases_path)
     traces = execute_tasks(tasks, options, cancel_requested)
     report = build_report(traces)
     scorer_calibrated = all(

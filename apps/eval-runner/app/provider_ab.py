@@ -245,6 +245,11 @@ def run_provider_ab(
     tasks = expand_prompt_mutations(tasks, styles=[], mutations_only=False)
     if not tasks:
         raise ProviderABError("no_tasks_selected")
+    harness_check_path = (
+        _development_harness_check_path()
+        if all(is_red_team_task(task) for task in tasks)
+        else cases_path
+    )
     trial_tasks = [task for _ in range(trials) for task in tasks]
     fingerprint = dataset_fingerprint(tasks)
     source_commit, dirty_state_sha256 = _git_source_identity(
@@ -273,6 +278,7 @@ def run_provider_ab(
                 raise ProviderABError(f"paired_cost_budget_exhausted:{arm_id}")
         execution = execute_evaluation(
             cases_path=cases_path,
+            harness_check_path=harness_check_path,
             tasks=trial_tasks,
             options=ExecutionOptions(
                 provider=EvalProvider.FORGE,
@@ -719,6 +725,10 @@ def _git_source_identity(repository_root: Path) -> tuple[str, str]:
         + canonical_json_bytes(sorted(untracked, key=lambda item: item["path"]))
     )
     return commit, dirty_digest
+
+
+def _development_harness_check_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "forgebench/cases/development"
 
 
 def _git_text(repository_root: Path, *args: str) -> str:
