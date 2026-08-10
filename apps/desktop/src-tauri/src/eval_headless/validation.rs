@@ -127,6 +127,34 @@ pub(crate) fn repair_prompt_from_validation_failure(
     )
 }
 
+pub(crate) fn controller_repair_prompt_from_validation_failure(
+    original_prompt: &str,
+    attempt: usize,
+    validation: &HeadlessValidationResult,
+) -> String {
+    let output = combined_validation_output(validation);
+    format!(
+        "The controller-owned verification failed after attempt {attempt}. Continue in the same workspace and make the smallest fix needed.\n\nOriginal task:\n{original_prompt}\n\nThe controller will rerun its private verification after this repair. Do not try to invoke, infer, or modify the private verifier command.\n\nExit code: {exit_code}\n\nVerification output:\n{output}\n\nAfter fixing, rerun the declared targeted check if needed. Do not change files outside the task scope.",
+        exit_code = validation
+            .exit_code
+            .map(|code| code.to_string())
+            .unwrap_or_else(|| "unknown".to_string()),
+    )
+}
+
+pub(crate) fn redact_controller_validation(
+    validation: &HeadlessValidationResult,
+) -> HeadlessValidationResult {
+    HeadlessValidationResult {
+        command: "controller-owned verification".to_string(),
+        status: validation.status.clone(),
+        exit_code: validation.exit_code,
+        stdout: validation.stdout.clone(),
+        stderr: validation.stderr.clone(),
+        duration_ms: validation.duration_ms,
+    }
+}
+
 pub(crate) fn validation_events(
     session_id: &str,
     block_id: &str,

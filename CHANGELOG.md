@@ -1,5 +1,13 @@
 # Changelog
 
+- Added controller-owned `eval_verification_ladder` evidence to Forge traces. It
+  records bounded target/regression/fix/hidden/full verification stages and the
+  first rejecting stage, so a target-green/full-red attempt is diagnosable
+  without exposing hidden verifier commands; filesystem snapshots and patch
+  replay remain authoritative. A controller-owned full-verification failure can
+  now reopen the eval-only write boundary for one bounded same-session repair
+  turn, then remains subject to the final independent checks.
+
 - Extended the development-only `target_files_v1` harness with bounded
   controller-provided target/validation context and a narrow read-only shell
   inspection allowance (`find ... | head -N` inside the eval workspace). The

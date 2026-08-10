@@ -187,6 +187,9 @@ def test_forge_runner_keeps_hidden_controller_fields_out_of_agent_payload(
             "assert 'hidden_verifier_id' not in task\n"
             "assert 'full_verification_command' not in task\n"
             "assert 'scenario_path' not in task\n"
+            "assert payload['controller_verification_commands'] == [\n"
+            "    'python3 tools/release/verify.py'\n"
+            "]\n"
             "result = {'final_answer': 'done', 'changed_files': [], 'file_diffs': []}\n"
             "json.dump(result, sys.stdout)\n"
         ),
@@ -1518,6 +1521,46 @@ json.dump(
     assert trace.forge_run_evidence.verification["command"] == "python3 -c 'print(1)'"
     assert trace.forge_run_evidence.verification["agent_reported"]["command"] == "pytest"
     assert trace.forge_run_evidence.shell_outputs[-1]["source"] == "controller_verification"
+
+
+def test_forge_runner_records_verification_ladder_for_controller_failure(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\n"
+        "json.load(sys.stdin)\n"
+        "json.dump({'changed_files': [], 'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    failing_full = tmp_path / "full_verify.py"
+    failing_full.write_text("raise SystemExit(7)\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="verification-ladder",
+        title="Verification ladder",
+        prompt="Leave the fixture unchanged and verify.",
+        fixture_path=str(fixture),
+        validation_commands=[f"{sys.executable} -c 'print(1)'"],
+        full_verification_command=f"{sys.executable} {failing_full}",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(agent)],
+    ).run_task(task)
+
+    ladder = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_verification_ladder"
+    )
+    stages = {stage["stage"]: stage for stage in ladder["stages"]}
+    assert stages["task_validation"]["passed"] is True
+    assert stages["full_verification"]["passed"] is False
+    assert ladder["first_failed_stage"] == "full_verification"
+    assert ladder["target_validation_passed"] is True
+    assert ladder["controller_verification_passed"] is False
 
 
 def test_forge_runner_detects_unreported_forbidden_workspace_change(tmp_path: Path) -> None:

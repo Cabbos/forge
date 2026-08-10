@@ -418,6 +418,10 @@ impl HeadlessEventEmitter {
     pub(crate) fn validation_stop_requested(&self) -> bool {
         self.successful_validation.load(Ordering::SeqCst)
     }
+
+    pub(crate) fn clear_validation_stop(&self) {
+        self.successful_validation.store(false, Ordering::SeqCst);
+    }
 }
 
 impl EventEmitter for HeadlessEventEmitter {
@@ -897,5 +901,17 @@ mod tests {
         });
         assert!(emitter.validation_stop_requested());
         let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn validation_stop_can_reopen_for_controller_repair() {
+        let pending_confirms: super::super::types::PendingConfirms =
+            std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms);
+
+        emitter.successful_validation.store(true, Ordering::SeqCst);
+        assert!(emitter.validation_stop_requested());
+        emitter.clear_validation_stop();
+        assert!(!emitter.validation_stop_requested());
     }
 }

@@ -799,6 +799,14 @@ class ForgeAgentRunner:
             provider_route = self._provider_route_payload()
             if provider_route is not None:
                 payload["provider_route"] = provider_route
+            if task.full_verification_command:
+                # Keep the full controller check out of the task prompt and
+                # visible tool allowlist. Rust may use its bounded failure
+                # output for one repair turn, then the Python controller still
+                # reruns the authoritative check after the child exits.
+                payload["controller_verification_commands"] = [
+                    task.full_verification_command
+                ]
             if self.execution_identity is not None:
                 payload["execution_identity"] = self.execution_identity.model_dump(mode="json")
             completed = run_bounded_process(
@@ -1008,6 +1016,16 @@ class ForgeAgentRunner:
             if not _is_ephemeral_cache_path(diff.path)
         ]
         raw_events = list(payload.get("raw_events", []))
+        raw_events.append(
+            _verification_ladder_event(
+                validation_outputs=validation_outputs,
+                regression_outputs=regression_outputs,
+                fix_outputs=fix_outputs,
+                post_validation_outputs=post_validation_outputs,
+                hidden_verifier_outputs=hidden_verifier_outputs,
+                full_verification_outputs=full_verification_outputs,
+            )
+        )
         validation_stop = payload.get("eval_validation_stop")
         if isinstance(validation_stop, dict):
             raw_events.append(
@@ -1868,6 +1886,73 @@ def run_post_validation_commands(
 
 def first_failed_output(outputs: Sequence[ShellOutput]) -> ShellOutput | None:
     return next((output for output in outputs if output.exit_code != 0), None)
+
+
+def _verification_ladder_event(
+    *,
+    validation_outputs: Sequence[ShellOutput],
+    regression_outputs: Sequence[ShellOutput],
+    fix_outputs: Sequence[ShellOutput],
+    post_validation_outputs: Sequence[ShellOutput],
+    hidden_verifier_outputs: Sequence[ShellOutput],
+    full_verification_outputs: Sequence[ShellOutput],
+) -> dict[str, Any]:
+    """Record which verification layer first rejected an otherwise valid run."""
+
+    output_groups = (
+        ("task_validation", validation_outputs),
+        ("regression", regression_outputs),
+        ("fix_validation", fix_outputs),
+        ("post_validation", post_validation_outputs),
+        ("hidden_verifier", hidden_verifier_outputs),
+        ("full_verification", full_verification_outputs),
+    )
+    stages: list[dict[str, Any]] = []
+    for name, outputs in output_groups:
+        stages.append(
+            {
+                "stage": name,
+                "present": bool(outputs),
+                "passed": (
+                    all(output.exit_code == 0 for output in outputs) if outputs else None
+                ),
+                "attempts": len(outputs),
+                "commands": [
+                    {"command": output.command, "exit_code": output.exit_code}
+                    for output in outputs
+                ],
+            }
+        )
+
+    first_failed_stage = next(
+        (
+            stage["stage"]
+            for stage in stages
+            if stage["present"] and stage["passed"] is False
+        ),
+        None,
+    )
+    controller_outputs = [
+        *post_validation_outputs,
+        *hidden_verifier_outputs,
+        *full_verification_outputs,
+    ]
+    return {
+        "event_type": "eval_verification_ladder",
+        "schema_version": 1,
+        "stages": stages,
+        "first_failed_stage": first_failed_stage,
+        "target_validation_passed": (
+            all(output.exit_code == 0 for output in validation_outputs)
+            if validation_outputs
+            else None
+        ),
+        "controller_verification_passed": (
+            all(output.exit_code == 0 for output in controller_outputs)
+            if controller_outputs
+            else None
+        ),
+    }
 
 
 def normalize_failure_category(value: str | FailureCategory) -> FailureCategory:

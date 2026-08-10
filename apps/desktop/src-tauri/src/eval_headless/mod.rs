@@ -265,6 +265,12 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         None => runner::HeadlessEventEmitter::new(pending_confirms),
     });
     let validation_commands = validation::validation_commands_from_task(request.task.as_ref());
+    let controller_verification_commands = request
+        .controller_verification_commands
+        .iter()
+        .map(|command| command.trim().to_string())
+        .filter(|command| !command.is_empty())
+        .collect::<Vec<_>>();
     let max_repair_attempts = validation::max_repair_attempts_from_task(request.task.as_ref());
     let timeout_secs = validation::resolve_timeout_secs(request.task.as_ref());
     let max_model_rounds = validation::resolve_max_model_rounds(request.task.as_ref());
@@ -364,6 +370,94 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
             watchdog.abort();
             raw_events.extend(emitter.drain());
             repair_attempts_used = attempt + 1;
+
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+            if let Err(error) = result {
+                agent_error = Some(error);
+                break;
+            }
+        }
+    }
+
+    // Controller-owned verification runs after visible task checks.  The
+    // command itself never enters the task prompt or the agent tool allowlist;
+    // a bounded repair sees only redacted command identity plus its output.
+    if agent_error.is_none() && !controller_verification_commands.is_empty() {
+        let remaining_repair_attempts = max_repair_attempts.saturating_sub(repair_attempts_used);
+        for attempt in 0..=remaining_repair_attempts {
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+
+            let raw_validation = validation::run_headless_validation_commands(
+                &controller_verification_commands,
+                &workspace_path,
+            )
+            .await?;
+            let validation = validation::redact_controller_validation(&raw_validation);
+            validation_attempts += 1;
+            raw_events.extend(validation::validation_events(
+                &session_id,
+                &format!("headless-controller-validation-{attempt}"),
+                &validation,
+            ));
+            validation_result = Some(validation.clone());
+
+            if raw_validation.passed() || attempt == remaining_repair_attempts {
+                break;
+            }
+
+            // The visible validation may have requested the normal stop
+            // boundary. Reopen it only for this bounded controller repair;
+            // the final filesystem and replay gates remain authoritative.
+            emitter.clear_validation_stop();
+
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                repair_attempts_used = (repair_attempts_used + 1).min(max_repair_attempts);
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                repair_attempts_used = (repair_attempts_used + 1).min(max_repair_attempts);
+                break;
+            }
+
+            let repair_prompt = validation::controller_repair_prompt_from_validation_failure(
+                &prompt,
+                repair_attempts_used + 1,
+                &validation,
+            );
+            let watchdog = runner::spawn_timeout_watchdog(
+                started,
+                timeout_secs,
+                session.clone(),
+                emitter.clone(),
+            );
+            let result = runner::send_headless_turn(
+                &session,
+                &repair_prompt,
+                emitter.clone(),
+                emitter.model_rounds(),
+                max_model_rounds,
+                max_no_progress_batches,
+            )
+            .await;
+            watchdog.abort();
+            raw_events.extend(emitter.drain());
+            repair_attempts_used += 1;
 
             if started.elapsed().as_secs() >= timeout_secs {
                 agent_error = Some("timeout".to_string());
@@ -1732,6 +1826,29 @@ deleted file mode 100644\n\
         assert!(prompt.contains("npx tsc --noEmit"));
         assert!(prompt.contains("TS5097"));
         assert!(prompt.contains("attempt 1"));
+    }
+
+    #[test]
+    fn controller_repair_prompt_redacts_controller_command() {
+        let validation = types::HeadlessValidationResult {
+            command: "/private/hidden/full-verifier.sh".to_string(),
+            status: AgentVerificationStatus::Failed,
+            exit_code: Some(7),
+            stdout: String::new(),
+            stderr: "baseline regression failed".to_string(),
+            duration_ms: 120,
+        };
+
+        let prompt = validation::controller_repair_prompt_from_validation_failure(
+            "Preserve the task behavior.",
+            1,
+            &validation,
+        );
+
+        assert!(prompt.contains("Preserve the task behavior."));
+        assert!(prompt.contains("controller-owned verification"));
+        assert!(prompt.contains("baseline regression failed"));
+        assert!(!prompt.contains("/private/hidden/full-verifier.sh"));
     }
 
     #[test]

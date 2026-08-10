@@ -214,6 +214,7 @@ pub fn build_headless_request_from_trigger(
             prompt: Some(trigger.message.clone()),
             ..EvalHeadlessTask::default()
         }),
+        controller_verification_commands: Vec::new(),
         prompt: trigger.message.clone(),
         provider: trigger.provider.clone(),
         model: trigger.model.clone(),

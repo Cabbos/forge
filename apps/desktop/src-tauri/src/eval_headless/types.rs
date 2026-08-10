@@ -164,6 +164,11 @@ pub struct EvalHeadlessRequest {
     pub mode: EvalHeadlessMode,
     #[serde(default)]
     pub task: Option<EvalHeadlessTask>,
+    /// Eval-only controller checks that run after the agent's visible checks.
+    /// They are never placed in the task prompt; a bounded repair can receive
+    /// only sanitized failure output before the controller reruns them.
+    #[serde(default)]
+    pub controller_verification_commands: Vec<String>,
     #[serde(default)]
     pub prompt: String,
     #[serde(default)]
