@@ -173,11 +173,88 @@ class ProviderFallbackRunner:
             "fallback_provider": _runner_identity(self.fallback, "agent_provider"),
             "fallback_model": _runner_identity(self.fallback, "agent_model"),
         }
+        accounting_event = _fallback_accounting_event(primary_trace, fallback_trace)
         return fallback_trace.model_copy(
             update={
-                "raw_events": [*fallback_trace.raw_events, fallback_event],
+                "raw_events": [*fallback_trace.raw_events, fallback_event, accounting_event],
+                # A fallback is one logical eval attempt, but it contains two
+                # provider executions.  Preserve the final fallback workspace
+                # evidence while charging and measuring both executions.
+                "model_rounds": primary_trace.model_rounds + fallback_trace.model_rounds,
+                "confirm_requests": (
+                    primary_trace.confirm_requests + fallback_trace.confirm_requests
+                ),
+                "repair_attempts_used": (
+                    primary_trace.repair_attempts_used + fallback_trace.repair_attempts_used
+                ),
+                "validation_attempts": (
+                    primary_trace.validation_attempts + fallback_trace.validation_attempts
+                ),
+                "input_tokens": _sum_known_int(
+                    primary_trace.input_tokens,
+                    fallback_trace.input_tokens,
+                ),
+                "output_tokens": _sum_known_int(
+                    primary_trace.output_tokens,
+                    fallback_trace.output_tokens,
+                ),
+                "cost_usd": _sum_known_float(
+                    primary_trace.cost_usd,
+                    fallback_trace.cost_usd,
+                ),
+                "duration_ms": primary_trace.duration_ms + fallback_trace.duration_ms,
             }
         )
+
+
+def _fallback_accounting_event(
+    primary: AgentTrace,
+    fallback: AgentTrace,
+) -> dict[str, object]:
+    """Return secret-free accounting for both provider attempts.
+
+    A missing primary cost is intentionally not treated as zero.  The final
+    trace therefore becomes cost-unknown and cannot pass a known-cost gate
+    while still retaining the fallback's functional evidence.
+    """
+
+    if primary.cost_usd is None:
+        cost_status = "unknown_primary_cost"
+    elif fallback.cost_usd is None:
+        cost_status = "unknown_fallback_cost"
+    else:
+        cost_status = "known"
+    return {
+        "event_type": "eval_provider_fallback_accounting",
+        "cost_status": cost_status,
+        "primary_cost_usd": primary.cost_usd,
+        "fallback_cost_usd": fallback.cost_usd,
+        "total_cost_usd": _sum_known_float(primary.cost_usd, fallback.cost_usd),
+        "primary_input_tokens": primary.input_tokens,
+        "fallback_input_tokens": fallback.input_tokens,
+        "total_input_tokens": _sum_known_int(primary.input_tokens, fallback.input_tokens),
+        "primary_output_tokens": primary.output_tokens,
+        "fallback_output_tokens": fallback.output_tokens,
+        "total_output_tokens": _sum_known_int(primary.output_tokens, fallback.output_tokens),
+        "primary_model_rounds": primary.model_rounds,
+        "fallback_model_rounds": fallback.model_rounds,
+        "total_model_rounds": primary.model_rounds + fallback.model_rounds,
+        "primary_duration_ms": primary.duration_ms,
+        "fallback_duration_ms": fallback.duration_ms,
+        "total_duration_ms": primary.duration_ms + fallback.duration_ms,
+    }
+
+
+def _sum_known_int(left: int | None, right: int | None) -> int | None:
+    if left is None or right is None:
+        return None
+    return left + right
+
+
+def _sum_known_float(left: float | None, right: float | None) -> float | None:
+    if left is None or right is None:
+        return None
+    return round(left + right, 12)
 
 
 def provider_fallback_reason(trace: AgentTrace) -> str | None:

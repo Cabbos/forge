@@ -14,7 +14,13 @@ The fallback boundary is deliberately narrow:
   failures do not trigger a provider switch;
 - each runner owns a fresh isolated workspace and runtime HOME;
 - the emitted `eval_provider_fallback` event contains only bounded provider,
-  model, and reason-code identity, never raw provider text or credentials.
+  model, and reason-code identity, never raw provider text or credentials;
+- a separate `eval_provider_fallback_accounting` event records the two attempt
+  metrics without raw errors, and the final trace charges both attempts for
+  model rounds, tokens, duration, and cost;
+- if either attempt's cost is unknown, the logical attempt's cost remains
+  unknown and cannot pass a known-cost gate; missing cost is never treated as
+  zero.
 
 This is a development/ordinary-run capability. The locked DeepSeek H1/H2
 profiles and holdout route contract remain unchanged; fallback traces must not

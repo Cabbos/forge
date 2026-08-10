@@ -17,6 +17,14 @@ def _trace(
     reason: str | None = None,
     category: FailureCategory = FailureCategory.NONE,
     raw_events: list[dict[str, object]] | None = None,
+    model_rounds: int = 0,
+    confirm_requests: int = 0,
+    repair_attempts_used: int = 0,
+    validation_attempts: int = 0,
+    input_tokens: int | None = None,
+    output_tokens: int | None = None,
+    cost_usd: float | None = None,
+    duration_ms: int = 0,
 ) -> AgentTrace:
     now = datetime.now(UTC)
     return AgentTrace(
@@ -29,9 +37,16 @@ def _trace(
         failure_reason=reason,
         failure_category=category,
         raw_events=raw_events or [],
+        model_rounds=model_rounds,
+        confirm_requests=confirm_requests,
+        repair_attempts_used=repair_attempts_used,
+        validation_attempts=validation_attempts,
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cost_usd=cost_usd,
         started_at=now,
         ended_at=now,
-        duration_ms=0,
+        duration_ms=duration_ms,
     )
 
 
@@ -89,6 +104,125 @@ def test_provider_fallback_retries_auth_or_quota_failures_without_copying_error_
         "fallback_model": "deepseek-v4-flash",
     }
     assert "secret-value" not in json.dumps(event)
+
+
+def test_provider_fallback_aggregates_attempt_metrics_and_emits_bounded_accounting() -> None:
+    primary = StubRunner(
+        _trace(
+            model="kimi-k3-dev",
+            error="agent_error",
+            reason="HTTP 429 quota exceeded; Authorization: Bearer secret-value",
+            category=FailureCategory.RUNNER_ERROR,
+            model_rounds=4,
+            confirm_requests=1,
+            repair_attempts_used=1,
+            validation_attempts=2,
+            input_tokens=100,
+            output_tokens=20,
+            cost_usd=0.1,
+            duration_ms=30,
+        ),
+        provider="custom_openai",
+        model="k3",
+    )
+    fallback = StubRunner(
+        _trace(
+            model="deepseek-v4-flash-fallback",
+            model_rounds=5,
+            confirm_requests=2,
+            repair_attempts_used=0,
+            validation_attempts=3,
+            input_tokens=200,
+            output_tokens=40,
+            cost_usd=0.2,
+            duration_ms=70,
+        ),
+        provider="deepseek",
+        model="deepseek-v4-flash",
+    )
+
+    result = ProviderFallbackRunner(primary, fallback).run_task(
+        EvaluationTask(id="fallback-task", title="Fallback", prompt="Do it.")
+    )
+
+    assert result.model_rounds == 9
+    assert result.confirm_requests == 3
+    assert result.repair_attempts_used == 1
+    assert result.validation_attempts == 5
+    assert result.input_tokens == 300
+    assert result.output_tokens == 60
+    assert result.cost_usd == 0.3
+    assert result.duration_ms == 100
+    accounting = next(
+        item
+        for item in result.raw_events
+        if item.get("event_type") == "eval_provider_fallback_accounting"
+    )
+    assert accounting == {
+        "event_type": "eval_provider_fallback_accounting",
+        "cost_status": "known",
+        "primary_cost_usd": 0.1,
+        "fallback_cost_usd": 0.2,
+        "total_cost_usd": 0.3,
+        "primary_input_tokens": 100,
+        "fallback_input_tokens": 200,
+        "total_input_tokens": 300,
+        "primary_output_tokens": 20,
+        "fallback_output_tokens": 40,
+        "total_output_tokens": 60,
+        "primary_model_rounds": 4,
+        "fallback_model_rounds": 5,
+        "total_model_rounds": 9,
+        "primary_duration_ms": 30,
+        "fallback_duration_ms": 70,
+        "total_duration_ms": 100,
+    }
+
+
+def test_provider_fallback_keeps_cost_unknown_when_primary_attempt_cost_is_unknown() -> None:
+    primary = StubRunner(
+        _trace(
+            model="kimi-k3-dev",
+            error="agent_error",
+            reason="HTTP 429 quota exceeded",
+            category=FailureCategory.RUNNER_ERROR,
+            model_rounds=1,
+            input_tokens=100,
+            output_tokens=20,
+            duration_ms=10,
+        ),
+        provider="custom_openai",
+        model="k3",
+    )
+    fallback = StubRunner(
+        _trace(
+            model="deepseek-v4-flash-fallback",
+            model_rounds=2,
+            input_tokens=200,
+            output_tokens=40,
+            cost_usd=0.2,
+            duration_ms=20,
+        ),
+        provider="deepseek",
+        model="deepseek-v4-flash",
+    )
+
+    result = ProviderFallbackRunner(primary, fallback).run_task(
+        EvaluationTask(id="fallback-task", title="Fallback", prompt="Do it.")
+    )
+
+    assert result.cost_usd is None
+    assert result.input_tokens == 300
+    assert result.output_tokens == 60
+    accounting = next(
+        item
+        for item in result.raw_events
+        if item.get("event_type") == "eval_provider_fallback_accounting"
+    )
+    assert accounting["cost_status"] == "unknown_primary_cost"
+    assert accounting["primary_cost_usd"] is None
+    assert accounting["fallback_cost_usd"] == 0.2
+    assert accounting["total_cost_usd"] is None
 
 
 def test_provider_fallback_does_not_retry_verification_or_scope_failures() -> None:
