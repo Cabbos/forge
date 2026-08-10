@@ -230,7 +230,58 @@ fn shell_command_matches(command: &str, allowed: &str, workspace: &Path) -> bool
     if command == allowed {
         return true;
     }
-    strip_workspace_cd(command, workspace).is_some_and(|remainder| remainder == allowed)
+    let Some(remainder) = strip_workspace_cd(command, workspace) else {
+        return false;
+    };
+    if remainder == allowed {
+        return true;
+    }
+    let command_base = safe_validation_output_base(remainder).unwrap_or(remainder);
+    command_base == allowed || combined_bun_test_command_matches(command_base, allowed)
+}
+
+fn safe_validation_output_base(command: &str) -> Option<&str> {
+    let command = command.trim();
+    if let Some(base) = command.strip_suffix(" 2>&1") {
+        return Some(base.trim_end());
+    }
+    let (base, suffix) = command.rsplit_once(" 2>&1 | ")?;
+    is_bounded_read_helper(suffix.trim()).then_some(base.trim_end())
+}
+
+fn combined_bun_test_command_matches(command: &str, allowed: &str) -> bool {
+    let Some(command_paths) = bun_test_paths(command) else {
+        return false;
+    };
+    let Some(allowed_paths) = bun_test_paths(allowed) else {
+        return false;
+    };
+    allowed_paths
+        .iter()
+        .all(|path| command_paths.iter().any(|candidate| candidate == path))
+}
+
+fn bun_test_paths(command: &str) -> Option<Vec<&str>> {
+    let mut tokens = command.split_whitespace();
+    if tokens.next()? != "bun" || tokens.next()? != "test" {
+        return None;
+    }
+    let paths = tokens.collect::<Vec<_>>();
+    if paths.is_empty()
+        || paths.iter().any(|path| {
+            let path = path.trim_matches(['\'', '"']);
+            !path.starts_with("tests/")
+                || path.contains("..")
+                || path.contains([';', '&', '>', '<', '|', '`', '$', '(', ')'])
+                || !path
+                    .chars()
+                    .all(|value| value.is_ascii_alphanumeric() || "/._-*?[]".contains(value))
+                || !path.contains(".test.")
+        })
+    {
+        return None;
+    }
+    Some(paths)
 }
 
 fn strip_workspace_cd<'a>(command: &'a str, workspace: &Path) -> Option<&'a str> {
@@ -659,6 +710,70 @@ mod tests {
         assert_eq!(
             policy.denial_reason("dangerous_cmd", Some(&pwd_prefixed)),
             None
+        );
+
+        let output_wrapped = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts 2>&1 | tail -30",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&output_wrapped)),
+            None
+        );
+
+        let combined_bun_tests = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts tests/baseline/domain.test.ts",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&combined_bun_tests)),
+            None
+        );
+
+        let combined_bun_tests_wrapped = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts tests/baseline/domain.test.ts 2>&1 | tail -20",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&combined_bun_tests_wrapped)),
+            None
+        );
+
+        let file_redirected = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts > /tmp/forge-output",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&file_redirected)),
+            Some("eval_write_policy_blocked_mutating_confirmation".to_string())
         );
 
         let combined = crate::harness::write_boundary::build_write_boundary(

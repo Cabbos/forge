@@ -337,6 +337,8 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "assert 'Forbidden changed paths: package.json, .forge/**' in payload['prompt']\n"
             "assert 'Run the targeted validation, then stop once the task is verified.' "
             "in payload['prompt']\n"
+            "assert 'Use the exact required targeted check command; do not append files, "
+            "redirections, pipes, or other shell commands' in payload['prompt']\n"
             "assert 'Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, "
             "and build outputs as read-only' in payload['prompt']\n"
             "assert 'do not create or edit .venv, uv.lock, node_modules, or cache files' "

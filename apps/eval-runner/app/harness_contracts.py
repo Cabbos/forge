@@ -108,7 +108,9 @@ class HarnessPolicyV1(HarnessContractModel):
                 rendered += "\n\nController-provided target context (read-only):\n"
                 rendered += "\n".join(sections)
                 rendered += (
-                    "\nTreat this as initial evidence: avoid rediscovering the file tree; "
+                    "\nController directive: Do not perform repository-wide discovery; use the "
+                    "supplied target context as the initial source of truth. "
+                    "Treat this as initial evidence: avoid rediscovering the file tree; "
                     "make the smallest edit and run the declared validation. "
                     "For convergence, make the first mutation by round 3."
                 )

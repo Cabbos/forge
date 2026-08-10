@@ -88,6 +88,7 @@ def test_target_files_context_policy_renders_bounded_controller_snapshot() -> No
     assert "--- src/env.ts ---" in rendered
     assert "parsePort" in rendered
     assert "first mutation by round 3" in rendered
+    assert "Do not perform repository-wide discovery" in rendered
 
 
 def test_truncated_tool_result_without_artifact_digest_is_rejected() -> None:

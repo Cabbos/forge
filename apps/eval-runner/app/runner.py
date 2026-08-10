@@ -2036,6 +2036,8 @@ def _render_eval_prompt(
         "- If a command generates a lockfile or temporary helper, remove it before final "
         "verification.\n"
         "- Run the targeted validation, then stop once the task is verified.\n"
+        "- Use the exact required targeted check command; do not append files, redirections, "
+        "pipes, or other shell commands.\n"
         "- Target at most 12 model rounds: inspect early, make the smallest edit, validate, "
         "and stop; do not spend rounds polishing an already verified result.\n"
         "- Do not repeat an unchanged read-only command; only rerun it after new evidence or "
