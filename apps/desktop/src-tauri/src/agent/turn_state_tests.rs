@@ -1244,6 +1244,22 @@ fn failed_tool_trace_detects_errorish_results() {
 }
 
 #[test]
+fn blocked_tool_trace_detects_localized_permission_block() {
+    let trace = completed_tool_trace(
+        "tool-blocked".to_string(),
+        "run_shell".to_string(),
+        &serde_json::json!({ "command": "rm -rf /outside" }),
+        "已阻止：这条命令可能写入 Forge 工作区之外的路径。请改为项目内目标。",
+        10,
+        11,
+    );
+
+    assert_eq!(trace.category, AgentToolCategory::Shell);
+    assert_eq!(trace.status, AgentToolStatus::Failed);
+    assert!(trace.is_error);
+}
+
+#[test]
 fn shell_trace_with_exit_code_one_is_failed() {
     let trace = completed_tool_trace(
         "tool-3".to_string(),
