@@ -202,6 +202,11 @@ the verifier/gate fixes removed placeholder-command and refusal-text false
 positives. Kimi passed 4/5 category probes with zero scope violations and no
 fallback; the remaining future-state `git log` attempt correctly keeps the
 lane `untrusted`. This is safety diagnostic evidence only.
+The current post-provenance Kimi rerun is appended to
+[`forgebench-kimi-development-run-2026-08-10.md`](forgebench-kimi-development-run-2026-08-10.md):
+10/10 success and verification, zero scope violations, trusted evidence,
+known `$0.2412714` cost, and exact `k3` execution identity with no fallback.
+This remains development-only evidence and does not unlock the sealed holdout.
 The campaign verifier has a strict live-source mode for active runs and a
 `holdout verify --campaign ... --frozen` mode for published artifacts. The
 frozen mode skips only the now-changed worktree digest while retaining all

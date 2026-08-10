@@ -174,3 +174,32 @@ leakage, prepared-turn evidence, and verification evidence. The admin
 multi-file case completed in 9 rounds with one bounded controller repair and
 three validation attempts. This is the strongest current development result,
 but it remains development-only and does not unlock the sealed holdout.
+
+## Current rerun after provenance identity fix
+
+On 2026-08-10, commit `3005ba41` reran the same ten development cases with the
+CCSwitch Kimi K3 credential and the explicit `kimi-k3-deepseek` chain. The
+fallback was armed but not needed: all ten execution-identity events resolved
+to `custom_openai/k3` at `https://api.kimi.com/coding/v1`. The report is kept
+outside Git at `/tmp/forge-kimi-k3-deepseek-current-20260810.json`; its SHA-256
+is `38d8bca3b28419ccbef137aac83a987ab64c525de5895c817ff1f3abd4986ba0`.
+
+| Metric | Current result |
+| --- | ---: |
+| Tasks | 10 |
+| Success rate | 1.0000 |
+| Verification pass rate | 1.0000 |
+| Scope violation rate | 0.0000 |
+| Average model rounds | 4.6 |
+| Input tokens | 106,086 |
+| Output tokens | 8,369 |
+| Provider usage known rate | 1.0000 |
+| Provider cost known rate | 1.0000 |
+| Total Kimi K3 cost | `$0.2412714` |
+| Fallback events | 0 |
+| Trust result | `trusted` |
+
+The provenance fix makes `AgentTrace.model` carry the exact provider model
+(`k3`) while the versioned harness profile remains a separate identity. This
+closes the trace-to-campaign identity check; it is a harness correctness
+improvement, not evidence of a model-quality or holdout improvement.
