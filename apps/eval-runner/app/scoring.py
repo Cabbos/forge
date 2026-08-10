@@ -457,7 +457,7 @@ def prepared_turn_evidence_findings(trace: AgentTrace, evidence: ForgeRunEvidenc
     if evidence.prompt is not None:
         if not evidence.prompt.strip():
             findings.append("prompt:missing_prompt")
-        elif evidence.prompt != trace.user_prompt:
+        elif not rendered_prompt_preserves_task(evidence.prompt, trace.user_prompt):
             findings.append("prompt:trace_prompt_mismatch")
 
     prepared = evidence.prepared_context.get("turn_prepared")
@@ -508,6 +508,28 @@ def prepared_turn_evidence_findings(trace: AgentTrace, evidence: ForgeRunEvidenc
             findings.append(f"{source_id}:hidden_body_exposed")
 
     return findings
+
+
+def rendered_prompt_preserves_task(rendered_prompt: str, task_prompt: str) -> bool:
+    """Accept controller-owned wrappers while keeping the task identity bound.
+
+    Minimal and planning profiles intentionally prefix the original task with
+    an ``Outcome:`` contract and may append bounded context.  Exact equality
+    would mark every real rendered prompt as bad evidence, while a loose
+    substring check could accept a prompt that only mentions the task later.
+    The controller renderers put the task at the beginning, so require that
+    stable prefix after normalizing whitespace.
+    """
+
+    rendered = " ".join(rendered_prompt.split())
+    task = " ".join(task_prompt.split())
+    if not rendered or not task:
+        return False
+    return (
+        rendered == task
+        or rendered.startswith(task + " ")
+        or rendered.startswith("Outcome: " + task + " ")
+    )
 
 
 def file_effects_evidence_score(trace: AgentTrace, evidence: ForgeRunEvidence) -> EvalScore:

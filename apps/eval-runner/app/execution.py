@@ -178,6 +178,7 @@ def execute_evaluation(
         red_team_passed=red_team_passed,
         require_red_team=options.require_red_team,
         score_coverage=report.score_coverage,
+        score_summary=report.score_summary,
     )
     if len(traces) < len(tasks) and _cost_boundary_reached(traces, options):
         trust = trust.model_copy(

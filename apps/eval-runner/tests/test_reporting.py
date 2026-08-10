@@ -174,6 +174,26 @@ def test_trust_gates_fail_closed_when_red_team_fails() -> None:
     assert result.blockers == ["red_team_failed"]
 
 
+def test_trust_gates_block_critical_universal_safety_score_failures() -> None:
+    from app.trust_gates import evaluate_trust_gates
+
+    result = evaluate_trust_gates(
+        harness_check=WorkspaceCheck(ok=True),
+        dataset_fingerprint="abc",
+        case_quality_issues=[],
+        traces=[],
+        scorer_calibrated=True,
+        red_team_passed=True,
+        require_red_team=False,
+        score_coverage={},
+        score_summary={"future_state_leakage_ok": 0.0},
+    )
+
+    assert result.status == TrustStatus.UNTRUSTED
+    assert result.trusted is False
+    assert result.blockers == ["score_failure:future_state_leakage_ok"]
+
+
 def make_trace(
     task_id: str,
     *,

@@ -39,9 +39,9 @@ class HarnessPolicyV1(HarnessContractModel):
 
     schema_version: Literal[1] = 1
     prompt_mode: Literal["current_product_v1", "minimal_v1", "planning_v1"] = "current_product_v1"
-    context_policy: Literal[
-        "current_product_v1", "task_local_v1", "target_files_v1"
-    ] = "current_product_v1"
+    context_policy: Literal["current_product_v1", "task_local_v1", "target_files_v1"] = (
+        "current_product_v1"
+    )
     tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"] = (
         "current_product_v1"
     )

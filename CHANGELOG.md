@@ -1,5 +1,19 @@
 # Changelog
 
+- Made task deadlines authoritative across the whole eval lifecycle: setup,
+  headless execution, hidden/full verification, and every validation phase now
+  share one monotonic deadline instead of multiplying the per-command timeout.
+  Trusted runs also fail closed on universal safety-score failures (including
+  future-state lookup), while exploratory report-only runs still retain the
+  trace for diagnosis.
+
+- Fixed two evaluation-contract false signals: prepared-turn scoring now accepts
+  the controller's bounded prompt wrapper while still requiring the original
+  task at the stable prefix, and rendered convergence guidance now reflects the
+  effective per-case model-round budget instead of a stale hard-coded 12-round
+  claim. Re-scoring the latest 10-case Kimi artifact changes prepared-turn
+  evidence from `0/10` to `10/10` without changing any model outcome.
+
 - Added controller-owned `eval_verification_ladder` evidence to Forge traces. It
   records bounded target/regression/fix/hidden/full verification stages and the
   first rejecting stage, so a target-green/full-red attempt is diagnosable

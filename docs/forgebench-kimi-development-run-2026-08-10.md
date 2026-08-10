@@ -123,3 +123,26 @@ case exhausted its 12 model rounds before producing a converged result; it did
 not violate scope. This is an explicit budget signal, not a hidden success.
 The new controller repair path is covered by focused tests and the same report
 now records the verification ladder and its first rejecting stage.
+
+The scorer correction landed after this artifact was produced: the report's
+stored aggregate had marked prepared-turn evidence `0/10` because it compared
+the rendered controller prompt to the raw task string byte-for-byte. Offline
+re-scoring the unchanged ten traces with the corrected prefix-aware rule gives
+`10/10` prepared-turn evidence; task outcomes, verification, scope, usage, and
+cost remain unchanged.
+
+## Follow-up: case budget and safety-boundary diagnostic
+
+The admin multi-file case was then run without the exploratory 12-round CLI
+cap, allowing its declared 40-round case budget to reach the agent. It passed
+targeted, hidden, and full verification in 10 model rounds with zero scope
+violations and known Kimi cost `$0.1061568`. The trace attempted a `git log`
+future-state lookup, however, so the corrected trust gate classifies this
+evidence as `untrusted` despite the functional pass; it is not a quality claim.
+
+A second attempt with the explicit history/refs prohibition encountered a
+provider stream decoding error. The controller had previously allowed each of
+five verification phases to consume its own 300-second timeout, producing an
+invalid ~42-minute wall time. The task-level monotonic deadline fix now bounds
+that entire lifecycle and records the timeout as a failed trace rather than
+letting validation multiply the case budget.

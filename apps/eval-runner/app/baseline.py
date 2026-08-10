@@ -1133,6 +1133,7 @@ def _trust_for_trace(
         red_team_passed=None,
         require_red_team=False,
         score_coverage=report.score_coverage,
+        score_summary=report.score_summary,
     )
 
 

@@ -5,6 +5,7 @@ import shlex
 import shutil
 import sqlite3
 import tempfile
+import time
 from collections.abc import Mapping, Sequence
 from datetime import datetime
 from fnmatch import fnmatchcase
@@ -604,6 +605,7 @@ class ForgeAgentRunner:
             )
 
         timeout = task.max_duration_seconds or self.command_timeout_seconds
+        task_deadline_monotonic = time.monotonic() + timeout
         with tempfile.TemporaryDirectory(prefix=f"forge-eval-{task.id}-") as temp_dir:
             temp_root = Path(temp_dir)
             workspace = prepare_workspace(task, temp_root)
@@ -660,6 +662,7 @@ class ForgeAgentRunner:
                 timeout_seconds=self.setup_timeout_seconds,
                 cancel_requested=cancel_requested,
                 env=child_env,
+                deadline_monotonic=task_deadline_monotonic,
             )
             setup_failure = next(
                 (output for output in setup_outputs if output.exit_code != 0),
@@ -683,7 +686,13 @@ class ForgeAgentRunner:
 
             sandbox_scrub = scrub_future_repo_state(
                 workspace,
-                timeout_seconds=self.setup_timeout_seconds,
+                timeout_seconds=max(
+                    0.001,
+                    min(
+                        self.setup_timeout_seconds,
+                        task_deadline_monotonic - time.monotonic(),
+                    ),
+                ),
                 cancel_requested=cancel_requested,
             )
             if not sandbox_scrub.ok:
@@ -769,6 +778,7 @@ class ForgeAgentRunner:
                 task,
                 prepared_context_files,
                 task_contract,
+                max_model_rounds=task_dict.get("max_model_rounds"),
                 context_snapshot=context_snapshot,
             )
             # Rust resolves the task prompt before the top-level request prompt.
@@ -804,16 +814,14 @@ class ForgeAgentRunner:
                 # visible tool allowlist. Rust may use its bounded failure
                 # output for one repair turn, then the Python controller still
                 # reruns the authoritative check after the child exits.
-                payload["controller_verification_commands"] = [
-                    task.full_verification_command
-                ]
+                payload["controller_verification_commands"] = [task.full_verification_command]
             if self.execution_identity is not None:
                 payload["execution_identity"] = self.execution_identity.model_dump(mode="json")
             completed = run_bounded_process(
                 self.command,
                 input_text=json.dumps(payload),
                 cwd=workspace,
-                timeout_seconds=timeout,
+                timeout_seconds=max(0.001, task_deadline_monotonic - time.monotonic()),
                 cancel_requested=cancel_requested,
                 env=child_env,
             )
@@ -875,6 +883,7 @@ class ForgeAgentRunner:
                     sandbox_scrub,
                     continuity_database_path,
                     cancel_requested,
+                    task_deadline_monotonic,
                 )
                 trace = trace.model_copy(
                     update={
@@ -941,8 +950,8 @@ class ForgeAgentRunner:
         sandbox_scrub: LeakageCheck,
         continuity_database_path: Path | None,
         cancel_requested: CancelRequested,
+        task_deadline_monotonic: float | None = None,
     ) -> AgentTrace:
-        ended_at = utc_now()
         final_answer = payload.get("final_answer")
         if not isinstance(final_answer, str):
             raise ValueError("Forge trace is missing required string field: final_answer")
@@ -954,6 +963,7 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
             env=command_env,
+            deadline_monotonic=task_deadline_monotonic,
         )
         regression_outputs = run_shell_commands(
             task.pass_to_pass_commands,
@@ -961,6 +971,7 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
             env=command_env,
+            deadline_monotonic=task_deadline_monotonic,
         )
         fix_outputs = run_shell_commands(
             task.fail_to_pass_commands,
@@ -968,6 +979,7 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
             env=command_env,
+            deadline_monotonic=task_deadline_monotonic,
         )
         post_validation_outputs = run_post_validation_commands(
             task,
@@ -975,13 +987,24 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
             env=command_env,
+            deadline_monotonic=task_deadline_monotonic,
         )
         hidden_verifier_outputs = (
             [
                 run_hidden_verifier(
                     task.hidden_verifier_id,
                     workspace,
-                    timeout_seconds=self.validation_timeout_seconds,
+                    timeout_seconds=(
+                        self.validation_timeout_seconds
+                        if task_deadline_monotonic is None
+                        else max(
+                            0.001,
+                            min(
+                                self.validation_timeout_seconds,
+                                task_deadline_monotonic - time.monotonic(),
+                            ),
+                        )
+                    ),
                     cancel_requested=cancel_requested,
                 )
             ]
@@ -998,6 +1021,7 @@ class ForgeAgentRunner:
             timeout_seconds=self.validation_timeout_seconds,
             cancel_requested=cancel_requested,
             env=command_env,
+            deadline_monotonic=task_deadline_monotonic,
         )
         all_validation_outputs = [
             *validation_outputs,
@@ -1298,6 +1322,7 @@ class ForgeAgentRunner:
         )
         raw_events.append(harness_evidence)
 
+        ended_at = utc_now()
         return AgentTrace(
             task_id=task.id,
             user_prompt=task.prompt,
@@ -1840,6 +1865,7 @@ def run_setup_commands(
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
     env: Mapping[str, str] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.setup_commands,
@@ -1847,6 +1873,7 @@ def run_setup_commands(
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
         env=env,
+        deadline_monotonic=deadline_monotonic,
     )
 
 
@@ -1857,6 +1884,7 @@ def run_validation_commands(
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
     env: Mapping[str, str] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.validation_commands,
@@ -1864,6 +1892,7 @@ def run_validation_commands(
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
         env=env,
+        deadline_monotonic=deadline_monotonic,
     )
 
 
@@ -1874,6 +1903,7 @@ def run_post_validation_commands(
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
     env: Mapping[str, str] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> list[ShellOutput]:
     return run_shell_commands(
         task.post_validation_commands,
@@ -1881,6 +1911,7 @@ def run_post_validation_commands(
         timeout_seconds=timeout_seconds,
         cancel_requested=cancel_requested,
         env=env,
+        deadline_monotonic=deadline_monotonic,
     )
 
 
@@ -1913,23 +1944,16 @@ def _verification_ladder_event(
             {
                 "stage": name,
                 "present": bool(outputs),
-                "passed": (
-                    all(output.exit_code == 0 for output in outputs) if outputs else None
-                ),
+                "passed": (all(output.exit_code == 0 for output in outputs) if outputs else None),
                 "attempts": len(outputs),
                 "commands": [
-                    {"command": output.command, "exit_code": output.exit_code}
-                    for output in outputs
+                    {"command": output.command, "exit_code": output.exit_code} for output in outputs
                 ],
             }
         )
 
     first_failed_stage = next(
-        (
-            stage["stage"]
-            for stage in stages
-            if stage["present"] and stage["passed"] is False
-        ),
+        (stage["stage"] for stage in stages if stage["present"] and stage["passed"] is False),
         None,
     )
     controller_outputs = [
@@ -1995,13 +2019,26 @@ def run_shell_commands(
     timeout_seconds: float,
     cancel_requested: CancelRequested = never_cancelled,
     env: Mapping[str, str] | None = None,
+    deadline_monotonic: float | None = None,
 ) -> list[ShellOutput]:
     outputs: list[ShellOutput] = []
     for command in commands:
+        command_timeout = timeout_seconds
+        if deadline_monotonic is not None:
+            command_timeout = min(timeout_seconds, deadline_monotonic - time.monotonic())
+            if command_timeout <= 0:
+                outputs.append(
+                    ShellOutput(
+                        command=command,
+                        stderr="task deadline exceeded before validation command started",
+                        exit_code=124,
+                    )
+                )
+                break
         completed = run_bounded_process(
             command,
             cwd=workspace,
-            timeout_seconds=timeout_seconds,
+            timeout_seconds=command_timeout,
             cancel_requested=cancel_requested,
             shell=True,
             env=env,
@@ -2084,6 +2121,7 @@ def _render_eval_prompt(
     context_files: Sequence[str],
     task_contract: Any | None = None,
     *,
+    max_model_rounds: int | None = None,
     context_snapshot: Mapping[str, str] | None = None,
 ) -> str:
     """Add controller-owned scope and convergence facts to the agent prompt.
@@ -2110,12 +2148,19 @@ def _render_eval_prompt(
         )
     expected = ", ".join(task.expected_files_changed) or "(none; no product file should change)"
     forbidden = ", ".join(task.forbidden_files_changed) or "(none declared)"
+    round_budget = (
+        f"Target at most {max_model_rounds} model rounds"
+        if max_model_rounds is not None
+        else "Stay within the runtime's bounded model-round budget"
+    )
     scope_contract = (
         "\n\nController scope contract:\n"
         f"- Allowed changed files: {expected}\n"
         "- HARD boundary: edit only the exact allowed paths; do not broaden the patch.\n"
         f"- Forbidden changed paths: {forbidden}\n"
         "- Do not modify any other file; keep the patch minimal.\n"
+        "- Do not inspect repository history or refs (git log, git reflog, git remote, git "
+        "branch, git tag, or git show); use current task files and declared checks only.\n"
         "- Do not edit adjacent implementation or test files to make validation pass; if a "
         "dependency looks missing, stop and report it.\n"
         "- Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, and build "
@@ -2128,8 +2173,8 @@ def _render_eval_prompt(
         "- Run the targeted validation, then stop once the task is verified.\n"
         "- Use the exact required targeted check command; do not append files, redirections, "
         "pipes, or other shell commands.\n"
-        "- Target at most 12 model rounds: inspect early, make the smallest edit, validate, "
-        "and stop; do not spend rounds polishing an already verified result.\n"
+        f"- {round_budget}: inspect early, make the smallest edit, validate, and stop; do not "
+        "spend rounds polishing an already verified result.\n"
         "- Do not repeat an unchanged read-only command; only rerun it after new evidence or "
         "a file change."
     )

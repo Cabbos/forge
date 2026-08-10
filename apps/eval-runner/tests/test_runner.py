@@ -30,6 +30,7 @@ from app.runner import (
     continuity_db_diagnostic,
     create_runner,
     prepare_workspace,
+    run_shell_commands,
     scope_violations_for,
 )
 
@@ -352,6 +353,7 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
             "in payload['prompt']\n"
             "assert 'Target at most 12 model rounds' in payload['prompt']\n"
             "assert 'Do not repeat an unchanged read-only command' in payload['prompt']\n"
+            "assert 'Do not inspect repository history or refs' in payload['prompt']\n"
             "assert len(payload['task']['context_files']) == 16\n"
             "json.dump({'final_answer': 'done', 'verification_result': {"
             "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
@@ -370,6 +372,7 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
 
     trace = ForgeAgentRunner(
         command=[sys.executable, str(agent)],
+        max_model_rounds=12,
         harness_policy=HarnessPolicyV1(
             prompt_mode="minimal_v1",
             context_policy="task_local_v1",
@@ -383,6 +386,32 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
     )
     assert policy_event["policy"]["prompt_mode"] == "minimal_v1"
     assert len(policy_event["prepared_context_files"]) == 16
+
+
+def test_forge_runner_renders_case_model_round_budget(tmp_path: Path) -> None:
+    agent = tmp_path / "round_budget_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert 'Target at most 40 model rounds' in payload['prompt']\n"
+            "json.dump({'final_answer': 'done', 'verification_result': {"
+            "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
+            "'exit_code': 0, 'duration_ms': 1}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="case-round-budget",
+        title="Case round budget",
+        prompt="Fix the bug.",
+        max_model_rounds=40,
+        expected_files_changed=["src/app.py"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
 
 
 def test_forge_runner_prefills_controller_allowed_target_files(tmp_path: Path) -> None:
@@ -1907,6 +1936,53 @@ def test_forge_runner_times_out_validation_command(tmp_path: Path) -> None:
     assert trace.failure_category == FailureCategory.TIMEOUT
     assert trace.verification_result is not None
     assert trace.verification_result.exit_code == 124
+
+
+def test_run_shell_commands_honors_shared_task_deadline(tmp_path: Path) -> None:
+    import time
+
+    deadline = time.monotonic() + 0.25
+    outputs = run_shell_commands(
+        [
+            f'{sys.executable} -c "import time; time.sleep(0.2)"',
+            f'{sys.executable} -c "import time; time.sleep(0.2)"',
+        ],
+        tmp_path,
+        timeout_seconds=2.0,
+        deadline_monotonic=deadline,
+    )
+
+    assert len(outputs) == 2
+    assert outputs[0].exit_code == 0
+    assert outputs[1].exit_code == 124
+    assert sum(output.duration_ms for output in outputs) < 1000
+
+
+def test_forge_runner_bounds_validation_chain_by_task_deadline(tmp_path: Path) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    sleepy = f'{sys.executable} -c "import time; time.sleep(0.6)"'
+    task = EvaluationTask(
+        id="validation-chain-deadline",
+        title="Validation chain deadline",
+        prompt="Run the checks.",
+        validation_commands=[sleepy],
+        pass_to_pass_commands=[sleepy],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(script)],
+        command_timeout_seconds=1.0,
+        validation_timeout_seconds=2.0,
+    ).run_task(task)
+
+    assert trace.error == "timeout"
+    assert trace.verification_result is not None
+    assert trace.verification_result.exit_code == 124
+    assert trace.duration_ms < 2000
 
 
 def test_forge_runner_cancellation_preserves_partial_output(tmp_path: Path) -> None:
