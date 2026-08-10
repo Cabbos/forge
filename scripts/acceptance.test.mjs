@@ -107,7 +107,8 @@ test("acceptance script dry-run lists the final product gates", () => {
     },
     {
       label: "Forge frontier release aggregation contract",
-      command: "cd apps/eval-runner && uv run pytest tests/test_release_gate.py",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_release_gate.py tests/test_holdout_diagnostics.py",
     },
     {
       label: "DeepSeek H1 paid-baseline contract",
