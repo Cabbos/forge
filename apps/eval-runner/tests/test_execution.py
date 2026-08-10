@@ -107,6 +107,68 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
     assert seen["harness_policy"].context_policy == "target_files_v1"
 
 
+def test_execute_tasks_applies_conservative_stop_line_to_provider_chain_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    chain = named_provider_chain("kimi-k3-deepseek")
+    seen: dict[str, object] = {}
+
+    def build_chain(received_chain, **kwargs):
+        seen["chain"] = received_chain
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_fallback_runner", build_chain)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=chain,
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["max_model_rounds"] == 32
+
+
+def test_execute_evaluation_stops_provider_chain_at_default_total_cost_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    first = load_cases(cases_path)[0].model_copy(update={"metadata": {"mock": {"cost_usd": 10.0}}})
+    second = first.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    monkeypatch.setattr(
+        "app.execution.build_provider_fallback_runner",
+        lambda *_args, **_kwargs: DeterministicMockRunner(),
+    )
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=named_provider_chain("kimi-k3-deepseek"),
+    )
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=options,
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.total_cost_usd == 10.0
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
 def test_execute_tasks_wires_single_provider_route_into_development_runner(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from app.cases import validate_case_quality
@@ -28,6 +28,9 @@ from app.reporting import build_report
 from app.runner import EvalRunner, create_runner
 from app.scoring import score_trace
 from app.trust_gates import evaluate_trust_gates
+
+DEFAULT_PROVIDER_CHAIN_MAX_MODEL_ROUNDS = 32
+DEFAULT_PROVIDER_CHAIN_MAX_TOTAL_COST_USD = 10.0
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,7 @@ def execute_tasks(
     options: ExecutionOptions,
     cancel_requested: CancelRequested,
 ) -> list[AgentTrace]:
+    options = _with_provider_chain_stop_line(options)
     runner: EvalRunner
     if options.provider_chain is not None and options.provider_route is not None:
         raise ValueError("provider chain and single provider route are mutually exclusive")
@@ -150,6 +154,26 @@ def _cost_boundary_reached(traces: list[AgentTrace], options: ExecutionOptions) 
     return sum(trace.cost_usd or 0.0 for trace in traces) >= options.max_total_cost_usd
 
 
+def _with_provider_chain_stop_line(options: ExecutionOptions) -> ExecutionOptions:
+    """Give the ordinary provider chain a bounded default when no cap is supplied."""
+
+    if options.provider_chain is None:
+        return options
+    return replace(
+        options,
+        max_model_rounds=(
+            options.max_model_rounds
+            if options.max_model_rounds is not None
+            else DEFAULT_PROVIDER_CHAIN_MAX_MODEL_ROUNDS
+        ),
+        max_total_cost_usd=(
+            options.max_total_cost_usd
+            if options.max_total_cost_usd is not None
+            else DEFAULT_PROVIDER_CHAIN_MAX_TOTAL_COST_USD
+        ),
+    )
+
+
 def execute_evaluation(
     *,
     cases_path: Path,
@@ -158,6 +182,7 @@ def execute_evaluation(
     options: ExecutionOptions,
     cancel_requested: CancelRequested = never_cancelled,
 ) -> EvaluationExecution:
+    options = _with_provider_chain_stop_line(options)
     quality = validate_case_quality(tasks)
     fingerprint = dataset_fingerprint(tasks) if tasks else None
     harness = run_golden_harness_check(harness_check_path or cases_path)

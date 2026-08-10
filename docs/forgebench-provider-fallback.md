@@ -43,6 +43,17 @@ from the invoking process. Each child receives its own provider/model/base-URL
 selector and isolated Forge home; the controller never accepts a key as a CLI
 argument. The chain is unavailable to `baseline` and `holdout` commands.
 
+## Ordinary-run termination line
+
+The Kimi-to-DeepSeek chain now has a conservative hard stop when the caller does
+not provide an explicit cap: each provider attempt receives at most 32 model
+rounds, and the whole ordinary invocation stops before the next task once known
+provider cost reaches 10 USD. The chain still permits only one fallback attempt.
+A missing cost is also a stop condition when
+`--require-known-cost` is used. Passing `--max-model-rounds` or
+`--max-total-cost-usd` explicitly replaces the corresponding default; no
+automatic retry or budget expansion occurs after the boundary.
+
 The CCSwitch Kimi integration used during development is represented as:
 
 ```text
