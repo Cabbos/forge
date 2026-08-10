@@ -25,7 +25,7 @@ Forge 是一个 local-first 的 AI Agent Workbench：把 coding agent 放进一�
 
 - **自研 agent runtime，不是 SDK 或 CLI 包装。** `Cargo.toml` 里没有任何 LLM SDK；provider 层是手写 HTTP 适配（Anthropic 兼容族 + OpenAI 兼容族），agent loop、上下文压缩、工具执行、权限门、事件账本全部自建。
 - **事件溯源式运行时。** 循环状态由 append-only journal 加投影重建（可 replay），确认、权限、恢复动作都留下可回放证据。
-- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 78 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
+- **fail-closed 的评测与发布。** eval 缺证据算 UNKNOWN 而不是通过；验收矩阵 89 个可执行 gate（`--list-json` 可机读）；发布候选与 gate 结果绑定 commit。
 
 ## 架构总览
 
@@ -50,7 +50,7 @@ flowchart LR
     Scoring["30+ 维度 scoring<br/>app/scoring.py"]
     Trust["Fail-closed trust gates<br/>app/trust_gates.py"]
   end
-  Accept["验收矩阵 78 gates<br/>scripts/acceptance.sh"]
+  Accept["验收矩阵 89 gates<br/>scripts/acceptance.sh"]
   Confidence["发布置信度报告<br/>scripts/release-confidence-summary.mjs"]
 
   UI <--> Protocol
@@ -125,7 +125,40 @@ npm run eval:report:latest         # 查看最近一次报告
 
 看点：Forge 跑次导出 ForgeRunEvidence 后，eval-runner 按确认正确性、上下文重复、验证存在性、改动文件范围、恢复证据、用量一致性等 30+ 维度打分；trust gate 区分 UNTRUSTED（明确失败）与 UNKNOWN（缺证据），changed-file 以独立文件系统快照为权威而不信任 agent 自报，emitted diff 在全新 fixture 里 replay 验证。
 
+真实 Forge eval 的 controller 与 agent runtime 分域：doctor precheck 使用一次性 home，不读取用户桌面的 session snapshot；每次 attempt 都创建同级 `workspace` 与 `runtime-state`，把 `HOME`、`USERPROFILE`、registry、Continuity、日志、profile 和 snapshot 路由到观测工作区之外。`CARGO_HOME` / `RUSTUP_HOME` 只保留现有工具链解析，不作为 Forge 运行时状态。golden harness 只有在真实 observer 捕获文件变化、且生成的 patch 能在干净 fixture 中 replay 后才可信。
+
+可执行真实编码基准统一进入 `apps/eval-runner/forgebench/forgebench-monorepo`：10 个 development case 与 20 个 sealed holdout case 从同一产品基线创建独立副本并应用小型 scenario overlay，题面、场景、隐藏验证器和 fixture 都由内容指纹锁定。`eval_cases/` 继续承载 Forge runtime / scorer / contract 回归；旧 `continuity-ts-tooling` 与独立微型 fixture 不计入 frontier scoring。H0B 证明的是基准与证据链已冻结，不代表付费 holdout 已运行或 frontier KPI 已通过。
+
+Forge-built monorepo provenance 使用独立 integration campaign，把通过 trust、scope、patch replay 和可见/隐藏验证的 Forge patch 串成 Git commit 链与外置哈希账本；route-bound profile 还要求 `eval_execution_identity` 的 endpoint/base URL 与锁定 profile 完全一致，最终由 `FORGE-BUILD-MANIFEST.json` 绑定 fixture、dataset、harness、artifact index、账本、最终源码树和全量验证。完整命令与证明边界见 [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md)；该机制证明被接受源码的来源与完整性，不代替 scoring track，也不代表 20-case holdout 成功。
+
+DeepSeek H1 paid baseline 为当前 Forge harness 提供 development-only 的冻结基线控制器：固定 DeepSeek V4 Flash 身份、官方人民币价格快照、10 case × 3、逐任务与累计预算、可恢复账本、可信报告和独立验证。`baseline run` 会先执行不创建 session、不触发 provider 的 typed credential preflight；隔离 HOME 不会清除 controller 已导出的 `DEEPSEEK_API_KEY`，本地付费运行可从 Git 忽略且权限为 `600` 的 `apps/eval-runner/.env` 显式导出，不要求使用钥匙串。Python 字节码与 pytest cache 被强制写入工作区外的隔离 runtime-state，避免“仅验证、无需改代码”的任务产生伪 patch；预检失败时不会写 pending、attempt 或预算记录。完整命令与花费/证明边界见 [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md)；H1 是待实测的 pinned baseline，不是 frontier 或 holdout 成绩声明。
+
+DeepSeek H2 official transport A/B 只比较 DeepSeek V4 Flash 的两条官方路由：Anthropic Messages (`https://api.deepseek.com/anthropic`) 与 OpenAI-compatible Chat Completions (`https://api.deepseek.com`)。路由覆盖是 eval-only 的 isolated route override：controller 在子进程隔离 `HOME` 下写入无 secret 的临时 profile，并由 Rust 以 typed route identity 做 fail-closed attestation；桌面默认 DeepSeek 仍然是 Anthropic，用户设置和共享 session builder 不变。付费 campaign 在 route identity mismatch、provider schema drift、unknown usage/cost、untrusted workspace、patch replay failure 或 interrupted call 时立即停止且不重放 pending call。Forge 不声称支持 DeepSeek OpenAI Responses；H2 证明的是 development split 的协议与 harness 对照，不是 holdout 或 frontier 成绩。详见 [`docs/forgebench-h2-transport-ab.md`](docs/forgebench-h2-transport-ab.md)。
+普通 development 还可显式使用 `apps/eval-runner` 的 `--provider-chain kimi-k3-deepseek`：Kimi `k3` 的 OpenAI-compatible coding route 有独立 typed identity，只有鉴权/配额错误才切到独立 DeepSeek runner；该链路不进入锁定 H1/H2 或 holdout 证据。付费或预算门控的普通 eval 应同时传 `--require-known-cost`，未知成本会 fail-closed，不会按零成本放行；累计预算会在下一次 provider call 之前拦截。最新 10-case 真实 development diagnostic 见 [`docs/forgebench-kimi-development-run-2026-08-10.md`](docs/forgebench-kimi-development-run-2026-08-10.md)。
+每个 route-bound attempt 还会写入 controller-owned 的 `eval_execution_identity` trace event，把 temperature/reasoning/output limit、`tool_names_v1` 工具目录摘要、controller/runtime 版本与请求的 provider/model/route 绑定；OpenAI candidate 的 8,192 output limit 会真实写进隔离 provider profile，并由 Rust/Python 双重校验，避免只记录不生效。Python runner、baseline 和 campaign verifier 都会对缺失或篡改 fail closed。它是对 H1 的 additive evidence，不改变原 H1 profile JSON 字节和 fingerprint；旧 H1（Anthropic 且省略 `base_url`）证据仍保持兼容。
+H3 现在为每条 Forge trace 写入 bounded harness contract evidence：minimal context manifest、typed tool-result envelope 和双轮 no-progress 的 stagnation decision；`semantic_progress_v1` 会通过 task payload 进入隔离 Rust loop guard，在两次连续失败 tool batch 后实际停止，普通桌面触发仍保持六轮默认。controller contract 在 adapter 提供 typed progress signals 时仍允许一次 evidence-driven redirect；大输出保留 digest 而不把无限内容塞入 trace。eval prompt 还会在首次编辑前显式渲染 controller-owned 的 allowed/forbidden 文件范围和“跑 targeted validation 后停止”的 bounded convergence 约束，事后仍以独立 filesystem snapshot 做最终裁决。development A/B 的 winner 还必须通过 paired-bootstrap 的 success/verification/scope 非劣性门控，区间不确定时保持 `no_material_difference`。该 gate 只证明 harness 证据边界，不证明付费分数提升。详见 [`docs/forgebench-h3-harness-contracts.md`](docs/forgebench-h3-harness-contracts.md)。
+除原始 H1 Anthropic profile 为保持历史字节指纹而省略 `base_url` 外，所有 route-bound profile 都锁定官方 base URL；baseline/holdout verifier 还要求 controller-owned 的 harness policy event 与 profile 指纹完全一致。
+Provider A/B 的新 contract artifact 还要求至少两个配对样本才允许能力结论，并保留 median/p95 长尾与 failure-taxonomy delta；旧 artifact 仍可离线复核。
+在同一 scope contract 被传入 Forge headless 时，Rust eval runner 还会在 permission confirmation 层拒绝 allowlist 外的文件写入、删除和 mutating shell confirmation，并记录 `eval_write_policy_block`；这只是 eval-only 的提前边界，最终仍由 observer 与 patch replay 判定可信度，普通桌面请求不受影响。
+开发诊断还可显式使用 `--harness-context-policy target_files_v1`：controller 在隔离 workspace 内预填 bounded 的目标文件与可见验证文件上下文；Rust eval write boundary 仅自动放行工作区内的无写入只读探查管道，外部读取、重定向、后台控制和变更命令仍 fail-closed。该策略默认关闭，最近 10-case Kimi K3 诊断为 success `0.30`、verification `0.70`，相对旧 target-context 诊断 success `0.20` 有改善，但仍不是 frontier 证据。
+该策略生成的 controller prompt 会同时写入请求顶层与 `task.prompt`；这是为了匹配 Rust 的 task-first prompt 解析顺序，确保 bounded context、文件范围和停止指令实际进入模型，而不是只存在于 controller 外层 payload。
+H4 的 frozen holdout release gate 已把 20 cases × 3 repetitions、80% trusted success、2% scope、12 轮数、100% 证据覆盖和 35 CNY budget 写成 canonical report verifier；新增 sealed campaign runner 会在完整开发 A/B 锁定后执行、恢复和生成 artifact-index/report，并对 pending call fail-closed 且不重放。holdout 初始化现在必须显式提供 control/candidate campaign 与 profile、独立的 development cases/lock，离线重算 comparison 并与 canonical 文件逐字匹配后才会解锁。首个真实 60-attempt control campaign 已完成，但 trusted success `0.70`、scope `0.2333`、median rounds `31.5` 未达门槛，canonical gate 正确拒绝 release；该报告产生于并行工具轮次计量修复之前，轮次值只作历史诊断，不能作为当前轮次门槛证据；详见 [`docs/forgebench-h4-paid-result.md`](docs/forgebench-h4-paid-result.md)。
+最终发布边界现在也有统一离线命令：`python -m app.cli release verify --holdout-campaign <sealed-h4-campaign> --campaign <forge-campaign>` 会从 sealed H4 campaign 重新验证 60 个 attempt、预算链、trust、artifact index 与 canonical report，再要求 H4 通过、profile/dataset 指纹一致、Forge provenance campaign 完整、最终全量验证通过；任一证据链缺失都 fail closed，且不会发起 provider call，孤立手写 aggregate report 不能过 gate。
+封存结果发布后，`holdout verify --campaign ... --frozen` 可在文档或其他非实验提交改变 worktree 后复核同一批证据；它只跳过当前 commit/dirty-state 比对，仍执行 profile、dataset、attempt、usage、trust、预算链、report、artifact-index 和阈值检查，绝不发起 provider call。
+
 ## 开发
+
+从仓库根目录启动完整桌面应用：
+
+```bash
+npm run dev:desktop
+```
+
+只启动桌面前端 Vite 服务：
+
+```bash
+npm run dev:desktop:web
+```
 
 ```bash
 npm run build:desktop
@@ -149,7 +182,7 @@ uv run mypy app
 
 ## 质量门禁与发布纪律
 
-**验收矩阵**（`scripts/acceptance.sh`）：78 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
+**验收矩阵**（`scripts/acceptance.sh`）：89 个可执行 gate，按权威域（runtime、permission、usage/context、memory、gateway、eval、UI evidence 等）与发布层级（fast-contract、runtime-core、desktop-ui、manual-evidence、full-release）打标，fast-contract 与 runtime-core 为 CI 默认层级。常用入口：
 
 | 命令 | 用途 |
 | --- | --- |
@@ -187,9 +220,9 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 
 - Forge 处于 internal beta；CHANGELOG 尚未切正式版本号。
 - 桌面 e2e 是 mock IPC 的产品契约冒烟，不是真实模型端到端；真实模型路径走 eval smoke（`eval:forge:smoke:real`）。
-- eval 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性，不是大规模模型排行榜；red-team 检查是启发式规则。
+- `eval_cases/` 的多数 case 是 contract / mock 证据，验证的是证据契约与 scorer 的正确性；frontier scoring 只使用冻结的 ForgeBench real-coding split。20-case holdout 尚未执行付费 campaign，red-team 检查仍是启发式规则。
 - gateway 默认 local ownership：`gateway_can_resume` 保持 false，只读 owner 切片需要显式人工批准或 dev-only flag；commit / merge / push 始终人工把关。
-- 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、billing 级用量核算（provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
+- 不声称：Tauri/WebDriver 强杀恢复、syscall 级追踪、未绑定价格表的 billing 级用量核算（Kimi K3 development route 使用冻结的官方价格快照；其他未绑定价格表的 provider 仍将 token usage 与 cost known rate 分开报告，provider 未报 usage 时保持 unknown 而不是编造）、pending 确认 / 工具调用的自动接受。
 
 ## 文档地图
 
@@ -197,6 +230,9 @@ eval CLI 发布跑次只对可信且过阈值的证据返回成功；`--report-o
 | --- | --- |
 | [`apps/desktop/README.md`](apps/desktop/README.md) | 桌面产品定位、承诺与体验（含英文版链接） |
 | [`apps/eval-runner/README.md`](apps/eval-runner/README.md) | eval 架构、trace 契约与运行方式 |
+| [`docs/forgebench-provenance.md`](docs/forgebench-provenance.md) | Forge-built monorepo provenance、integration campaign 命令与证明边界 |
+| [`docs/forge-monorepo-evidence.md`](docs/forge-monorepo-evidence.md) | desktop / eval-runner / website 的统一证据索引、gate 与 H0–H4 声明边界 |
+| [`docs/forgebench-h1-baseline.md`](docs/forgebench-h1-baseline.md) | DeepSeek H1 paid baseline、预算账本、恢复语义与显式 CLI |
 | [`docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md`](docs/superpowers/plans/2026-06-12-forge-hermes-runtime-gap-roadmap.md) | 桌面 runtime 硬化路线图（Phase 1–7，带验收记录） |
 | [`docs/release/merge-train-2026-07-10.md`](docs/release/merge-train-2026-07-10.md) | 发布合并列车账本 |
 | [`apps/desktop/docs/product/forge-design-language.md`](apps/desktop/docs/product/forge-design-language.md) | 桌面设计语言契约（v5 "Console Craft"：冷石墨 + 青色强调 + Geist Mono） |

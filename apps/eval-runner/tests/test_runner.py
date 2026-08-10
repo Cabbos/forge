@@ -7,6 +7,8 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.execution_identity import default_execution_identity
+from app.harness_contracts import HarnessPolicyV1
 from app.models import (
     AgentTrace,
     EvalProvider,
@@ -24,8 +26,11 @@ from app.models import (
 from app.runner import (
     DeterministicMockRunner,
     ForgeAgentRunner,
+    _install_uv_scope_wrapper,
     continuity_db_diagnostic,
     create_runner,
+    prepare_workspace,
+    run_shell_commands,
     scope_violations_for,
 )
 
@@ -94,7 +99,844 @@ def test_task_supports_regression_and_fix_validation_commands() -> None:
     assert task.fail_to_pass_commands == ["pytest tests/test_bug.py"]
 
 
-def test_scope_allows_forge_managed_continuity_database_unless_forbidden() -> None:
+def test_prepare_workspace_applies_scenario_overlay_without_mutating_sources(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    (fixture / "src").mkdir(parents=True)
+    (scenario / "src").mkdir(parents=True)
+    (scenario / "tests").mkdir()
+    (fixture / "src" / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (fixture / "README.md").write_text("baseline\n", encoding="utf-8")
+    (scenario / "src" / "app.py").write_text("VALUE = 0\n", encoding="utf-8")
+    (scenario / "tests" / "regression.py").write_text("assert True\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="scenario-overlay",
+        title="Scenario overlay",
+        prompt="Repair the scenario.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+
+    workspace = prepare_workspace(task, tmp_path / "attempt")
+
+    assert (workspace / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+    assert (workspace / "README.md").read_text(encoding="utf-8") == "baseline\n"
+    assert (workspace / "tests" / "regression.py").is_file()
+    assert (fixture / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 1\n"
+    assert (scenario / "src" / "app.py").read_text(encoding="utf-8") == "VALUE = 0\n"
+
+
+def test_prepare_workspace_creates_independent_scoring_and_replay_copies(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    fixture.mkdir()
+    scenario.mkdir()
+    (fixture / "app.py").write_text("baseline\n", encoding="utf-8")
+    (scenario / "app.py").write_text("broken\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="independent-copies",
+        title="Independent copies",
+        prompt="Repair the scenario.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+    attempt_root = tmp_path / "attempt"
+
+    scoring = prepare_workspace(task, attempt_root)
+    replay = prepare_workspace(task, attempt_root, workspace_name="patch-replay")
+    (scoring / "app.py").write_text("repaired\n", encoding="utf-8")
+
+    assert replay != scoring
+    assert (replay / "app.py").read_text(encoding="utf-8") == "broken\n"
+    assert (scenario / "app.py").read_text(encoding="utf-8") == "broken\n"
+
+
+def test_prepare_workspace_rejects_scenario_symlinks(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    scenario = tmp_path / "scenario"
+    outside = tmp_path / "outside.txt"
+    fixture.mkdir()
+    scenario.mkdir()
+    outside.write_text("secret\n", encoding="utf-8")
+    (scenario / "escape.txt").symlink_to(outside)
+    task = EvaluationTask(
+        id="scenario-symlink",
+        title="Scenario symlink",
+        prompt="Reject unsafe input.",
+        fixture_path=str(fixture),
+        scenario_path=str(scenario),
+    )
+
+    with pytest.raises(ValueError, match="scenario symlinks are forbidden"):
+        prepare_workspace(task, tmp_path / "attempt")
+
+
+def test_forge_runner_keeps_hidden_controller_fields_out_of_agent_payload(
+    tmp_path: Path,
+) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "forgebench" / "forgebench-monorepo"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "task = payload['task']\n"
+            "assert 'hidden_verifier_id' not in task\n"
+            "assert 'full_verification_command' not in task\n"
+            "assert 'scenario_path' not in task\n"
+            "assert payload['controller_verification_commands'] == [\n"
+            "    'python3 tools/release/verify.py'\n"
+            "]\n"
+            "result = {'final_answer': 'done', 'changed_files': [], 'file_diffs': []}\n"
+            "json.dump(result, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="controller-owned-verification",
+        title="Controller-owned verification",
+        prompt="Confirm the baseline behavior.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 tools/release/verify.py",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+    commands = [output.command for output in trace.shell_outputs]
+    hidden_index = next(
+        index for index, command in enumerate(commands) if command.startswith("hidden-verifier:")
+    )
+    assert commands[hidden_index + 1] == "python3 tools/release/verify.py"
+
+
+def test_forge_runner_records_bounded_harness_contract_evidence(tmp_path: Path) -> None:
+    agent = tmp_path / "harness_contract_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "json.load(sys.stdin)\n"
+            "json.dump({\n"
+            "  'final_answer': 'done',\n"
+            "  'verification_result': {'command': 'pytest', 'passed': True, "
+            "'stdout': 'ok', 'stderr': '', 'exit_code': 0, 'duration_ms': 1},\n"
+            "  'tool_calls': [{'command': 'read_file', 'stdout': 'ok', "
+            "'stderr': '', 'exit_code': 0}],\n"
+            "  'tool_result_envelopes': [{\n"
+            "    'tool': 'read_file', 'status': 'ok', 'summary': 'read one file',\n"
+            "    'facts': ['exit_code=0'], 'content': 'ok',\n"
+            "    'next_evidence': [], 'artifact_digest': None,\n"
+            "    'truncated': False, 'retryable': False\n"
+            "  }],\n"
+            "  'progress_signals': [\n"
+            "    {'round': 1, 'kind': 'no_progress', 'evidence': 'same state'},\n"
+            "    {'round': 2, 'kind': 'no_progress', 'evidence': 'same state'}\n"
+            "  ]\n"
+            "}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="harness-contract-evidence",
+        title="Harness contract evidence",
+        prompt="Preserve typed evidence.",
+        context_files=["README.md"],
+        verification_command="python -c 'print(1)'",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    event = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "harness_contract_evidence"
+    )
+    assert event["context_manifest"]["mode"] == "current_product_v1"
+    assert event["tool_results"]["source"] == "agent_payload"
+    assert event["tool_results"]["envelopes"][0]["content"] == "ok"
+    assert event["progress"]["stagnation"]["action"] == "redirect"
+    assert event["failure_taxonomy"]["primary"] == "passed"
+    assert event["task_plan"]["status"] == "missing"
+    convergence = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "eval_verification_convergence"
+    )
+    assert convergence["repair_attempts_used"] == 0
+    assert convergence["fresh_controller_verifier"] is False
+
+
+def test_forge_runner_exposes_task_execution_contract_and_validates_agent_plan(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "planned_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "contract = payload['task_execution_contract']\n"
+            "assert contract['kind'] == 'multi_file'\n"
+            "assert contract['required_inspection_files'] == ['src/a.py', 'src/b.py']\n"
+            "assert 'Inspect every allowed file' in contract['stop_condition']\n"
+            "assert 'Task shape: multi_file' in payload['prompt']\n"
+            "json.dump({\n"
+            "  'final_answer': 'done',\n"
+            "  'task_plan': {\n"
+            "    'goal': 'preserve the cross-file contract',\n"
+            "    'steps': [\n"
+            "      {'id': 'inspect', 'action': 'inspect', 'files': ['src/a.py', 'src/b.py']},\n"
+            "      {'id': 'edit', 'action': 'edit', 'files': ['src/a.py', 'src/b.py']},\n"
+            "      {'id': 'verify', 'action': 'verify', 'files': []}\n"
+            "    ]\n"
+            "  }\n"
+            "}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="planned-multi-file",
+        title="Planned multi-file task",
+        prompt="Preserve the cross-file contract.",
+        expected_files_changed=["src/a.py", "src/b.py"],
+        validation_commands=["python -c 'print(1)'"],
+        tags=["multi-file"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+    evidence = next(
+        event
+        for event in trace.raw_events
+        if event.get("event_type") == "harness_contract_evidence"
+    )
+    assert evidence["task_execution_contract"]["kind"] == "multi_file"
+    assert evidence["task_plan"]["status"] == "valid"
+    assert evidence["task_plan"]["step_count"] == 3
+    assert trace.context_files == []
+
+
+def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path) -> None:
+    agent = tmp_path / "minimal_policy_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['harness_policy']['prompt_mode'] == 'minimal_v1'\n"
+            "assert payload['harness_policy']['context_policy'] == 'task_local_v1'\n"
+            "assert payload['task']['stagnation_policy'] == 'semantic_progress_v1'\n"
+            "assert payload['context_manifest']['mode'] == 'task_local_v1'\n"
+            "assert len(payload['context_manifest']['items']) == 16\n"
+            "assert len(payload['context_manifest_fingerprint']) == 64\n"
+            "assert payload['prompt'].startswith('Outcome: Fix the bug.')\n"
+            "assert 'Allowed changed files: src/app.py' in payload['prompt']\n"
+            "assert 'HARD boundary: edit only the exact allowed paths' in payload['prompt']\n"
+            "assert 'Do not edit adjacent implementation or test files to make validation pass' "
+            "in payload['prompt']\n"
+            "assert 'Forbidden changed paths: package.json, .forge/**' in payload['prompt']\n"
+            "assert 'Run the targeted validation, then stop once the task is verified.' "
+            "in payload['prompt']\n"
+            "assert 'Use the exact required targeted check command; do not append files, "
+            "redirections, pipes, or other shell commands' in payload['prompt']\n"
+            "assert 'Treat tests, fixtures, package manifests, lockfiles, virtualenvs, caches, "
+            "and build outputs as read-only' in payload['prompt']\n"
+            "assert 'do not create or edit .venv, uv.lock, node_modules, or cache files' "
+            "in payload['prompt']\n"
+            "assert 'Do not create helper files such as .cache-* or tools/*' in payload['prompt']\n"
+            "assert 'If a command generates a lockfile or temporary helper, remove it before final "
+            "verification' "
+            "in payload['prompt']\n"
+            "assert 'Target at most 12 model rounds' in payload['prompt']\n"
+            "assert 'Do not repeat an unchanged read-only command' in payload['prompt']\n"
+            "assert 'Do not inspect repository history or refs' in payload['prompt']\n"
+            "assert len(payload['task']['context_files']) == 16\n"
+            "json.dump({'final_answer': 'done', 'verification_result': {"
+            "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
+            "'exit_code': 0, 'duration_ms': 1}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="minimal-policy",
+        title="Minimal policy",
+        prompt="Fix the bug.",
+        context_files=[f"src/file-{index}.py" for index in range(20)],
+        expected_files_changed=["src/app.py"],
+        forbidden_files_changed=["package.json", ".forge/**"],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        max_model_rounds=12,
+        harness_policy=HarnessPolicyV1(
+            prompt_mode="minimal_v1",
+            context_policy="task_local_v1",
+            tool_result_policy="bounded_structured_v1",
+            stagnation_policy="semantic_progress_v1",
+        ),
+    ).run_task(task)
+
+    policy_event = next(
+        event for event in trace.raw_events if event.get("event_type") == "eval_harness_policy"
+    )
+    assert policy_event["policy"]["prompt_mode"] == "minimal_v1"
+    assert len(policy_event["prepared_context_files"]) == 16
+
+
+def test_forge_runner_renders_case_model_round_budget(tmp_path: Path) -> None:
+    agent = tmp_path / "round_budget_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert 'Target at most 40 model rounds' in payload['prompt']\n"
+            "json.dump({'final_answer': 'done', 'verification_result': {"
+            "'command': 'pytest', 'passed': True, 'stdout': 'ok', 'stderr': '', "
+            "'exit_code': 0, 'duration_ms': 1}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="case-round-budget",
+        title="Case round budget",
+        prompt="Fix the bug.",
+        max_model_rounds=40,
+        expected_files_changed=["src/app.py"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+
+
+def test_forge_runner_prefills_controller_allowed_target_files(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "tests" / "cases").mkdir(parents=True)
+    (fixture / "src" / "env.ts").write_text(
+        "export function parsePort(value: string) { return 0; }\n", encoding="utf-8"
+    )
+    (fixture / "tests" / "cases" / "env.test.py").write_text(
+        "assert 'parsePort' in open('src/env.ts').read()\n", encoding="utf-8"
+    )
+    agent = tmp_path / "target_context_agent.py"
+    agent.write_text(
+        "import json, sys\n"
+        "payload = json.load(sys.stdin)\n"
+        "assert payload['harness_policy']['context_policy'] == 'target_files_v1'\n"
+        "assert payload['task']['context_files'] == ['src/env.ts', 'tests/cases/env.test.py']\n"
+        "assert payload['task']['prompt'] == payload['prompt']\n"
+        "assert 'Controller-provided target context (read-only):' in payload['prompt']\n"
+        "assert 'parsePort' in payload['prompt']\n"
+        "assert \"assert 'parsePort'\" in payload['prompt']\n"
+        "json.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="target-context",
+        title="Target context",
+        prompt="Fix the parser.",
+        fixture_path=str(fixture),
+        expected_files_changed=["src/env.ts"],
+        validation_commands=["python tests/cases/env.test.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        harness_policy=HarnessPolicyV1(context_policy="target_files_v1"),
+    ).run_task(task)
+
+    assert trace.error is None
+
+
+def test_uv_scope_wrapper_forces_run_without_project_lockfile(tmp_path: Path) -> None:
+    fake_uv = tmp_path / "uv"
+    args_file = tmp_path / "uv-args.txt"
+    fake_uv.write_text(
+        '#!/bin/sh\nprintf \'%s\\n\' "$@" > "$UV_ARGS_FILE"\n',
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    child_env = {"PATH": str(tmp_path), "UV_ARGS_FILE": str(args_file)}
+
+    wrapped_env = _install_uv_scope_wrapper(tmp_path / "runtime-state", child_env)
+
+    subprocess.run(
+        ["uv", "run", "pytest", "-q"],
+        cwd=tmp_path,
+        env=wrapped_env,
+        check=True,
+    )
+    assert args_file.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--no-project",
+        "pytest",
+        "-q",
+    ]
+
+    subprocess.run(
+        ["uv", "run", "--no-project", "pytest", "-q"],
+        cwd=tmp_path,
+        env=wrapped_env,
+        check=True,
+    )
+    assert args_file.read_text(encoding="utf-8").splitlines() == [
+        "run",
+        "--no-project",
+        "pytest",
+        "-q",
+    ]
+
+
+def test_forge_runner_exposes_context_conflicts_before_provider_call(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "a").mkdir(parents=True)
+    (fixture / "b").mkdir()
+    (fixture / "a" / "README.md").write_text("left\n", encoding="utf-8")
+    (fixture / "b" / "README.md").write_text("right\n", encoding="utf-8")
+    agent = tmp_path / "context_conflict_agent.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['context_manifest']['conflict_groups'] == "
+            "[['a/README.md', 'b/README.md']]\n"
+            "assert len(payload['context_manifest_fingerprint']) == 64\n"
+            "json.dump({'final_answer': 'context conflict recorded', "
+            "'changed_files': [], 'file_diffs': []}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="context-conflict-before-provider",
+        title="Context conflict",
+        prompt="Inspect the task-local context.",
+        fixture_path=str(fixture),
+        context_files=["a/README.md", "b/README.md"],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error is None
+
+
+def test_forge_runner_credential_preflight_is_no_call_and_identity_bound(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "credential_preflight.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['mode'] == 'credential_preflight'\n"
+            "assert payload['provider'] == 'deepseek'\n"
+            "assert payload['model'] == 'deepseek-v4-flash'\n"
+            "assert payload['use_provider_credential_store'] is True\n"
+            "assert 'task' not in payload\n"
+            "assert 'prompt' not in payload\n"
+            "json.dump({'credential_preflight': {"
+            "'ok': True, 'provider': 'deepseek', "
+            "'model': 'deepseek-v4-flash', "
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        use_provider_credential_store=True,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-v4-flash"
+    assert result.provider_call_started is False
+    assert result.error is None
+
+
+def test_forge_runner_applies_isolated_provider_env_overrides_to_preflight(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "provider_env_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, sys\n"
+            "assert os.environ['FORGE_HEADLESS_PROVIDER'] == 'custom_openai'\n"
+            "assert os.environ['FORGE_HEADLESS_MODEL'] == 'k3'\n"
+            "assert os.environ['FORGE_CUSTOM_OPENAI_BASE_URL'] == 'https://example.test/v1'\n"
+            "assert os.environ['FORGE_CUSTOM_OPENAI_API_KEY'] == 'env-only-secret'\n"
+            "json.dump({'credential_preflight': {"
+            "'ok': True, 'provider': 'custom_openai', 'model': 'k3', "
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="custom_openai",
+        agent_model="k3",
+        child_env_overrides={
+            "FORGE_HEADLESS_PROVIDER": "custom_openai",
+            "FORGE_HEADLESS_MODEL": "k3",
+            "FORGE_CUSTOM_OPENAI_BASE_URL": "https://example.test/v1",
+            "FORGE_CUSTOM_OPENAI_API_KEY": "env-only-secret",
+        },
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "custom_openai"
+    assert result.model == "k3"
+    assert result.provider_call_started is False
+
+
+def test_forge_runner_rejects_provider_env_overrides_that_break_isolation() -> None:
+    with pytest.raises(ValueError, match="isolated variable HOME"):
+        ForgeAgentRunner(
+            command=[sys.executable, "-c", ""],
+            child_env_overrides={"HOME": "/tmp/not-isolated"},
+        )
+
+
+def test_forge_runner_writes_secret_free_route_config_and_payload(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "route_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, pathlib, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "assert payload['provider_route'] == {\n"
+            "    'transport': 'openai_chat_completions',\n"
+            "    'base_url': 'https://api.deepseek.com',\n"
+            "}\n"
+            "assert payload['execution_identity']['max_output_tokens'] == 8192\n"
+            "config = pathlib.Path(os.environ['HOME']) / '.forge' / 'config.json'\n"
+            "config_payload = json.loads(config.read_text())\n"
+            "assert 'DEEPSEEK_API_KEY' in config.read_text()\n"
+            "assert 'sk-secret-value' not in config.read_text()\n"
+            "assert config_payload['providers'][0]['transport'] == 'openai_chat_completions'\n"
+            "assert config_payload['providers'][0]['base_url'] == 'https://api.deepseek.com'\n"
+            "assert config_payload['providers'][0]['default_model'] == 'deepseek-v4-flash'\n"
+            "assert config_payload['providers'][0]['max_output_tokens_default'] == 8192\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'deepseek', 'model': 'deepseek-v4-flash',\n"
+            "'transport': 'openai_chat_completions', 'endpoint_family': 'openai',\n"
+            "'base_url': 'https://api.deepseek.com',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    identity = default_execution_identity(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="openai_chat_completions",
+        base_url="https://api.deepseek.com",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+        use_provider_credential_store=True,
+        execution_identity=identity,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.transport == "openai_chat_completions"
+    assert result.endpoint_family == "openai"
+    assert result.base_url == "https://api.deepseek.com"
+
+
+def test_forge_runner_writes_route_specific_api_key_env_for_custom_openai(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "custom_openai_route_preflight.py"
+    agent.write_text(
+        (
+            "import json, os, sys\n"
+            "payload = json.load(sys.stdin)\n"
+            "config = os.path.join(os.environ['HOME'], '.forge', 'config.json')\n"
+            "config_text = open(config, encoding='utf-8').read()\n"
+            "assert 'FORGE_CUSTOM_OPENAI_API_KEY' in config_text\n"
+            "assert 'DEEPSEEK_API_KEY' not in config_text\n"
+            "assert 'https://api.kimi.com/coding/v1' in config_text\n"
+            "assert payload['provider'] == 'custom_openai'\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'custom_openai', 'model': 'k3',\n"
+            "'transport': 'openai_chat_completions', 'endpoint_family': 'openai',\n"
+            "'base_url': 'https://api.kimi.com/coding/v1',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="custom_openai",
+        agent_model="k3",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.kimi.com/coding/v1",
+        api_key_env="FORGE_CUSTOM_OPENAI_API_KEY",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is True
+    assert result.provider == "custom_openai"
+    assert result.base_url == "https://api.kimi.com/coding/v1"
+
+
+def test_forge_runner_rejects_execution_identity_route_mismatch(tmp_path: Path) -> None:
+    identity = default_execution_identity(
+        provider="deepseek",
+        model="deepseek-v4-flash",
+        transport="anthropic_messages",
+        base_url="https://api.deepseek.com/anthropic",
+    )
+
+    with pytest.raises(ValueError, match="execution identity does not match runner route"):
+        ForgeAgentRunner(
+            command=[sys.executable, "-c", ""],
+            agent_provider="deepseek",
+            agent_model="deepseek-v4-flash",
+            agent_transport="openai_chat_completions",
+            agent_endpoint_family="openai",
+            agent_base_url="https://api.deepseek.com",
+            execution_identity=identity,
+        )
+
+
+def test_forge_runner_rejects_route_identity_mismatch_in_preflight(tmp_path: Path) -> None:
+    agent = tmp_path / "mismatched_route_preflight.py"
+    agent.write_text(
+        (
+            "import json, sys\n"
+            "json.load(sys.stdin)\n"
+            "json.dump({'credential_preflight': {\n"
+            "'ok': True, 'provider': 'deepseek', 'model': 'deepseek-v4-flash',\n"
+            "'transport': 'anthropic_messages', 'endpoint_family': 'anthropic',\n"
+            "'base_url': 'https://api.deepseek.com/anthropic',\n"
+            "'provider_call_started': False, 'error': None}}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.error == "credential_preflight_identity_mismatch"
+
+
+def test_forge_runner_rejects_partial_route_identity_before_spawn(tmp_path: Path) -> None:
+    marker = tmp_path / "spawned"
+    agent = tmp_path / "must_not_spawn.py"
+    agent.write_text(
+        f"import pathlib\npathlib.Path({str(marker)!r}).write_text('spawned')\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.error == "isolated_provider_config_failed"
+    assert not marker.exists()
+
+
+def test_forge_runner_credential_preflight_contains_process_spawn_failure(
+    tmp_path: Path,
+) -> None:
+    runner = ForgeAgentRunner(
+        command=[str(tmp_path / "missing-forge-command")],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        use_provider_credential_store=True,
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider == "deepseek"
+    assert result.model == "deepseek-v4-flash"
+    assert result.provider_call_started is False
+    assert result.error == "credential_preflight_command_failed"
+
+
+@pytest.mark.parametrize(
+    ("response", "expected_error"),
+    [
+        (
+            '{"credential_preflight":{"ok":true,"provider":"other",'
+            '"model":"deepseek-v4-flash","provider_call_started":false,'
+            '"error":null}}',
+            "credential_preflight_identity_mismatch",
+        ),
+        (
+            '{"credential_preflight":{"ok":true,"provider":"deepseek",'
+            '"model":"deepseek-v4-flash","provider_call_started":true,'
+            '"error":null}}',
+            "credential_preflight_invalid_response",
+        ),
+        ("not-json", "credential_preflight_invalid_response"),
+    ],
+)
+def test_forge_runner_credential_preflight_rejects_untrusted_response(
+    tmp_path: Path,
+    response: str,
+    expected_error: str,
+) -> None:
+    agent = tmp_path / "untrusted_preflight.py"
+    agent.write_text(
+        "import sys\nsys.stdout.write(sys.argv[1])\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent), response],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider_call_started is False
+    assert result.error == expected_error
+
+
+def test_forge_runner_credential_preflight_times_out_without_provider_evidence(
+    tmp_path: Path,
+) -> None:
+    agent = tmp_path / "slow_preflight.py"
+    agent.write_text(
+        "import time\ntime.sleep(10)\n",
+        encoding="utf-8",
+    )
+    runner = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        command_timeout_seconds=0.05,
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+    )
+
+    result = runner.credential_preflight()
+
+    assert result.ok is False
+    assert result.provider_call_started is False
+    assert result.error == "credential_preflight_timeout"
+
+
+def test_forge_runner_hidden_verifier_failure_blocks_success(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="hidden-verifier-fails",
+        title="Hidden verifier fails",
+        prompt="Return without changing files.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 -c \"print('full ran')\"",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error == "verification_failed"
+    assert trace.failure_category == FailureCategory.VERIFICATION_FAILED
+    hidden_index = next(
+        index
+        for index, output in enumerate(trace.shell_outputs)
+        if output.command.startswith("hidden-verifier:")
+    )
+    assert trace.shell_outputs[hidden_index].exit_code != 0
+    assert trace.shell_outputs[hidden_index + 1].stdout == "full ran\n"
+
+
+def test_forge_runner_full_verification_failure_blocks_success(tmp_path: Path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "forgebench" / "forgebench-monorepo"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="full-verification-fails",
+        title="Full verification fails",
+        prompt="Return without changing files.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="baseline-health",
+        full_verification_command="python3 -c 'raise SystemExit(4)'",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent)]).run_task(task)
+
+    assert trace.error == "verification_failed"
+    assert trace.verification_result is not None
+    assert trace.verification_result.command == "python3 -c 'raise SystemExit(4)'"
+    assert trace.verification_result.exit_code == 4
+
+
+def test_forge_runner_rejects_unknown_hidden_verifier_before_agent_runs(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    marker = tmp_path / "agent-ran"
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        (
+            "import json, pathlib, sys\n"
+            "pathlib.Path(sys.argv[1]).touch()\n"
+            "json.dump({'final_answer': 'done'}, sys.stdout)\n"
+        ),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="unknown-hidden-verifier",
+        title="Unknown hidden verifier",
+        prompt="Do not run.",
+        fixture_path=str(fixture),
+        hidden_verifier_id="not-registered",
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(agent), str(marker)]).run_task(task)
+
+    assert trace.error == "hidden_verifier_invalid"
+    assert trace.failure_category == FailureCategory.RUNNER_ERROR
+    assert not marker.exists()
+
+
+def test_scope_treats_workspace_runtime_files_as_unexpected_changes() -> None:
     task = EvaluationTask(
         id="continuity-runtime-artifact",
         title="Continuity runtime artifact",
@@ -102,13 +944,9 @@ def test_scope_allows_forge_managed_continuity_database_unless_forbidden() -> No
         expected_files_changed=["src/app.py"],
     )
 
-    assert (
-        scope_violations_for(
-            task,
-            ["src/app.py", ".forge/continuity.db"],
-        )
-        == []
-    )
+    assert scope_violations_for(task, ["src/app.py", ".forge/continuity.db"]) == [
+        "unexpected_change:.forge/continuity.db"
+    ]
 
     forbidden_task = task.model_copy(update={"forbidden_files_changed": [".forge/continuity.db"]})
     assert scope_violations_for(forbidden_task, [".forge/continuity.db"]) == [
@@ -677,6 +1515,7 @@ json.dump(
         fixture_path=str(fixture),
         context_files=["src/app.py"],
         verification_command="pytest",
+        validation_commands=["python3 -c 'print(1)'"],
         expected_files_changed=["src/app.py"],
         forbidden_files_changed=[".env"],
     )
@@ -706,6 +1545,51 @@ json.dump(
     assert trace.forge_run_evidence.session_id == "session-1"
     assert trace.forge_run_evidence.loop_task_id == "loop-1"
     assert trace.forge_run_evidence.normalized_goal == "modify-and-verify"
+    assert trace.forge_run_evidence.verification is not None
+    assert trace.verification_result.command == "python3 -c 'print(1)'"
+    assert trace.forge_run_evidence.verification["command"] == "python3 -c 'print(1)'"
+    assert trace.forge_run_evidence.verification["agent_reported"]["command"] == "pytest"
+    assert trace.forge_run_evidence.shell_outputs[-1]["source"] == "controller_verification"
+
+
+def test_forge_runner_records_verification_ladder_for_controller_failure(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, sys\n"
+        "json.load(sys.stdin)\n"
+        "json.dump({'changed_files': [], 'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    failing_full = tmp_path / "full_verify.py"
+    failing_full.write_text("raise SystemExit(7)\n", encoding="utf-8")
+    task = EvaluationTask(
+        id="verification-ladder",
+        title="Verification ladder",
+        prompt="Leave the fixture unchanged and verify.",
+        fixture_path=str(fixture),
+        validation_commands=[f"{sys.executable} -c 'print(1)'"],
+        full_verification_command=f"{sys.executable} {failing_full}",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(agent)],
+    ).run_task(task)
+
+    ladder = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_verification_ladder"
+    )
+    stages = {stage["stage"]: stage for stage in ladder["stages"]}
+    assert stages["task_validation"]["passed"] is True
+    assert stages["full_verification"]["passed"] is False
+    assert ladder["first_failed_stage"] == "full_verification"
+    assert ladder["target_validation_passed"] is True
+    assert ladder["controller_verification_passed"] is False
 
 
 def test_forge_runner_detects_unreported_forbidden_workspace_change(tmp_path: Path) -> None:
@@ -770,27 +1654,45 @@ def test_forge_runner_does_not_attribute_setup_or_validation_changes_to_agent(
     assert trace.changed_files == []
 
 
-def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
+def test_forge_runner_isolates_all_runtime_state_from_workspace_and_user_home(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    original_home = Path.home()
+    monkeypatch.delenv("CARGO_HOME", raising=False)
+    monkeypatch.delenv("RUSTUP_HOME", raising=False)
     fixture = tmp_path / "fixture"
     (fixture / "src").mkdir(parents=True)
     (fixture / "src" / "app.py").write_text("before\n", encoding="utf-8")
     script = tmp_path / "isolated_runtime_agent.py"
     script.write_text(
-        "import json,pathlib,sqlite3,sys\n"
+        "import json,os,pathlib,sqlite3,sys\n"
         "payload=json.loads(sys.stdin.read())\n"
         "workspace=pathlib.Path(payload['workspace_path'])\n"
         "runtime_state=pathlib.Path(payload['runtime_state_path'])\n"
         "continuity_db=pathlib.Path(payload['continuity_database_path'])\n"
+        "runtime_home=pathlib.Path(os.environ['HOME'])\n"
+        "assert os.environ['USERPROFILE'] == str(runtime_home)\n"
         "assert runtime_state.parent == workspace.parent\n"
         "assert runtime_state != workspace and workspace not in runtime_state.parents\n"
         "assert continuity_db == runtime_state/'continuity.db'\n"
-        "runtime_state.mkdir(parents=True,exist_ok=True)\n"
+        "assert runtime_home == runtime_state/'home'\n"
+        "assert runtime_home != pathlib.Path(sys.argv[1])\n"
+        "assert os.environ['CARGO_HOME'] == sys.argv[2]\n"
+        "assert os.environ['RUSTUP_HOME'] == sys.argv[3]\n"
+        "assert os.environ['PYTHONDONTWRITEBYTECODE'] == '1'\n"
+        "assert os.environ['PYTHONPYCACHEPREFIX'] == str(runtime_state/'python-cache')\n"
+        "assert os.environ['PYTEST_ADDOPTS'] == '-p no:cacheprovider'\n"
+        "assert os.environ['XDG_CACHE_HOME'] == str(runtime_state/'cache')\n"
+        "assert os.environ['BUN_INSTALL_CACHE_DIR'] == str(runtime_state/'bun-cache')\n"
+        "assert os.environ['UV_CACHE_DIR'] == str(runtime_state/'uv-cache')\n"
+        "(runtime_home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
+        "(runtime_home/'.forge'/'sessions'/'eval.json').write_text('{}')\n"
         "sqlite3.connect(runtime_state/'registry.db').close()\n"
         "sqlite3.connect(continuity_db).close()\n"
         "(workspace/'src'/'app.py').write_text('after\\n')\n"
         "json.dump({'final_answer':'done','changed_files':['src/app.py'],'file_diffs':["
+        "{'path':'.uv-cache/interpreter.msgpack','change_type':'added','diff':'cache'},"
         "{'path':'src/app.py','change_type':'modified','diff':"
         '"diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n'
         '+++ b/src/app.py\\n@@ -1 +1 @@\\n-before\\n+after\\n"}]},sys.stdout)\n',
@@ -802,20 +1704,189 @@ def test_forge_runner_isolates_forbidden_runtime_state_from_workspace(
         prompt="Change src/app.py only.",
         fixture_path=str(fixture),
         expected_files_changed=["src/app.py"],
-        forbidden_files_changed=[
-            ".forge/continuity.db",
-            ".forge/registry.db",
-        ],
+        forbidden_files_changed=[".forge/registry.db"],
     )
 
     trace = ForgeAgentRunner(
         provider=EvalProvider.FORGE,
         model="local-forge",
-        command=[sys.executable, str(script)],
+        command=[
+            sys.executable,
+            str(script),
+            str(original_home),
+            str(original_home / ".cargo"),
+            str(original_home / ".rustup"),
+        ],
     ).run_task(task)
 
     assert trace.changed_files == ["src/app.py"]
     assert trace.scope_violations == []
+    assert [diff.path for diff in trace.file_diffs] == ["src/app.py"]
+    assert trace.patch_replay is not None
+    assert trace.patch_replay.ok is True
+    assert {
+        "event_type": "eval_runtime_isolation",
+        "runtime_state": "runtime-state",
+        "runtime_home": "runtime-state/home",
+        "continuity_database": "runtime-state/continuity.db",
+    } in trace.raw_events
+    assert {
+        "event_type": "eval_cache_isolation",
+        "cache_roots": {
+            "xdg_cache_home": "runtime-state/cache",
+            "bun_install_cache_dir": "runtime-state/bun-cache",
+            "uv_cache_dir": "runtime-state/uv-cache",
+        },
+        "workspace_allowlist": [".bun-cache", ".uv-cache"],
+        "uv_run_scope_wrapper": True,
+    } in trace.raw_events
+
+
+def test_forge_runner_uses_isolated_env_for_setup_and_validation(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "src" / "app.py").write_text("before\n", encoding="utf-8")
+    agent = tmp_path / "agent.py"
+    agent.write_text(
+        "import json, pathlib, sys\n"
+        "payload=json.load(sys.stdin)\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "assert payload['write_policy']['allowed_files'] == ['src/app.py']\n"
+        "assert payload['write_policy']['forbidden_files'] == []\n"
+        "assert payload['write_policy']['allowed_shell_commands'] == "
+        "payload['task']['validation_commands']\n"
+        "(workspace/'src'/'app.py').write_text('after\\n')\n"
+        "json.dump({'final_answer':'done','model_rounds':1,'changed_files':['src/app.py'],"
+        "'file_diffs':[{'path':'src/app.py','change_type':'modified','diff':"
+        "'diff --git a/src/app.py b/src/app.py\\n--- a/src/app.py\\n+++ b/src/app.py\\n'"
+        "'@@ -1 +1 @@\\n-before\\n+after\\n'}]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    env_assertion = (
+        "python -c \"import os; assert os.environ['FORGE_TEST_SENTINEL'] == 'isolated'\""
+    )
+    task = EvaluationTask(
+        id="isolated-command-env",
+        title="Isolated command environment",
+        prompt="Change src/app.py only.",
+        fixture_path=str(fixture),
+        setup_commands=[env_assertion],
+        validation_commands=[env_assertion],
+        expected_files_changed=["src/app.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        provider=EvalProvider.FORGE,
+        model="local-forge",
+        command=[sys.executable, str(agent)],
+        child_env_overrides={"FORGE_TEST_SENTINEL": "isolated"},
+    ).run_task(task)
+
+    assert trace.error is None
+    assert trace.scope_violations == []
+    assert all(output.exit_code == 0 for output in trace.shell_outputs)
+
+
+def test_forge_runner_runtime_files_never_become_changed_files(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    script = tmp_path / "runtime_only_agent.py"
+    script.write_text(
+        "import json,os,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "runtime_state=pathlib.Path(payload['runtime_state_path'])\n"
+        "home=pathlib.Path(os.environ['HOME'])\n"
+        "assert home == runtime_state/'home'\n"
+        "(home/'.forge'/'sessions').mkdir(parents=True,exist_ok=True)\n"
+        "(home/'.forge'/'sessions'/'one.json').write_text('{}')\n"
+        "json.dump({'final_answer':'no source change','changed_files':[]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="runtime-only",
+        title="Runtime only",
+        prompt="Inspect only.",
+        fixture_path=str(fixture),
+        validation_commands=[f'{sys.executable} -c "print(1)"'],
+        expected_files_changed=[],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error is None
+    assert trace.changed_files == []
+    assert trace.scope_violations == []
+
+
+def test_forge_runner_no_change_contract_rejects_source_mutations(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    script = tmp_path / "mutating_noop_agent.py"
+    script.write_text(
+        "import json,pathlib,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "(pathlib.Path(payload['workspace_path'])/'unexpected.py').write_text('oops\\n')\n"
+        "json.dump({'final_answer':'done'},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="no-change-scope",
+        title="No-change scope",
+        prompt="Verify without source changes.",
+        fixture_path=str(fixture),
+        expected_files_changed=[],
+        metadata={"expected_no_change": True},
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error == "scope_violation"
+    assert trace.scope_violations == ["unexpected_change:unexpected.py"]
+
+
+def test_scope_violations_match_forbidden_glob_paths() -> None:
+    task = EvaluationTask(
+        id="forbidden-glob",
+        title="Forbidden glob",
+        prompt="Do not touch runtime state.",
+        forbidden_files_changed=[".forge/**"],
+    )
+
+    assert scope_violations_for(task, [".forge/continuity.db"]) == [
+        "forbidden_change:.forge/continuity.db"
+    ]
+
+
+def test_forge_runner_python_verification_cache_never_becomes_a_patch(
+    tmp_path: Path,
+) -> None:
+    fixture = tmp_path / "fixture"
+    fixture.mkdir()
+    (fixture / "test_existing.py").write_text("def test_existing(): assert True\n")
+    script = tmp_path / "pytest_agent.py"
+    script.write_text(
+        "import json,pathlib,subprocess,sys\n"
+        "payload=json.loads(sys.stdin.read())\n"
+        "workspace=pathlib.Path(payload['workspace_path'])\n"
+        "completed=subprocess.run([sys.executable,'-m','pytest','-q'],cwd=workspace)\n"
+        "assert completed.returncode == 0\n"
+        "json.dump({'final_answer':'verified','changed_files':[],'file_diffs':[]},sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="python-cache-isolation",
+        title="Python cache isolation",
+        prompt="Verify without source edits.",
+        fixture_path=str(fixture),
+        expected_files_changed=[],
+    )
+
+    trace = ForgeAgentRunner(command=[sys.executable, str(script)]).run_task(task)
+
+    assert trace.error is None
+    assert trace.changed_files == []
     assert trace.patch_replay is not None
     assert trace.patch_replay.ok is True
 
@@ -865,6 +1936,53 @@ def test_forge_runner_times_out_validation_command(tmp_path: Path) -> None:
     assert trace.failure_category == FailureCategory.TIMEOUT
     assert trace.verification_result is not None
     assert trace.verification_result.exit_code == 124
+
+
+def test_run_shell_commands_honors_shared_task_deadline(tmp_path: Path) -> None:
+    import time
+
+    deadline = time.monotonic() + 0.25
+    outputs = run_shell_commands(
+        [
+            f'{sys.executable} -c "import time; time.sleep(0.2)"',
+            f'{sys.executable} -c "import time; time.sleep(0.2)"',
+        ],
+        tmp_path,
+        timeout_seconds=2.0,
+        deadline_monotonic=deadline,
+    )
+
+    assert len(outputs) == 2
+    assert outputs[0].exit_code == 0
+    assert outputs[1].exit_code == 124
+    assert sum(output.duration_ms for output in outputs) < 1000
+
+
+def test_forge_runner_bounds_validation_chain_by_task_deadline(tmp_path: Path) -> None:
+    script = tmp_path / "agent.py"
+    script.write_text(
+        "import json,sys\njson.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    sleepy = f'{sys.executable} -c "import time; time.sleep(0.6)"'
+    task = EvaluationTask(
+        id="validation-chain-deadline",
+        title="Validation chain deadline",
+        prompt="Run the checks.",
+        validation_commands=[sleepy],
+        pass_to_pass_commands=[sleepy],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(script)],
+        command_timeout_seconds=1.0,
+        validation_timeout_seconds=2.0,
+    ).run_task(task)
+
+    assert trace.error == "timeout"
+    assert trace.verification_result is not None
+    assert trace.verification_result.exit_code == 124
+    assert trace.duration_ms < 2000
 
 
 def test_forge_runner_cancellation_preserves_partial_output(tmp_path: Path) -> None:
@@ -1056,8 +2174,8 @@ import sys
 
 payload = json.loads(sys.stdin.read())
 workspace = pathlib.Path(payload["workspace_path"])
-(workspace / ".forge").mkdir(exist_ok=True)
-db_path = workspace / ".forge" / "continuity.db"
+db_path = pathlib.Path(payload["continuity_database_path"])
+db_path.parent.mkdir(parents=True, exist_ok=True)
 conn = sqlite3.connect(db_path)
 conn.execute("CREATE TABLE continuity_events (event_type TEXT NOT NULL, event_json TEXT NOT NULL)")
 conn.execute("CREATE TABLE continuity_experiences (id TEXT PRIMARY KEY, status TEXT, kind TEXT)")
@@ -1109,7 +2227,7 @@ json.dump(
     )
     post_command = (
         f'{sys.executable} -c "from pathlib import Path; '
-        "assert Path('.forge/continuity.db').exists(); print('continuity ok')\""
+        "assert Path('src/app.py').exists(); print('post validation ok')\""
     )
     task = EvaluationTask(
         id="continuity-post-validation",
@@ -1134,7 +2252,7 @@ json.dump(
         task.validation_commands[0],
         post_command,
     ]
-    assert trace.shell_outputs[-1].stdout == "continuity ok\n"
+    assert trace.shell_outputs[-1].stdout == "post validation ok\n"
     headless_diagnostic = next(
         event
         for event in trace.raw_events
@@ -1397,6 +2515,31 @@ json.dump(
     assert trace.validation_attempts == 2
 
 
+def test_forge_runner_rejects_repair_attempts_above_controller_limit(tmp_path: Path) -> None:
+    script = tmp_path / "fake_repair_overrun.py"
+    script.write_text(
+        "import json, sys\n"
+        "json.dump({'final_answer': 'done', 'repair_attempts_used': 2}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="repair-overrun",
+        title="Repair overrun",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+        max_repair_attempts=1,
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "repair_attempt_limit_exceeded" in (trace.failure_reason or "")
+
+
 def test_forge_runner_maps_timeout_field_from_max_duration_seconds(tmp_path: Path) -> None:
     script = tmp_path / "fake_timeout_field.py"
     script.write_text(
@@ -1433,6 +2576,163 @@ json.dump({"changed_files": ["src/app.py"], "final_answer": "Done."}, sys.stdout
     assert trace.failure_category == FailureCategory.NONE
 
 
+def test_forge_runner_binds_profiled_agent_identity_and_budget(tmp_path: Path) -> None:
+    script = tmp_path / "fake_profiled_agent.py"
+    script.write_text(
+        """
+import json
+import sys
+
+payload = json.loads(sys.stdin.read())
+task = payload["task"]
+assert payload["provider"] == "deepseek"
+assert payload["model"] == "deepseek-v4-flash"
+assert task["max_model_rounds"] == 12
+assert task["max_repair_attempts"] == 1
+assert task["stagnation_policy"] == "current_loop_guard_v1"
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "deepseek",
+        "forge_agent_model": "deepseek-v4-flash",
+        "forge_agent_transport": "anthropic_messages",
+        "forge_agent_endpoint_family": "anthropic",
+        "forge_agent_base_url": "https://api.deepseek.com/anthropic",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-identity",
+        title="Profiled agent identity",
+        prompt="Run Forge.",
+        max_model_rounds=24,
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="anthropic_messages",
+        agent_endpoint_family="anthropic",
+        agent_base_url="https://api.deepseek.com/anthropic",
+        harness_fingerprint="sha256:harness-profile",
+        max_model_rounds=12,
+        max_repair_attempts=1,
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
+    assert trace.provider == "forge"
+    assert trace.model == "forge-harness"
+    assert identity_event == {
+        "event_type": "eval_agent_identity",
+        "provider": "deepseek",
+        "model": "deepseek-v4-flash",
+        "transport": "anthropic_messages",
+        "endpoint_family": "anthropic",
+        "base_url": "https://api.deepseek.com/anthropic",
+        "harness_fingerprint": "sha256:harness-profile",
+        "identity_matches_profile": True,
+    }
+
+
+def test_forge_runner_preserves_profiled_agent_identity_mismatch(tmp_path: Path) -> None:
+    script = tmp_path / "fake_mismatched_agent.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.loads(sys.stdin.read())
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "unexpected-provider",
+        "forge_agent_model": "unexpected-model",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-identity-mismatch",
+        title="Profiled agent identity mismatch",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="anthropic_messages",
+        agent_endpoint_family="anthropic",
+        agent_base_url="https://api.deepseek.com/anthropic",
+        harness_fingerprint="sha256:harness-profile",
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
+    assert identity_event["provider"] == "unexpected-provider"
+    assert identity_event["model"] == "unexpected-model"
+    assert identity_event["identity_matches_profile"] is False
+
+
+def test_forge_runner_rejects_missing_route_identity_for_profiled_agent(tmp_path: Path) -> None:
+    script = tmp_path / "fake_missing_route_identity.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.loads(sys.stdin.read())
+json.dump(
+    {
+        "changed_files": [],
+        "final_answer": "Done.",
+        "forge_agent_provider": "deepseek",
+        "forge_agent_model": "deepseek-v4-flash",
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="profiled-agent-route-missing",
+        title="Profiled agent route missing",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="forge-harness",
+        command=[sys.executable, str(script)],
+        agent_provider="deepseek",
+        agent_model="deepseek-v4-flash",
+        agent_transport="openai_chat_completions",
+        agent_endpoint_family="openai",
+        agent_base_url="https://api.deepseek.com",
+        harness_fingerprint="sha256:harness-profile",
+    ).run_task(task)
+
+    identity_event = next(
+        event for event in trace.raw_events if event["event_type"] == "eval_agent_identity"
+    )
+    assert identity_event["identity_matches_profile"] is False
+
+
 def test_forge_runner_accepts_json_object_after_log_lines(tmp_path: Path) -> None:
     script = tmp_path / "fake_forge_with_logs.py"
     script.write_text(
@@ -1466,6 +2766,45 @@ print(json.dumps({
 
     assert trace.failure_category == FailureCategory.NONE
     assert trace.final_answer == "done"
+
+
+def test_forge_runner_rejects_model_round_summary_mismatch(tmp_path: Path) -> None:
+    script = tmp_path / "fake_round_mismatch.py"
+    script.write_text(
+        """
+import json
+import sys
+
+json.dump(
+    {
+        "final_answer": "done",
+        "model_rounds": 1,
+        "raw_events": [
+            {"event_type": "agent_turn_updated", "state": {"status": "calling_model"}},
+            {"event_type": "agent_turn_updated", "state": {"status": "waiting_for_tool"}},
+            {"event_type": "agent_turn_updated", "state": {"status": "calling_model"}},
+        ],
+    },
+    sys.stdout,
+)
+""".strip(),
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="round-summary-mismatch",
+        title="Round summary mismatch",
+        prompt="Run Forge.",
+    )
+
+    trace = ForgeAgentRunner(
+        provider="forge",
+        model="local-forge",
+        command=[sys.executable, str(script)],
+    ).run_task(task)
+
+    assert trace.error == "invalid_forge_trace"
+    assert trace.failure_category == FailureCategory.FORGE_CONTRACT_ERROR
+    assert "model_rounds" in (trace.failure_reason or "")
 
 
 def test_forge_runner_reports_missing_final_answer_as_contract_error(

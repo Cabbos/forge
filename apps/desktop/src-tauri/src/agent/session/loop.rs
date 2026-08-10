@@ -422,6 +422,10 @@ impl AgentSession {
         )
         .await;
 
+        if emitter.should_stop_after_successful_validation() {
+            return Ok(RoundDecision::Break);
+        }
+
         tokio::time::sleep(AGENT_LOOP_SETTLE_DELAY).await;
         Ok(RoundDecision::Continue)
     }

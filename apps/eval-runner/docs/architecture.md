@@ -337,7 +337,8 @@ flowchart LR
 本地真实 Forge 接入命令：
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_ROOT=/absolute/path/to/forge \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
 
@@ -444,7 +445,7 @@ Queued operation adds two operator surfaces:
 
 | Variable | 适用场景 | 说明 |
 |---|---|---|
-| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | 启动 Forge headless agent 的命令。默认从 `apps/desktop/` 解析为 `cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet`。 |
+| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | 启动 Forge headless agent 的命令。控制器从隔离临时 workspace 启动命令，因此应使用绝对 Cargo manifest 路径。 |
 | `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider，如 `anthropic`、`openai`、`deepseek`。默认 `deepseek`。 |
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | 模型 ID。默认 `deepseek-v4-flash`。 |
 | `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | 对应 provider 的 API key，Forge 从 `~/.forge/config.json` 读取。 |

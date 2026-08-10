@@ -1,6 +1,8 @@
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use crate::agent::event_sink::{CollectingEventEmitter, EventEmitter};
@@ -11,24 +13,391 @@ use crate::continuity::{
     build_episode_from_turn, build_send_input_reflection_event, continuity_events_from_turn,
     continuity_lessons_from_turn, ContinuityEvent, ContinuityService, ReflectionOutcome,
 };
+use crate::harness::shell_policy::{classify_shell_command_in_workspace, ShellPolicyDecision};
 use crate::protocol::events::StreamEvent;
 
 use super::types::{
-    PendingConfirms, HEADLESS_CONFIRM_RETRY_ATTEMPTS, HEADLESS_CONFIRM_RETRY_DELAY_MS,
+    EvalWritePolicy, PendingConfirms, HEADLESS_CONFIRM_RETRY_ATTEMPTS,
+    HEADLESS_CONFIRM_RETRY_DELAY_MS,
 };
+
+/// Eval-only write boundary used before a file/shell confirmation is
+/// auto-approved by the headless emitter.  The controller's workspace
+/// snapshot remains authoritative after the run; this boundary prevents a
+/// known out-of-scope mutation from reaching the filesystem in the first
+/// place.
+#[derive(Debug, Clone)]
+pub(crate) struct HeadlessWritePolicy {
+    workspace: PathBuf,
+    allowed_files: Vec<String>,
+    forbidden_files: Vec<String>,
+    allowed_shell_commands: Vec<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct HeadlessWritePolicyBlock {
+    pub(crate) reason: String,
+}
+
+impl HeadlessWritePolicy {
+    pub(crate) fn from_request(workspace: &Path, policy: &EvalWritePolicy) -> Self {
+        Self {
+            workspace: workspace
+                .canonicalize()
+                .unwrap_or_else(|_| workspace.to_path_buf()),
+            allowed_files: policy
+                .allowed_files
+                .iter()
+                .map(|path| normalize_pattern(path))
+                .collect(),
+            forbidden_files: policy
+                .forbidden_files
+                .iter()
+                .map(|path| normalize_pattern(path))
+                .collect(),
+            allowed_shell_commands: policy
+                .allowed_shell_commands
+                .iter()
+                .map(|command| normalize_shell_command(command))
+                .filter(|command| !command.is_empty())
+                .collect(),
+        }
+    }
+
+    fn denial_reason(
+        &self,
+        kind: &str,
+        boundary: Option<&crate::harness::write_boundary::WriteBoundary>,
+    ) -> Option<String> {
+        if matches!(kind, "shell_cmd" | "dangerous_cmd") {
+            let command = boundary.and_then(|value| value.command.as_deref());
+            if command.is_some_and(|command| self.allows_shell_command(command)) {
+                return None;
+            }
+            return Some(if kind == "dangerous_cmd" {
+                "eval_write_policy_blocked_mutating_confirmation".to_string()
+            } else {
+                "eval_write_policy_blocked_unapproved_shell_command".to_string()
+            });
+        }
+
+        if kind == "file_delete" {
+            return Some("eval_write_policy_blocked_mutating_confirmation".to_string());
+        }
+
+        if kind != "file_write" {
+            return None;
+        }
+
+        let Some(boundary) = boundary else {
+            return Some("eval_write_policy_missing_write_boundary".to_string());
+        };
+        let Some(path) = boundary.affected_files.first() else {
+            return Some("eval_write_policy_missing_write_target".to_string());
+        };
+        let relative = normalize_workspace_relative(&self.workspace, path)
+            .unwrap_or_else(|| normalize_pattern(path));
+        if self
+            .forbidden_files
+            .iter()
+            .any(|pattern| path_matches_pattern(&relative, pattern))
+        {
+            return Some(format!("eval_write_policy_forbidden_path:{relative}"));
+        }
+        if !self
+            .allowed_files
+            .iter()
+            .any(|pattern| path_matches_pattern(&relative, pattern))
+        {
+            return Some(format!(
+                "eval_write_policy_outside_allowed_paths:{relative}"
+            ));
+        }
+        None
+    }
+
+    fn allows_shell_command(&self, command: &str) -> bool {
+        let normalized = normalize_shell_command(command);
+        if self
+            .allowed_shell_commands
+            .iter()
+            .any(|allowed| shell_command_matches(&normalized, allowed, &self.workspace))
+        {
+            return true;
+        }
+
+        let Some(remainder) = strip_workspace_cd(&normalized, &self.workspace) else {
+            return false;
+        };
+        if is_workspace_inspection_pipeline(remainder, &self.workspace) {
+            return true;
+        }
+        let parts = remainder
+            .split(" && ")
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        parts.len() > 1
+            && parts.iter().all(|part| {
+                self.allowed_shell_commands
+                    .iter()
+                    .any(|allowed| allowed == part)
+            })
+    }
+}
+
+fn is_workspace_inspection_pipeline(command: &str, workspace: &Path) -> bool {
+    if command.is_empty()
+        || command.contains(';')
+        || command.contains("&&")
+        || command.contains("||")
+        || command.contains('&')
+        || command.contains('>')
+        || command.contains('<')
+        || command.contains('(')
+        || command.contains(')')
+        || command.contains('`')
+        || command.contains("$(")
+    {
+        return false;
+    }
+
+    command.split('|').all(|segment| {
+        let segment = segment.trim();
+        if segment.is_empty() {
+            return false;
+        }
+        match classify_shell_command_in_workspace(segment, workspace) {
+            ShellPolicyDecision::AllowInspection => true,
+            ShellPolicyDecision::RequireExplicitConfirmation { .. }
+            | ShellPolicyDecision::Block { .. } => is_bounded_read_helper(segment),
+        }
+    })
+}
+
+fn is_bounded_read_helper(command: &str) -> bool {
+    let mut tokens = command.split_whitespace();
+    let program = loop {
+        let Some(token) = tokens.next() else {
+            return false;
+        };
+        if token.contains('=') && !token.starts_with('-') {
+            continue;
+        }
+        break token.trim_matches(['\'', '"']).to_ascii_lowercase();
+    };
+    if !matches!(program.as_str(), "head" | "tail") {
+        return false;
+    }
+
+    let mut count_required = false;
+    for token in tokens {
+        let token = token.trim_matches(['\'', '"']);
+        if count_required {
+            if !token.chars().all(|value| value.is_ascii_digit()) {
+                return false;
+            }
+            count_required = false;
+            continue;
+        }
+        if token == "-n" {
+            count_required = true;
+        } else if token == "-"
+            || token.strip_prefix('-').is_some_and(|value| {
+                !value.is_empty() && value.chars().all(|value| value.is_ascii_digit())
+            })
+        {
+            continue;
+        } else {
+            return false;
+        }
+    }
+    !count_required
+}
+
+fn normalize_pattern(path: &str) -> String {
+    path.replace('\\', "/")
+        .trim_start_matches("./")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn normalize_shell_command(command: &str) -> String {
+    command.trim().to_string()
+}
+
+fn shell_command_matches(command: &str, allowed: &str, workspace: &Path) -> bool {
+    if command == allowed {
+        return true;
+    }
+    let Some(remainder) = strip_workspace_cd(command, workspace) else {
+        return false;
+    };
+    if remainder == allowed {
+        return true;
+    }
+    let command_base = safe_validation_output_base(remainder).unwrap_or(remainder);
+    command_base == allowed || combined_bun_test_command_matches(command_base, allowed)
+}
+
+fn safe_validation_output_base(command: &str) -> Option<&str> {
+    let command = command.trim();
+    if let Some(base) = command.strip_suffix(" 2>&1") {
+        return Some(base.trim_end());
+    }
+    let (base, suffix) = command.rsplit_once(" 2>&1 | ")?;
+    is_bounded_read_helper(suffix.trim()).then_some(base.trim_end())
+}
+
+fn combined_bun_test_command_matches(command: &str, allowed: &str) -> bool {
+    let Some(command_paths) = bun_test_paths(command) else {
+        return false;
+    };
+    let Some(allowed_paths) = bun_test_paths(allowed) else {
+        return false;
+    };
+    allowed_paths
+        .iter()
+        .all(|path| command_paths.iter().any(|candidate| candidate == path))
+}
+
+fn bun_test_paths(command: &str) -> Option<Vec<&str>> {
+    let mut tokens = command.split_whitespace();
+    if tokens.next()? != "bun" || tokens.next()? != "test" {
+        return None;
+    }
+    let paths = tokens.collect::<Vec<_>>();
+    if paths.is_empty()
+        || paths.iter().any(|path| {
+            let path = path.trim_matches(['\'', '"']);
+            !path.starts_with("tests/")
+                || path.contains("..")
+                || path.contains([';', '&', '>', '<', '|', '`', '$', '(', ')'])
+                || !path
+                    .chars()
+                    .all(|value| value.is_ascii_alphanumeric() || "/._-*?[]".contains(value))
+                || !path.contains(".test.")
+        })
+    {
+        return None;
+    }
+    Some(paths)
+}
+
+fn strip_workspace_cd<'a>(command: &'a str, workspace: &Path) -> Option<&'a str> {
+    let after_cd = command.strip_prefix("cd ")?;
+    let (directory, remainder) = after_cd.split_once(" && ")?;
+    let directory = directory.trim().trim_matches(['\'', '"']);
+    if matches!(directory, "." | "$PWD" | "$(pwd)") {
+        return Some(remainder.trim());
+    }
+    let directory_path = Path::new(directory);
+    let directory = if directory_path.is_absolute() {
+        directory_path.to_path_buf()
+    } else {
+        workspace.join(directory_path)
+    }
+    .canonicalize()
+    .unwrap_or_else(|_| PathBuf::from(directory));
+    path_equivalent(&directory, workspace).then_some(remainder.trim())
+}
+
+fn path_equivalent(left: &Path, right: &Path) -> bool {
+    if left == right {
+        return true;
+    }
+    let strip_private = |path: &Path| {
+        path.strip_prefix("/private")
+            .map_or_else(|_| path.to_path_buf(), Path::to_path_buf)
+    };
+    strip_private(left) == strip_private(right)
+}
+
+fn normalize_workspace_relative(workspace: &Path, raw_path: &str) -> Option<String> {
+    let requested = Path::new(raw_path);
+    let absolute = if requested.is_absolute() {
+        requested.to_path_buf()
+    } else {
+        workspace.join(requested)
+    };
+    let absolute = match absolute.canonicalize() {
+        Ok(path) => path,
+        Err(_) => match (
+            absolute
+                .parent()
+                .and_then(|parent| parent.canonicalize().ok()),
+            absolute.file_name(),
+        ) {
+            (Some(parent), Some(file_name)) => parent.join(file_name),
+            _ => absolute,
+        },
+    };
+    let relative = absolute.strip_prefix(workspace).ok()?;
+    let mut normalized = PathBuf::new();
+    for component in relative.components() {
+        match component {
+            Component::CurDir => {}
+            Component::Normal(value) => normalized.push(value),
+            Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            Component::Prefix(_) | Component::RootDir => return None,
+        }
+    }
+    Some(normalized.to_string_lossy().replace('\\', "/"))
+}
+
+fn path_matches_pattern(path: &str, pattern: &str) -> bool {
+    if path == pattern {
+        return true;
+    }
+    if let Some(prefix) = pattern.strip_suffix("/**") {
+        return path.starts_with(&format!("{prefix}/"));
+    }
+    if let Some(suffix) = pattern.strip_prefix("**/") {
+        return path.ends_with(&format!("/{suffix}"));
+    }
+    false
+}
 
 pub(crate) struct HeadlessEventEmitter {
     collector: CollectingEventEmitter,
     pending_confirms: PendingConfirms,
+    write_policy: Option<HeadlessWritePolicy>,
+    write_policy_blocks: Mutex<Vec<HeadlessWritePolicyBlock>>,
+    shell_commands: Mutex<HashMap<String, String>>,
+    mutation_seen: AtomicBool,
+    successful_validation: AtomicBool,
     model_rounds: Arc<AtomicUsize>,
     was_calling_model: AtomicBool,
 }
 
 impl HeadlessEventEmitter {
     pub(crate) fn new(pending_confirms: PendingConfirms) -> Self {
+        Self::new_with_policy(pending_confirms, None)
+    }
+
+    pub(crate) fn new_with_write_policy(
+        pending_confirms: PendingConfirms,
+        write_policy: HeadlessWritePolicy,
+    ) -> Self {
+        Self::new_with_policy(pending_confirms, Some(write_policy))
+    }
+
+    fn new_with_policy(
+        pending_confirms: PendingConfirms,
+        write_policy: Option<HeadlessWritePolicy>,
+    ) -> Self {
         Self {
             collector: CollectingEventEmitter::new(),
             pending_confirms,
+            write_policy,
+            write_policy_blocks: Mutex::new(Vec::new()),
+            shell_commands: Mutex::new(HashMap::new()),
+            mutation_seen: AtomicBool::new(false),
+            successful_validation: AtomicBool::new(false),
             model_rounds: Arc::new(AtomicUsize::new(0)),
             was_calling_model: AtomicBool::new(false),
         }
@@ -41,14 +410,86 @@ impl HeadlessEventEmitter {
     pub(crate) fn model_rounds(&self) -> usize {
         self.model_rounds.load(Ordering::SeqCst)
     }
+
+    pub(crate) fn drain_write_policy_blocks(&self) -> Vec<HeadlessWritePolicyBlock> {
+        std::mem::take(&mut *self.write_policy_blocks.lock().expect("write policy mutex"))
+    }
+
+    pub(crate) fn validation_stop_requested(&self) -> bool {
+        self.successful_validation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) fn clear_validation_stop(&self) {
+        self.successful_validation.store(false, Ordering::SeqCst);
+    }
 }
 
 impl EventEmitter for HeadlessEventEmitter {
     fn emit(&self, event: StreamEvent) {
-        if let StreamEvent::ConfirmAsk { block_id, kind, .. } = &event {
+        match &event {
+            StreamEvent::FileIo { operation, .. }
+                if matches!(operation.as_str(), "write" | "edit" | "delete") =>
+            {
+                self.mutation_seen.store(true, Ordering::SeqCst);
+            }
+            StreamEvent::ShellStart {
+                block_id, command, ..
+            } => {
+                self.shell_commands
+                    .lock()
+                    .expect("shell command mutex")
+                    .insert(block_id.clone(), command.clone());
+            }
+            StreamEvent::ShellEnd {
+                block_id,
+                exit_code,
+                ..
+            } if *exit_code == 0 => {
+                let command = self
+                    .shell_commands
+                    .lock()
+                    .expect("shell command mutex")
+                    .remove(block_id);
+                let mutation_or_no_change = self.mutation_seen.load(Ordering::SeqCst)
+                    || self
+                        .write_policy
+                        .as_ref()
+                        .is_some_and(|policy| policy.allowed_files.is_empty());
+                if mutation_or_no_change
+                    && command.is_some_and(|command| {
+                        self.write_policy
+                            .as_ref()
+                            .is_some_and(|policy| policy.allows_shell_command(&command))
+                    })
+                {
+                    self.successful_validation.store(true, Ordering::SeqCst);
+                }
+            }
+            _ => {}
+        }
+
+        if let StreamEvent::ConfirmAsk {
+            block_id,
+            kind,
+            boundary,
+            ..
+        } = &event
+        {
             let pending_confirms = self.pending_confirms.clone();
             let block_id = block_id.clone();
-            let approve = kind != "ask_user";
+            let policy_reason = self
+                .write_policy
+                .as_ref()
+                .and_then(|policy| policy.denial_reason(kind, boundary.as_ref()));
+            if let Some(reason) = policy_reason.as_ref() {
+                self.write_policy_blocks
+                    .lock()
+                    .expect("write policy mutex")
+                    .push(HeadlessWritePolicyBlock {
+                        reason: reason.clone(),
+                    });
+            }
+            let approve = policy_reason.is_none() && kind != "ask_user";
             tokio::spawn(async move {
                 for _ in 0..HEADLESS_CONFIRM_RETRY_ATTEMPTS {
                     if let Some(sender) = pending_confirms.write().await.remove(&block_id) {
@@ -74,6 +515,10 @@ impl EventEmitter for HeadlessEventEmitter {
         }
 
         self.collector.emit(event);
+    }
+
+    fn should_stop_after_successful_validation(&self) -> bool {
+        self.validation_stop_requested()
     }
 }
 
@@ -103,8 +548,14 @@ pub(crate) async fn send_headless_turn(
     emitter: Arc<HeadlessEventEmitter>,
     model_rounds_used: usize,
     max_model_rounds: usize,
+    max_no_progress_batches: usize,
 ) -> Result<(), String> {
-    configure_headless_model_round_budget(session, model_rounds_used, max_model_rounds);
+    configure_headless_model_round_budget_with_stagnation(
+        session,
+        model_rounds_used,
+        max_model_rounds,
+        max_no_progress_batches,
+    );
     let turn_guard = session.reserve_turn()?;
     session
         .send_message_with_shared_emitter(prompt, emitter, Vec::new(), None, None, turn_guard)
@@ -116,9 +567,24 @@ pub(crate) fn configure_headless_model_round_budget(
     model_rounds_used: usize,
     max_model_rounds: usize,
 ) {
+    configure_headless_model_round_budget_with_stagnation(
+        session,
+        model_rounds_used,
+        max_model_rounds,
+        super::types::HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES,
+    );
+}
+
+pub(crate) fn configure_headless_model_round_budget_with_stagnation(
+    session: &crate::agent::session::AgentSession,
+    model_rounds_used: usize,
+    max_model_rounds: usize,
+    max_no_progress_batches: usize,
+) {
     let remaining = max_model_rounds.saturating_sub(model_rounds_used).max(1);
-    *lock_unpoisoned(&session.loop_guard) =
-        LoopGuard::default_limits().with_max_model_rounds(remaining);
+    *lock_unpoisoned(&session.loop_guard) = LoopGuard::default_limits()
+        .with_max_model_rounds(remaining)
+        .with_max_no_progress_batches(max_no_progress_batches.max(1));
 }
 
 pub(crate) fn headless_reflection_outcome(
@@ -194,4 +660,258 @@ pub(crate) fn record_headless_continuity(
 
     let formed = service.form_experiences_for_session(project_path, session_id, timestamp_ms)?;
     Ok(formed.len())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn eval_write_policy_allows_only_exact_controller_validation_shell_commands() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-shell-policy-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace should be created");
+        let policy = HeadlessWritePolicy::from_request(
+            &workspace,
+            &super::super::types::EvalWritePolicy {
+                allowed_files: Vec::new(),
+                forbidden_files: vec![".forge/**".to_string()],
+                allowed_shell_commands: vec!["bun test tests/cases/example.test.ts".to_string()],
+            },
+        );
+
+        let allowed = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({"command": "bun test tests/cases/example.test.ts"}),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(policy.denial_reason("shell_cmd", Some(&allowed)), None);
+
+        let prefixed = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(policy.denial_reason("dangerous_cmd", Some(&prefixed)), None);
+
+        let pwd_prefixed = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": "cd \"$PWD\" && bun test tests/cases/example.test.ts"
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&pwd_prefixed)),
+            None
+        );
+
+        let output_wrapped = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts 2>&1 | tail -30",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&output_wrapped)),
+            None
+        );
+
+        let combined_bun_tests = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts tests/baseline/domain.test.ts",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&combined_bun_tests)),
+            None
+        );
+
+        let combined_bun_tests_wrapped = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts tests/baseline/domain.test.ts 2>&1 | tail -20",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&combined_bun_tests_wrapped)),
+            None
+        );
+
+        let file_redirected = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts > /tmp/forge-output",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&file_redirected)),
+            Some("eval_write_policy_blocked_mutating_confirmation".to_string())
+        );
+
+        let combined = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && bun test tests/cases/example.test.ts && bun test tests/cases/example.test.ts",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(policy.denial_reason("dangerous_cmd", Some(&combined)), None);
+
+        let unapproved = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({"command": "bun test tests/cases/other.test.ts"}),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("shell_cmd", Some(&unapproved)),
+            Some("eval_write_policy_blocked_unapproved_shell_command".to_string())
+        );
+
+        let inspection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && find . -type f -not -path '*/node_modules/*' -not -path '*/.git/*' | head -50",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(policy.denial_reason("shell_cmd", Some(&inspection)), None);
+
+        let inspection_injection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!(
+                    "cd {} && head README.md & rm -rf .",
+                    workspace.display()
+                )
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&inspection_injection)),
+            Some("eval_write_policy_blocked_mutating_confirmation".to_string())
+        );
+
+        let external_inspection = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": format!("cd {} && head /etc/passwd", workspace.display())
+            }),
+            &workspace,
+            "shell_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("shell_cmd", Some(&external_inspection)),
+            Some("eval_write_policy_blocked_unapproved_shell_command".to_string())
+        );
+
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn validation_stop_requires_mutation_before_a_successful_allowed_command() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-validation-stop-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(&workspace).expect("workspace should be created");
+        let pending_confirms: super::super::types::PendingConfirms =
+            std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let emitter = HeadlessEventEmitter::new_with_write_policy(
+            pending_confirms,
+            HeadlessWritePolicy::from_request(
+                &workspace,
+                &super::super::types::EvalWritePolicy {
+                    allowed_files: vec!["src/app.py".to_string()],
+                    forbidden_files: Vec::new(),
+                    allowed_shell_commands: vec!["bun test tests/cases/app.test.ts".to_string()],
+                },
+            ),
+        );
+
+        emitter.emit(crate::protocol::events::StreamEvent::ShellStart {
+            session_id: "session-1".to_string(),
+            block_id: "shell-1".to_string(),
+            command: "bun test tests/cases/app.test.ts".to_string(),
+        });
+        emitter.emit(crate::protocol::events::StreamEvent::ShellEnd {
+            session_id: "session-1".to_string(),
+            block_id: "shell-1".to_string(),
+            exit_code: 0,
+        });
+        assert!(!emitter.validation_stop_requested());
+
+        emitter.emit(crate::protocol::events::StreamEvent::FileIo {
+            session_id: "session-1".to_string(),
+            block_id: "file-1".to_string(),
+            path: "src/app.py".to_string(),
+            operation: "edit".to_string(),
+            source: None,
+        });
+        emitter.emit(crate::protocol::events::StreamEvent::ShellStart {
+            session_id: "session-1".to_string(),
+            block_id: "shell-2".to_string(),
+            command: "bun test tests/cases/app.test.ts".to_string(),
+        });
+        emitter.emit(crate::protocol::events::StreamEvent::ShellEnd {
+            session_id: "session-1".to_string(),
+            block_id: "shell-2".to_string(),
+            exit_code: 0,
+        });
+        assert!(emitter.validation_stop_requested());
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
+    #[test]
+    fn validation_stop_can_reopen_for_controller_repair() {
+        let pending_confirms: super::super::types::PendingConfirms =
+            std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let emitter = HeadlessEventEmitter::new(pending_confirms);
+
+        emitter.successful_validation.store(true, Ordering::SeqCst);
+        assert!(emitter.validation_stop_requested());
+        emitter.clear_validation_stop();
+        assert!(!emitter.validation_stop_requested());
+    }
 }

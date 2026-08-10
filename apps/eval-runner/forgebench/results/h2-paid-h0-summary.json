@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "campaigns": {
+    "control": "h1-anthropic-smoke-h0",
+    "candidate": "h2-openai-candidate-h0"
+  },
+  "source_commit": "1a2e0b9d4288a1b79cc9f4155726eb5cb2609518",
+  "dataset_fingerprint": "39ac183a1f3f8e7c0f29dbbe5d4e302765935d94417f8c2adffb984632223dbd",
+  "arms": {
+    "control": {
+      "profile_id": "deepseek-v4-flash-anthropic-baseline-v1",
+      "transport": "anthropic_messages",
+      "harness_fingerprint": "2fb6612000dc669ab1cf2e794fc9dc0f8831c195bd75230f31ababe63f4a2f66",
+      "attempts": 30,
+      "trusted_attempts": 30,
+      "trusted_success_rate": 0.8666666666666667,
+      "verification_pass_rate": 0.9666666666666667,
+      "scope_violation_rate": 0.1,
+      "median_cost_cny": "0.01902320",
+      "total_cost_cny": "0.71910864",
+      "evidence_fingerprint": "373b117435d0b0b14d7b9ca52c730df8fa9bd654a4aa77b343053d3d03b89969"
+    },
+    "candidate": {
+      "profile_id": "deepseek-v4-flash-openai-chat-control-v1",
+      "transport": "openai_chat_completions",
+      "harness_fingerprint": "3da2db5467faf01523dd7df0df1d02048b0caffa6ce632b9f4c2ed501917ef03",
+      "attempts": 30,
+      "trusted_attempts": 30,
+      "trusted_success_rate": 0.8666666666666667,
+      "verification_pass_rate": 0.9666666666666667,
+      "scope_violation_rate": 0.13333333333333333,
+      "median_cost_cny": "0.01637426",
+      "total_cost_cny": "0.75787960",
+      "evidence_fingerprint": "e1d74094a7d265db7d6a1d689e47c5db89cf2e8c1a96a043eaf1339b523acd8f"
+    }
+  },
+  "comparison": {
+    "paired_attempts": 30,
+    "winner": "no_material_difference",
+    "comparison_sha256": "46dd203ff59b031ae2be321b6923114bf50282e43772c9a71955093f0e1a85ec",
+    "trusted_success_rate_delta": 0.0,
+    "verification_pass_rate_delta": 0.0,
+    "scope_violation_rate_delta": 0.033333333333333326,
+    "median_model_rounds_delta": -0.5,
+    "median_duration_ms_delta": -6786.0
+  },
+  "claims": {
+    "development_only": true,
+    "holdout_accessed": false,
+    "provider_errors_in_summary": false,
+    "frontier_claim": false
+  }
+}

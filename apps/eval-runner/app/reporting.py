@@ -26,6 +26,10 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
             avg_model_rounds=0.0,
             avg_confirm_requests=0.0,
             total_cost_usd=0.0,
+            total_input_tokens=None,
+            total_output_tokens=None,
+            provider_usage_known_rate=0.0,
+            provider_cost_known_rate=0.0,
             failure_categories={},
             score_summary={},
             tasks=[],
@@ -60,6 +64,11 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
     ]
 
     score_summary, score_coverage = build_score_aggregates(traces)
+    usage_known = [
+        trace.input_tokens is not None and trace.output_tokens is not None for trace in traces
+    ]
+    input_tokens_known = all(trace.input_tokens is not None for trace in traces)
+    output_tokens_known = all(trace.output_tokens is not None for trace in traces)
     return BacktestReport(
         total_tasks=total,
         success_rate=metrics.success_rate,
@@ -71,6 +80,14 @@ def build_report(traces: list[AgentTrace]) -> BacktestReport:
         avg_repair_attempts_used=metrics.average_repair_attempts_used,
         avg_validation_attempts=metrics.average_validation_attempts,
         total_cost_usd=sum(trace.cost_usd or 0.0 for trace in traces),
+        total_input_tokens=(
+            sum(trace.input_tokens or 0 for trace in traces) if input_tokens_known else None
+        ),
+        total_output_tokens=(
+            sum(trace.output_tokens or 0 for trace in traces) if output_tokens_known else None
+        ),
+        provider_usage_known_rate=sum(usage_known) / total,
+        provider_cost_known_rate=sum(trace.cost_usd is not None for trace in traces) / total,
         failure_categories=metrics.failure_categories,
         score_summary=score_summary,
         score_coverage=score_coverage,

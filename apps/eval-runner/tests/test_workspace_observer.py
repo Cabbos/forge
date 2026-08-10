@@ -3,7 +3,17 @@ from pathlib import Path
 
 import pytest
 
+from app.harness_checks import run_observer_patch_replay_self_check
 from app.workspace_observer import observe_workspace_changes, snapshot_workspace
+
+
+def test_observer_patch_replay_self_check_passes() -> None:
+    result = run_observer_patch_replay_self_check()
+
+    assert result.ok is True
+    assert result.untracked_files == []
+    assert result.modified_files == ["src/value.txt"]
+    assert result.message == "observer and patch replay self-check passed"
 
 
 def test_workspace_observer_reports_added_modified_and_deleted_files(tmp_path: Path) -> None:
@@ -73,6 +83,71 @@ def test_workspace_snapshot_is_ordered_and_excludes_git_metadata(tmp_path: Path)
 
     assert list(snapshot) == ["a.txt", "z.txt"]
     assert ".git/config" not in snapshot
+
+
+def test_workspace_snapshot_excludes_controller_owned_bun_cache(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    cache_file = workspace / ".bun-cache" / "uv" / "interpreter.msgpack"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"ephemeral cache")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == []
+    assert observation.mismatch_files == []
+
+
+def test_workspace_snapshot_excludes_controller_owned_uv_cache(tmp_path: Path) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    cache_file = workspace / ".uv-cache" / "interpreter" / "msgpack"
+    cache_file.parent.mkdir(parents=True)
+    cache_file.write_bytes(b"ephemeral cache")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == []
+    assert observation.mismatch_files == []
+
+
+def test_workspace_snapshot_excludes_controller_owned_uv_project_environment(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    environment_file = workspace / ".venv" / "bin" / "python"
+    environment_file.parent.mkdir(parents=True)
+    environment_file.write_bytes(b"controller environment")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == []
+    assert observation.mismatch_files == []
+
+
+def test_workspace_snapshot_still_observes_product_files_next_to_bun_cache(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    before = snapshot_workspace(workspace)
+
+    (workspace / ".bun-cache").mkdir()
+    (workspace / ".bun-cache" / "ignored.bin").write_bytes(b"cache")
+    (workspace / "src").mkdir()
+    (workspace / "src" / "app.py").write_text("changed\n", encoding="utf-8")
+
+    observation = observe_workspace_changes(before, workspace, reported_changed_files=[])
+
+    assert observation.changed_files == ["src/app.py"]
+    assert observation.mismatch_files == ["src/app.py"]
 
 
 def test_workspace_observer_marks_snapshot_errors_unavailable(

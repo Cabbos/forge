@@ -11,6 +11,8 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
     let mut pending_shells: HashMap<String, PendingShell> = HashMap::new();
     let mut last_turn_was_calling_model = false;
     let mut calling_model_transitions = 0;
+    let mut last_event_was_tool_start = false;
+    let mut tool_batch_starts = 0;
 
     for event in events {
         match event {
@@ -20,7 +22,14 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 tool_input,
                 ..
             } => {
-                summary.model_rounds += 1;
+                // A single model round may request several tools in parallel.
+                // Count the contiguous batch only as a fallback for old or
+                // partial event streams that lack AgentTurnUpdated events;
+                // never count one ToolCallStart as one model round.
+                if !last_event_was_tool_start {
+                    tool_batch_starts += 1;
+                }
+                last_event_was_tool_start = true;
                 pending_tools.insert(
                     block_id.clone(),
                     PendingTool {
@@ -36,9 +45,14 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 duration_ms,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let pending = pending_tools.remove(block_id).unwrap_or_default();
+                let command = format_tool_command(&pending.name, &pending.input);
                 summary.tool_calls.push(serde_json::json!({
-                    "command": format_tool_command(&pending.name, &pending.input),
+                    "call_id": block_id,
+                    "tool_name": command,
+                    "status": if *is_error { "error" } else { "ok" },
+                    "command": command,
                     "stdout": result,
                     "stderr": if *is_error { result.as_str() } else { "" },
                     "exit_code": if *is_error { 1 } else { 0 },
@@ -48,6 +62,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
             StreamEvent::ShellStart {
                 block_id, command, ..
             } => {
+                last_event_was_tool_start = false;
                 pending_shells.insert(
                     block_id.clone(),
                     PendingShell {
@@ -59,6 +74,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
             StreamEvent::ShellOutput {
                 block_id, content, ..
             } => {
+                last_event_was_tool_start = false;
                 pending_shells
                     .entry(block_id.clone())
                     .or_default()
@@ -70,8 +86,10 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 exit_code,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let pending = pending_shells.remove(block_id).unwrap_or_default();
                 summary.shell_outputs.push(serde_json::json!({
+                    "shell_id": block_id,
                     "command": pending.command,
                     "stdout": pending.stdout,
                     "stderr": "",
@@ -80,6 +98,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 }));
             }
             StreamEvent::ConfirmAsk { .. } => {
+                last_event_was_tool_start = false;
                 summary.confirm_requests += 1;
             }
             StreamEvent::ContextCompacted {
@@ -90,6 +109,7 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 estimated_tokens_after,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 let saved = estimated_tokens_before.saturating_sub(*estimated_tokens_after) as u64;
                 let reduction_percent = if *estimated_tokens_before > 0 {
                     ((*estimated_tokens_before - *estimated_tokens_after) as f64
@@ -116,10 +136,12 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
                 output_tokens,
                 ..
             } => {
+                last_event_was_tool_start = false;
                 summary.input_tokens = Some(*input_tokens);
                 summary.output_tokens = Some(*output_tokens);
             }
             StreamEvent::AgentTurnUpdated { state, .. } => {
+                last_event_was_tool_start = false;
                 let is_calling_model = state.status == AgentTurnStatus::CallingModel;
                 if is_calling_model && !last_turn_was_calling_model {
                     calling_model_transitions += 1;
@@ -130,11 +152,45 @@ pub(crate) fn summarize_events(events: &[StreamEvent]) -> EventSummary {
         }
     }
 
-    if summary.model_rounds == 0 {
-        summary.model_rounds = calling_model_transitions;
+    summary.model_rounds = if calling_model_transitions > 0 {
+        calling_model_transitions
+    } else {
+        tool_batch_starts
+    };
+
+    // ProviderUsage is the canonical event and is emitted once per model
+    // call.  Legacy Usage is intentionally only a last-call compatibility
+    // signal, so prefer the provider events when they are present and sum
+    // their known token counts for the eval trace.
+    if events
+        .iter()
+        .any(|event| matches!(event, StreamEvent::ProviderUsage { .. }))
+    {
+        summary.input_tokens = aggregate_provider_tokens(events, |event| match event {
+            StreamEvent::ProviderUsage { input_tokens, .. } => *input_tokens,
+            _ => None,
+        });
+        summary.output_tokens = aggregate_provider_tokens(events, |event| match event {
+            StreamEvent::ProviderUsage { output_tokens, .. } => *output_tokens,
+            _ => None,
+        });
     }
 
     summary
+}
+
+fn aggregate_provider_tokens(
+    events: &[StreamEvent],
+    select: impl Fn(&StreamEvent) -> Option<u64>,
+) -> Option<u32> {
+    let mut total = 0_u64;
+    for event in events {
+        if !matches!(event, StreamEvent::ProviderUsage { .. }) {
+            continue;
+        }
+        total = total.checked_add(select(event)?)?;
+    }
+    u32::try_from(total).ok()
 }
 
 pub(crate) fn enrich_tool_calls_with_turn_tools(
@@ -171,8 +227,12 @@ pub(crate) fn tool_call_from_turn_tool(tool: &AgentToolTrace) -> serde_json::Val
         .ended_at_ms
         .map(|ended| ended.saturating_sub(tool.started_at_ms))
         .unwrap_or(0);
+    let command = format_turn_tool_command(tool);
     serde_json::json!({
-        "command": format_turn_tool_command(tool),
+        "call_id": tool.tool_call_id,
+        "tool_name": command,
+        "status": if tool.is_error { "error" } else { "ok" },
+        "command": command,
         "stdout": tool.result_summary.clone().unwrap_or_default(),
         "stderr": if tool.is_error {
             tool.result_summary.clone().unwrap_or_default()
@@ -210,5 +270,51 @@ pub(crate) fn format_tool_command(tool_name: &str, input: &serde_json::Value) ->
     match path {
         Some(path) if !path.trim().is_empty() => format!("{tool_name} {path}"),
         _ => tool_name.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::events::ProviderUsageReason;
+
+    fn provider_usage(input_tokens: Option<u64>, output_tokens: Option<u64>) -> StreamEvent {
+        StreamEvent::ProviderUsage {
+            session_id: "session-1".to_string(),
+            block_id: uuid::Uuid::now_v7().to_string(),
+            provider_id: Some("custom_openai".to_string()),
+            model: Some("k3".to_string()),
+            input_tokens,
+            output_tokens,
+            cache_read_tokens: None,
+            cache_creation_tokens: None,
+            reasoning_tokens: None,
+            estimated_cost_micros: None,
+            pricing_source: None,
+            source: Some("openai_compatible".to_string()),
+            reason: ProviderUsageReason::PricingUnknown,
+        }
+    }
+
+    #[test]
+    fn provider_usage_summary_sums_known_tokens_across_model_calls() {
+        let summary = summarize_events(&[
+            provider_usage(Some(833), Some(93)),
+            provider_usage(Some(979), Some(116)),
+        ]);
+
+        assert_eq!(summary.input_tokens, Some(1812));
+        assert_eq!(summary.output_tokens, Some(209));
+    }
+
+    #[test]
+    fn provider_usage_summary_is_unknown_when_a_call_omits_tokens() {
+        let summary = summarize_events(&[
+            provider_usage(Some(833), Some(93)),
+            provider_usage(None, None),
+        ]);
+
+        assert_eq!(summary.input_tokens, None);
+        assert_eq!(summary.output_tokens, None);
     }
 }

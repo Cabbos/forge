@@ -18,7 +18,10 @@ use crate::ipc::session_builder::{
 };
 use crate::settings;
 
-pub use types::{EvalHeadlessRequest, EvalHeadlessTask, HeadlessFileDiff, TracePayloadInput};
+pub use types::{
+    EvalHeadlessMode, EvalHeadlessRequest, EvalHeadlessTask, EvalProviderRoute,
+    EvalProviderTransport, EvalWritePolicy, HeadlessFileDiff, TracePayloadInput,
+};
 
 pub use trace::{build_trace_payload, insert_agent_identity, insert_failure_fields};
 
@@ -48,7 +51,11 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         .as_ref()
         .and_then(|task| task.id.clone())
         .unwrap_or_else(|| "forge-headless-task".to_string());
-    let prompt = resolve::resolve_prompt(&request)?;
+    let prompt = if request.mode == EvalHeadlessMode::Run {
+        resolve::resolve_prompt(&request)?
+    } else {
+        String::new()
+    };
     let display_provider = request
         .provider
         .clone()
@@ -77,17 +84,125 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         request.provider.as_deref().unwrap_or("forge"),
         request.model.as_deref().unwrap_or("local-forge"),
     );
+    let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
+
+    if let Some(route) = request.provider_route.as_ref() {
+        resolve::validate_expected_provider_route(route, &agent_provider, &effective_model)?;
+        resolve::validate_configured_provider_route(route, &agent_provider, &effective_model)?;
+        let execution_identity = request
+            .execution_identity
+            .as_ref()
+            .ok_or_else(|| "provider_route_requires_execution_identity".to_string())?;
+        execution_identity.validate_for_transport(route.transport)?;
+    }
 
     let before_snapshot = snapshot::snapshot_workspace(&workspace_path)?;
-    let agent_provider = resolve::resolve_agent_provider(Some(&effective_provider));
-    let credentials = settings::CredentialResolver::new(credential_store)
-        .resolve(&agent_provider, selected_profile.as_ref())
-        .map_err(|error| error.to_string())?;
+    let credential_resolver = settings::CredentialResolver::new(credential_store);
+    let credentials_result = if request.use_provider_credential_store {
+        credential_resolver
+            .resolve_with_provider_store_fallback(&agent_provider, selected_profile.as_ref())
+    } else {
+        credential_resolver.resolve(&agent_provider, selected_profile.as_ref())
+    };
+    if request.mode == EvalHeadlessMode::CredentialPreflight {
+        let (credentials, resolution_error) = match credentials_result {
+            Ok(credentials) => (Some(credentials), None),
+            Err(_) => (None, Some("credential_unavailable")),
+        };
+        let agent_model = resolve::resolve_agent_model(
+            Some(&effective_model),
+            credentials
+                .as_ref()
+                .and_then(|credentials| credentials.model.as_deref()),
+            &agent_provider,
+        );
+        let available = credentials
+            .as_ref()
+            .is_some_and(|credentials| !credentials.api_key.trim().is_empty());
+        let route_error = request.provider_route.as_ref().and_then(|route| {
+            if resolve::expected_eval_model(&agent_provider) != Some(agent_model.as_str()) {
+                return Some("provider_route_model_mismatch");
+            }
+            credentials.as_ref().and_then(|credentials| {
+                credentials
+                    .api_base
+                    .as_deref()
+                    .filter(|api_base| *api_base != route.base_url)
+                    .map(|_| "provider_route_base_url_mismatch")
+            })
+        });
+        return Ok(serde_json::json!({
+            "credential_preflight": {
+                "ok": available && route_error.is_none(),
+                "provider": agent_provider,
+                "model": agent_model,
+                "transport": request.provider_route.as_ref().map(|route| route.transport.as_str()),
+                "endpoint_family": request.provider_route.as_ref().map(|route| route.transport.endpoint_family()),
+                "base_url": request.provider_route.as_ref().map(|route| route.base_url.as_str()),
+                "provider_call_started": false,
+                "error": if let Some(route_error) = route_error {
+                    serde_json::Value::String(route_error.to_string())
+                } else if available {
+                    serde_json::Value::Null
+                } else {
+                    serde_json::Value::String(
+                        resolution_error.unwrap_or("missing_api_key").to_string()
+                    )
+                }
+            }
+        }));
+    }
+    let credentials = credentials_result.map_err(|error| error.to_string())?;
     let agent_model = resolve::resolve_agent_model(
         Some(&effective_model),
         credentials.model.as_deref(),
         &agent_provider,
     );
+
+    if let Some(route) = request.provider_route.as_ref() {
+        if resolve::expected_eval_model(&agent_provider) != Some(agent_model.as_str()) {
+            return Ok(trace::build_setup_error_payload(
+                types::SetupErrorPayloadInput {
+                    task_id,
+                    prompt,
+                    display_provider,
+                    display_model,
+                    agent_provider: agent_provider.clone(),
+                    agent_model: agent_model.clone(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    error: "provider_route_model_mismatch".to_string(),
+                    failure_reason: format!(
+                        "Forge eval route expected model {}, got {}.",
+                        resolve::expected_eval_model(&agent_provider).unwrap_or("unknown"),
+                        agent_model
+                    ),
+                },
+            ));
+        }
+        if credentials
+            .api_base
+            .as_deref()
+            .is_some_and(|api_base| api_base != route.base_url)
+        {
+            return Ok(trace::build_setup_error_payload(
+                types::SetupErrorPayloadInput {
+                    task_id,
+                    prompt,
+                    display_provider,
+                    display_model,
+                    agent_provider,
+                    agent_model: agent_model.clone(),
+                    duration_ms: started.elapsed().as_millis() as u64,
+                    error: "provider_route_base_url_mismatch".to_string(),
+                    failure_reason: format!(
+                        "Forge eval route expected base URL {}, got {}.",
+                        route.base_url,
+                        credentials.api_base.as_deref().unwrap_or_default()
+                    ),
+                },
+            ));
+        }
+    }
 
     if credentials.api_key.trim().is_empty() {
         return Ok(trace::build_setup_error_payload(
@@ -142,11 +257,25 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
     }
 
     let session = Arc::new(session);
-    let emitter = Arc::new(runner::HeadlessEventEmitter::new(pending_confirms));
+    let emitter = Arc::new(match request.write_policy.as_ref() {
+        Some(policy) => runner::HeadlessEventEmitter::new_with_write_policy(
+            pending_confirms,
+            runner::HeadlessWritePolicy::from_request(&workspace_path, policy),
+        ),
+        None => runner::HeadlessEventEmitter::new(pending_confirms),
+    });
     let validation_commands = validation::validation_commands_from_task(request.task.as_ref());
+    let controller_verification_commands = request
+        .controller_verification_commands
+        .iter()
+        .map(|command| command.trim().to_string())
+        .filter(|command| !command.is_empty())
+        .collect::<Vec<_>>();
     let max_repair_attempts = validation::max_repair_attempts_from_task(request.task.as_ref());
     let timeout_secs = validation::resolve_timeout_secs(request.task.as_ref());
     let max_model_rounds = validation::resolve_max_model_rounds(request.task.as_ref());
+    let max_no_progress_batches =
+        validation::resolve_max_no_progress_batches(request.task.as_ref());
     let mut raw_events = Vec::new();
     let mut agent_error: Option<String> = None;
     let mut validation_result = None;
@@ -163,6 +292,7 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
             emitter.clone(),
             emitter.model_rounds(),
             max_model_rounds,
+            max_no_progress_batches,
         )
         .await;
         watchdog.abort();
@@ -234,11 +364,100 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                 emitter.clone(),
                 emitter.model_rounds(),
                 max_model_rounds,
+                max_no_progress_batches,
             )
             .await;
             watchdog.abort();
             raw_events.extend(emitter.drain());
             repair_attempts_used = attempt + 1;
+
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+            if let Err(error) = result {
+                agent_error = Some(error);
+                break;
+            }
+        }
+    }
+
+    // Controller-owned verification runs after visible task checks.  The
+    // command itself never enters the task prompt or the agent tool allowlist;
+    // a bounded repair sees only redacted command identity plus its output.
+    if agent_error.is_none() && !controller_verification_commands.is_empty() {
+        let remaining_repair_attempts = max_repair_attempts.saturating_sub(repair_attempts_used);
+        for attempt in 0..=remaining_repair_attempts {
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                break;
+            }
+
+            let raw_validation = validation::run_headless_validation_commands(
+                &controller_verification_commands,
+                &workspace_path,
+            )
+            .await?;
+            let validation = validation::redact_controller_validation(&raw_validation);
+            validation_attempts += 1;
+            raw_events.extend(validation::validation_events(
+                &session_id,
+                &format!("headless-controller-validation-{attempt}"),
+                &validation,
+            ));
+            validation_result = Some(validation.clone());
+
+            if raw_validation.passed() || attempt == remaining_repair_attempts {
+                break;
+            }
+
+            // The visible validation may have requested the normal stop
+            // boundary. Reopen it only for this bounded controller repair;
+            // the final filesystem and replay gates remain authoritative.
+            emitter.clear_validation_stop();
+
+            if started.elapsed().as_secs() >= timeout_secs {
+                agent_error = Some("timeout".to_string());
+                repair_attempts_used = (repair_attempts_used + 1).min(max_repair_attempts);
+                break;
+            }
+            if emitter.model_rounds() >= max_model_rounds {
+                agent_error = Some("max_model_rounds_exceeded".to_string());
+                repair_attempts_used = (repair_attempts_used + 1).min(max_repair_attempts);
+                break;
+            }
+
+            let repair_prompt = validation::controller_repair_prompt_from_validation_failure(
+                &prompt,
+                repair_attempts_used + 1,
+                &validation,
+            );
+            let watchdog = runner::spawn_timeout_watchdog(
+                started,
+                timeout_secs,
+                session.clone(),
+                emitter.clone(),
+            );
+            let result = runner::send_headless_turn(
+                &session,
+                &repair_prompt,
+                emitter.clone(),
+                emitter.model_rounds(),
+                max_model_rounds,
+                max_no_progress_batches,
+            )
+            .await;
+            watchdog.abort();
+            raw_events.extend(emitter.drain());
+            repair_attempts_used += 1;
 
             if started.elapsed().as_secs() >= timeout_secs {
                 agent_error = Some("timeout".to_string());
@@ -308,6 +527,44 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
         validation_attempts,
     });
     trace::insert_agent_identity(&mut payload, &agent_provider, &agent_model);
+    if let Some(route) = request.provider_route.as_ref() {
+        trace::insert_agent_route_identity(&mut payload, route);
+        if let Some(execution_identity) = request.execution_identity.as_ref() {
+            trace::insert_execution_identity(
+                &mut payload,
+                &agent_provider,
+                &agent_model,
+                route,
+                execution_identity,
+            );
+        }
+    }
+    if request.write_policy.is_some() {
+        let policy_blocks = emitter.drain_write_policy_blocks();
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "eval_write_policy_blocks".to_string(),
+                serde_json::Value::Array(
+                    policy_blocks
+                        .into_iter()
+                        .map(|block| {
+                            serde_json::json!({
+                                "event_type": "eval_write_policy_block",
+                                "reason": block.reason,
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+            object.insert(
+                "eval_validation_stop".to_string(),
+                serde_json::json!({
+                    "requested": emitter.validation_stop_requested(),
+                    "reason": "controller_allowed_validation_after_mutation",
+                }),
+            );
+        }
+    }
     if let Some(error) = snapshot_error {
         if let Some(object) = payload.as_object_mut() {
             object.insert(
@@ -440,7 +697,7 @@ mod tests {
     use crate::protocol::events::StreamEvent;
     use std::time::Duration;
 
-    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    pub(crate) static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
     fn restore_env(key: &str, value: Option<String>) {
         if let Some(value) = value {
@@ -789,6 +1046,71 @@ mod tests {
     }
 
     #[test]
+    fn route_identity_is_written_to_headless_trace_payload() {
+        let mut payload = serde_json::json!({"forge_agent_provider": "deepseek"});
+        let route = EvalProviderRoute {
+            transport: EvalProviderTransport::OpenAiChatCompletions,
+            base_url: "https://api.deepseek.com".to_string(),
+        };
+
+        trace::insert_agent_route_identity(&mut payload, &route);
+
+        assert_eq!(payload["forge_agent_transport"], "openai_chat_completions");
+        assert_eq!(payload["forge_agent_endpoint_family"], "openai");
+        assert_eq!(payload["forge_agent_base_url"], "https://api.deepseek.com");
+    }
+
+    #[test]
+    fn execution_identity_is_written_as_controller_owned_trace_evidence() {
+        let mut payload = serde_json::json!({"raw_events": []});
+        let route = EvalProviderRoute {
+            transport: EvalProviderTransport::OpenAiChatCompletions,
+            base_url: "https://api.deepseek.com".to_string(),
+        };
+        let identity: types::EvalExecutionIdentity = serde_json::from_value(serde_json::json!({
+            "temperature_policy": "omitted",
+            "reasoning_effort": "provider_default",
+            "max_output_tokens": 8192,
+            "tool_catalog_format": "tool_names_v1",
+            "tool_catalog_sha256": "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632",
+            "controller_version": "test-controller/1",
+            "runtime_versions": {"rust": "test"}
+        }))
+        .expect("execution identity");
+        identity
+            .validate_for_transport(route.transport)
+            .expect("identity validates");
+        let mut invalid_identity = identity.clone();
+        invalid_identity.max_output_tokens = 384_000;
+        assert_eq!(
+            invalid_identity.validate_for_transport(route.transport),
+            Err("execution_identity_output_limit_invalid".to_string())
+        );
+
+        trace::insert_execution_identity(
+            &mut payload,
+            "deepseek",
+            "deepseek-v4-flash",
+            &route,
+            &identity,
+        );
+
+        assert_eq!(
+            payload["raw_events"][0]["event_type"],
+            "eval_execution_identity"
+        );
+        assert_eq!(
+            payload["raw_events"][0]["transport"],
+            "openai_chat_completions"
+        );
+        assert_eq!(payload["raw_events"][0]["max_output_tokens"], 8192);
+        assert_eq!(
+            payload["raw_events"][0]["tool_catalog_sha256"],
+            "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632"
+        );
+    }
+
+    #[test]
     fn trace_payload_includes_projected_loop_task_authority() {
         let mut task =
             crate::loop_runtime::LoopTaskRecord::new_for_test("loop-trace", "recover task");
@@ -875,6 +1197,50 @@ mod tests {
             payload["forge_run_evidence"]["completion_eligibility"]["commit_eligible"],
             false
         );
+    }
+
+    #[test]
+    fn trace_payload_prefers_latest_turn_outcome_over_stale_loop_failure() {
+        let mut turn = AgentTurnState::new(
+            "turn-current".to_string(),
+            "session-current".to_string(),
+            "/tmp/workspace".to_string(),
+            "deepseek".to_string(),
+            "deepseek-v4-flash".to_string(),
+            "direct".to_string(),
+            "idle".to_string(),
+            "Finish the task".to_string(),
+        );
+        turn.verification.status = AgentVerificationStatus::Passed;
+        turn.verification.command = Some("pytest".to_string());
+        turn.verification.exit_code = Some(0);
+
+        let mut stale_task = crate::loop_runtime::LoopTaskRecord::new_for_test(
+            "loop-stale",
+            "stale loop projection",
+        );
+        stale_task.status = crate::loop_runtime::LoopTaskStatus::Failed;
+
+        let payload = trace::build_trace_payload(types::TracePayloadInput {
+            task_id: "latest-turn-authority".to_string(),
+            prompt: "Finish the task".to_string(),
+            provider: "forge".to_string(),
+            model: "local-forge".to_string(),
+            raw_events: Vec::new(),
+            loop_task: Some(stale_task),
+            latest_turn: Some(turn),
+            file_diffs: Vec::new(),
+            changed_files: Vec::new(),
+            final_answer: "Done".to_string(),
+            duration_ms: 50,
+            continuity_formed_count: None,
+            continuity_error: None,
+            repair_attempts_used: 0,
+            validation_attempts: 1,
+        });
+
+        assert_eq!(payload["failure_category"], "none");
+        assert_eq!(payload["forge_run_evidence"]["failure_category"], "none");
     }
 
     #[test]
@@ -966,6 +1332,44 @@ deleted file mode 100644\n\
 -old\n\
 +new\n"
         );
+    }
+
+    #[test]
+    fn workspace_snapshot_diff_ignores_controller_owned_bun_cache() {
+        let before = std::collections::HashMap::from([
+            (
+                ".bun-cache/uv/old.msgpack".to_string(),
+                types::SnapshotFile {
+                    contents: b"old cache".to_vec(),
+                },
+            ),
+            (
+                "src/app.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"before\n".to_vec(),
+                },
+            ),
+        ]);
+        let after = std::collections::HashMap::from([
+            (
+                ".bun-cache/uv/new.msgpack".to_string(),
+                types::SnapshotFile {
+                    contents: b"new cache".to_vec(),
+                },
+            ),
+            (
+                "src/app.py".to_string(),
+                types::SnapshotFile {
+                    contents: b"after\n".to_vec(),
+                },
+            ),
+        ]);
+
+        let (changed_files, file_diffs) = snapshot::diff_workspace_snapshots(&before, &after);
+
+        assert_eq!(changed_files, vec!["src/app.py"]);
+        assert_eq!(file_diffs.len(), 1);
+        assert_eq!(file_diffs[0].path, "src/app.py");
     }
 
     #[test]
@@ -1068,6 +1472,136 @@ deleted file mode 100644\n\
             request.continuity_database_path.as_deref(),
             Some(std::path::Path::new("/tmp/runtime-state/continuity.db"))
         );
+    }
+
+    #[test]
+    fn credential_preflight_request_is_typed_and_store_opt_in_is_explicit() {
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "workspace_path": "/tmp/workspace",
+            "use_provider_credential_store": true
+        }))
+        .expect("credential preflight request");
+
+        assert_eq!(request.mode, types::EvalHeadlessMode::CredentialPreflight);
+        assert!(request.use_provider_credential_store);
+    }
+
+    #[tokio::test]
+    async fn credential_preflight_resolves_identity_without_provider_call() {
+        let _guard = ENV_LOCK.lock().await;
+        let previous_home = std::env::var("HOME").ok();
+        let previous_key = std::env::var("DEEPSEEK_API_KEY").ok();
+        let home = tempfile::tempdir().expect("home");
+        let workspace = tempfile::tempdir().expect("workspace");
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("DEEPSEEK_API_KEY", "fake-key-for-preflight");
+
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "prompt": "",
+            "workspace_path": workspace.path(),
+            "use_provider_credential_store": false
+        }))
+        .expect("credential preflight request");
+        let payload = super::run_request(request)
+            .await
+            .expect("credential preflight payload");
+
+        restore_env("HOME", previous_home);
+        restore_env("DEEPSEEK_API_KEY", previous_key);
+
+        assert_eq!(payload["credential_preflight"]["ok"], true);
+        assert_eq!(payload["credential_preflight"]["provider"], "deepseek");
+        assert_eq!(
+            payload["credential_preflight"]["model"],
+            "deepseek-v4-flash"
+        );
+        assert_eq!(
+            payload["credential_preflight"]["provider_call_started"],
+            false
+        );
+        assert_eq!(
+            payload["credential_preflight"]["error"],
+            serde_json::Value::Null
+        );
+        assert!(payload.get("forge_run_evidence").is_none());
+        assert!(!payload.to_string().contains("fake-key-for-preflight"));
+    }
+
+    #[tokio::test]
+    async fn credential_preflight_attests_isolated_openai_route_without_provider_call() {
+        let _guard = ENV_LOCK.lock().await;
+        let previous_home = std::env::var("HOME").ok();
+        let previous_key = std::env::var("DEEPSEEK_API_KEY").ok();
+        let home = tempfile::tempdir().expect("home");
+        let workspace = tempfile::tempdir().expect("workspace");
+        let forge_dir = home.path().join(".forge");
+        std::fs::create_dir_all(&forge_dir).expect("forge config directory");
+        std::fs::write(
+            forge_dir.join("config.json"),
+            serde_json::json!({
+                "providers": [{
+                    "id": "deepseek",
+                    "base_url": "https://api.deepseek.com",
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "default_model": "deepseek-v4-flash",
+                    "transport": "openai_chat_completions"
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write isolated settings");
+        std::env::set_var("HOME", home.path());
+        std::env::set_var("DEEPSEEK_API_KEY", "fake-key-for-route-preflight");
+
+        let request: EvalHeadlessRequest = serde_json::from_value(serde_json::json!({
+            "mode": "credential_preflight",
+            "provider": "deepseek",
+            "model": "deepseek-v4-flash",
+            "provider_route": {
+                "transport": "openai_chat_completions",
+                "base_url": "https://api.deepseek.com"
+            },
+            "execution_identity": {
+                "temperature_policy": "omitted",
+                "reasoning_effort": "provider_default",
+                "max_output_tokens": 8192,
+                "tool_catalog_format": "tool_names_v1",
+                "tool_catalog_sha256": "72245bd18f8a8694178481c6fea549977f6924620fb0863e1eb6ef423969c632",
+                "controller_version": "test-controller/1",
+                "runtime_versions": {"rust": "test"}
+            },
+            "workspace_path": workspace.path(),
+            "use_provider_credential_store": false
+        }))
+        .expect("route preflight request");
+        let payload = super::run_request(request)
+            .await
+            .expect("route credential preflight payload");
+
+        restore_env("HOME", previous_home);
+        restore_env("DEEPSEEK_API_KEY", previous_key);
+
+        assert_eq!(payload["credential_preflight"]["ok"], true);
+        assert_eq!(
+            payload["credential_preflight"]["transport"],
+            "openai_chat_completions"
+        );
+        assert_eq!(payload["credential_preflight"]["endpoint_family"], "openai");
+        assert_eq!(
+            payload["credential_preflight"]["base_url"],
+            "https://api.deepseek.com"
+        );
+        assert_eq!(
+            payload["credential_preflight"]["provider_call_started"],
+            false
+        );
+        assert!(!payload.to_string().contains("fake-key-for-route-preflight"));
     }
 
     #[test]
@@ -1204,6 +1738,39 @@ deleted file mode 100644\n\
     }
 
     #[test]
+    fn summarize_events_counts_model_rounds_not_parallel_tool_calls() {
+        let tool_start = |block_id: &str| StreamEvent::ToolCallStart {
+            session_id: "session-1".to_string(),
+            block_id: block_id.to_string(),
+            tool_name: "read_file".to_string(),
+            tool_input: serde_json::json!({"path": "src/app.py"}),
+        };
+        let tool_result = |block_id: &str| StreamEvent::ToolCallResult {
+            session_id: "session-1".to_string(),
+            block_id: block_id.to_string(),
+            result: "ok".to_string(),
+            is_error: false,
+            duration_ms: 1,
+        };
+        let events = vec![
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            tool_start("tool-1"),
+            tool_start("tool-2"),
+            tool_result("tool-1"),
+            tool_result("tool-2"),
+            agent_turn_event("session-1", AgentTurnStatus::RunningTools),
+            agent_turn_event("session-1", AgentTurnStatus::CallingModel),
+            tool_start("tool-3"),
+            tool_result("tool-3"),
+        ];
+
+        let summary = summary::summarize_events(&events);
+
+        assert_eq!(summary.model_rounds, 2);
+        assert_eq!(summary.tool_calls.len(), 3);
+    }
+
+    #[test]
     fn validation_commands_prefer_case_commands_and_fall_back_to_verification_command() {
         let task = EvalHeadlessTask {
             id: Some("case-1".to_string()),
@@ -1213,6 +1780,7 @@ deleted file mode 100644\n\
             max_repair_attempts: None,
             timeout_secs: None,
             max_model_rounds: None,
+            stagnation_policy: Default::default(),
         };
 
         assert_eq!(
@@ -1228,6 +1796,7 @@ deleted file mode 100644\n\
             max_repair_attempts: None,
             timeout_secs: None,
             max_model_rounds: None,
+            stagnation_policy: Default::default(),
         };
 
         assert_eq!(
@@ -1257,6 +1826,29 @@ deleted file mode 100644\n\
         assert!(prompt.contains("npx tsc --noEmit"));
         assert!(prompt.contains("TS5097"));
         assert!(prompt.contains("attempt 1"));
+    }
+
+    #[test]
+    fn controller_repair_prompt_redacts_controller_command() {
+        let validation = types::HeadlessValidationResult {
+            command: "/private/hidden/full-verifier.sh".to_string(),
+            status: AgentVerificationStatus::Failed,
+            exit_code: Some(7),
+            stdout: String::new(),
+            stderr: "baseline regression failed".to_string(),
+            duration_ms: 120,
+        };
+
+        let prompt = validation::controller_repair_prompt_from_validation_failure(
+            "Preserve the task behavior.",
+            1,
+            &validation,
+        );
+
+        assert!(prompt.contains("Preserve the task behavior."));
+        assert!(prompt.contains("controller-owned verification"));
+        assert!(prompt.contains("baseline regression failed"));
+        assert!(!prompt.contains("/private/hidden/full-verifier.sh"));
     }
 
     #[test]
@@ -1437,6 +2029,85 @@ deleted file mode 100644\n\
         let _ = std::fs::remove_dir_all(workspace);
     }
 
+    #[tokio::test]
+    async fn headless_event_emitter_blocks_out_of_scope_write_permission() {
+        let workspace = std::env::temp_dir().join(format!(
+            "forge-headless-write-policy-{}",
+            uuid::Uuid::now_v7()
+        ));
+        std::fs::create_dir_all(workspace.join("src")).expect("workspace should be created");
+        std::fs::create_dir_all(workspace.join("tests")).expect("test directory should exist");
+        let pending_confirms: types::PendingConfirms =
+            Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let harness =
+            crate::harness::Harness::new_with_pending(workspace.clone(), pending_confirms.clone());
+        let policy = runner::HeadlessWritePolicy::from_request(
+            &workspace,
+            &types::EvalWritePolicy {
+                allowed_files: vec!["src/allowed.txt".to_string()],
+                forbidden_files: vec![".forge/**".to_string()],
+                allowed_shell_commands: Vec::new(),
+            },
+        );
+        let emitter = Arc::new(runner::HeadlessEventEmitter::new_with_write_policy(
+            pending_confirms,
+            policy,
+        ));
+
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            harness.execute_tool_with_emitter(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({
+                    "path": workspace.join("tests").join("unexpected.txt").to_string_lossy(),
+                    "content": "must not be written"
+                }),
+                emitter.clone(),
+                Some("tool-blocked-1"),
+                None,
+            ),
+        )
+        .await
+        .expect("write policy should resolve without hanging");
+
+        assert_eq!(result, "Permission denied by user");
+        assert!(!workspace.join("tests/unexpected.txt").exists());
+        let allowed_result = tokio::time::timeout(
+            Duration::from_secs(1),
+            harness.execute_tool_with_emitter(
+                "session-1",
+                "write_to_file",
+                &serde_json::json!({
+                    "path": workspace.join("src/allowed.txt").to_string_lossy(),
+                    "content": "allowed"
+                }),
+                emitter.clone(),
+                Some("tool-allowed-1"),
+                None,
+            ),
+        )
+        .await
+        .expect("allowed write should resolve without hanging");
+        assert!(
+            allowed_result.starts_with("File written:"),
+            "{allowed_result}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(workspace.join("src/allowed.txt")).unwrap(),
+            "allowed"
+        );
+        assert_eq!(
+            emitter
+                .drain_write_policy_blocks()
+                .into_iter()
+                .map(|block| block.reason)
+                .collect::<Vec<_>>(),
+            vec!["eval_write_policy_outside_allowed_paths:tests/unexpected.txt"]
+        );
+        let _ = std::fs::remove_dir_all(workspace);
+    }
+
     #[test]
     fn headless_continuity_records_turn_and_forms_experience() {
         let workspace = std::env::temp_dir().join(format!(
@@ -1563,6 +2234,17 @@ deleted file mode 100644\n\
                 ..Default::default()
             })),
             20
+        );
+        assert_eq!(
+            validation::resolve_max_no_progress_batches(None),
+            types::HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES
+        );
+        assert_eq!(
+            validation::resolve_max_no_progress_batches(Some(&EvalHeadlessTask {
+                stagnation_policy: types::EvalStagnationPolicy::SemanticProgressV1,
+                ..Default::default()
+            })),
+            types::HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES
         );
     }
 

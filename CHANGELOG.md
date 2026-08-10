@@ -1,5 +1,223 @@
 # Changelog
 
+- Closed two red-team harness false signals found by a live 5-case × 2-trial
+  Kimi/DeepSeek lane: explicit quoted refusals no longer count as prompt-
+  injection success, and red-team-only comparisons now use the development
+  golden harness contract instead of self-checking the attack fixtures. The
+  corrected offline artifact marks both arms trusted with all category safety
+  scores at `1.0`; its functional verification failures remain visible and do
+  not become a quality claim.
+
+- Hardened the route-pure Kimi/DeepSeek comparison so conditional Forge
+  evidence scores cannot regress silently: missing score dimensions now fail
+  closed, candidate evidence regressions block the comparison, and conditional
+  scores missing on individual attempts no longer crash the offline verifier.
+  A fresh 20-pair development diagnostic (10 cases × 2 trials) produced
+  trusted, known-cost arms; DeepSeek was `20/20`, Kimi was `19/20`, and the
+  decision remained `no_material_difference` rather than overclaiming a win.
+
+- Re-ran the complete 10-case development campaign with the latest harness and
+  the declared per-case budgets: Kimi K3 achieved `10/10` success and
+  verification, zero scope violations, all universal safety scores at `1.0`,
+  trusted evidence, `4.1` average model rounds, and known `$0.2625498` cost.
+  The multi-file admin case now completed in 9 rounds; no fallback was needed.
+  This remains development evidence, not a holdout or frontier claim.
+
+- Made task deadlines authoritative across the whole eval lifecycle: setup,
+  headless execution, hidden/full verification, and every validation phase now
+  share one monotonic deadline instead of multiplying the per-command timeout.
+  Trusted runs also fail closed on universal safety-score failures (including
+  future-state lookup), while exploratory report-only runs still retain the
+  trace for diagnosis.
+
+- Fixed two evaluation-contract false signals: prepared-turn scoring now accepts
+  the controller's bounded prompt wrapper while still requiring the original
+  task at the stable prefix, and rendered convergence guidance now reflects the
+  effective per-case model-round budget instead of a stale hard-coded 12-round
+  claim. Re-scoring the latest 10-case Kimi artifact changes prepared-turn
+  evidence from `0/10` to `10/10` without changing any model outcome.
+
+- Added controller-owned `eval_verification_ladder` evidence to Forge traces. It
+  records bounded target/regression/fix/hidden/full verification stages and the
+  first rejecting stage, so a target-green/full-red attempt is diagnosable
+  without exposing hidden verifier commands; filesystem snapshots and patch
+  replay remain authoritative. A controller-owned full-verification failure can
+  now reopen the eval-only write boundary for one bounded same-session repair
+  turn, then remains subject to the final independent checks.
+
+- Extended the development-only `target_files_v1` harness with bounded
+  controller-provided target/validation context and a narrow read-only shell
+  inspection allowance (`find ... | head -N` inside the eval workspace). The
+  Rust eval write boundary still rejects external paths, redirects, background
+  control, and mutating commands. A follow-up Kimi K3 10-case diagnostic
+  improved success from `0.20` to `0.30` and reduced average rounds from
+  `11.5` to `11.0`, while verification was `0.70`; this is diagnostic evidence
+  only and does not make a frontier claim. The controller now mirrors the
+  rendered policy prompt into the headless task prompt field as well, so Rust's
+  task-first prompt resolution cannot silently bypass target context or
+  convergence instructions.
+
+- Added secret-free H4 release diagnostics to the frontier decision artifact:
+  deterministic p95 rounds/duration and known-cost tails, typed failure and
+  provider-error concentration, trust blockers, H3 telemetry, and sorted
+  per-case detail. Diagnostics are explanatory only; malformed evidence and
+  threshold failures remain fail-closed.
+- Added contract-bound provider A/B tail evidence: new diagnostics include
+  deterministic median/p95 round, duration, and cost summaries plus per-arm
+  controller-owned failure categories and candidate-minus-control deltas.
+  They now also retain bounded provider-error codes and deltas, keeping
+  authentication/rate-limit/timeout evidence useful without serializing raw
+  provider messages or credentials.
+  Legacy aggregate labels cannot mask typed scope/progress failures; legacy
+  artifacts keep their optional fields and remain offline-verifiable.
+- Included bounded H3 harness telemetry in new paired A/B arm summaries:
+  tool-call histograms/repetition, context sizes/duplication, stagnation
+  redirects/stops, verifier freshness, and repair-bound compliance.
+- Aligned paired-report medians with the baseline comparison's standard median;
+  p95 remains deterministic nearest-rank, including for even-sized samples.
+- Tightened the provider A/B `--max-total-cost-usd` contract to a cumulative
+  control-plus-candidate ceiling; the second arm receives only remaining budget
+  and unknown/exhausted cost fails closed before another provider call.
+- Added a route-pure Kimi K3 versus DeepSeek V4 Flash paired diagnostic. It
+  runs separate approved routes over the same ordered tasks, binds every trace
+  to execution identity, rejects fallback contamination and unknown cost, and
+  emits deterministic paired bootstrap intervals with a canonical artifact and
+  SHA-256 sidecar. This is development-only evidence and cannot unlock the
+  holdout or make a frontier claim.
+- Ran the first live paired smoke: one case per arm, both trusted/verified and
+  scope-clean with known cost and no fallback; the quality-gated result was
+  `no_material_difference` (DeepSeek 10 rounds / `$0.002169`, Kimi K3 7 rounds /
+  `$0.0355908`). One pair is intentionally insufficient to claim a model-quality
+  difference.
+- Completed a full 10-case paired development run with both arms 10/10
+  trusted/verified, zero scope violations, known cost, and zero fallback events.
+  Kimi K3 averaged 13.5 rounds versus DeepSeek's 16.7, but success and
+  verification were identical; the paired gate therefore selected
+  `no_material_difference`. This is an efficiency signal, not a frontier or
+  superior-intelligence claim.
+- Fixed the deterministic ForgeBench golden self-check so cases with empty
+  context use their declared output scope, while explicit no-op cases remain
+  unchanged. This removes a false `harness_untrusted` blocker from real eval
+  reports without relaxing scope or trust gates; the full eval-runner suite is
+  645/645.
+- Re-ran the corrected trust path with a real Kimi K3 config-parser smoke:
+  1/1 success and verification, zero scope violations, `trusted: true`, and
+  known `$0.032733` cost. This is development-only trust-path evidence, not a
+  new paired or frontier-quality result.
+- Recorded a complete trusted Kimi K3 development diagnostic after the golden
+  self-check correction: 10/10 success and verification, zero scope
+  violations, all ten traces on Kimi with no fallback, 10.4 average rounds,
+  known `$0.468318` cost, and no trust blockers. It remains diagnostic-only.
+- Hardened the red-team lane: executable no-op verifiers replace placeholder
+  commands, red-team trust now requires the category-specific safety score plus
+  independent verification/scope evidence, and refusal text is not mistaken
+  for an executed unsafe command. The corrected Kimi lane passed 4/5 probes
+  with zero scope violations; the future-state `git log` attempt remains a
+  deliberate trust failure and is recorded as such.
+- Added an eval-only headless write policy. Forge now copies the controller's
+  allowed/forbidden file contract into the Rust permission emitter and blocks
+  out-of-scope file writes, deletes, and mutating shell confirmations before
+  execution, with typed `eval_write_policy_block` evidence. Ordinary desktop
+  requests remain unchanged; observer and patch replay remain authoritative.
+- Recorded a real Kimi K3 write-policy smoke at `$0.0342186`: one development
+  case completed with zero scope violations, nine model rounds, known usage and
+  cost, and the explicit controller contract reaching the Rust eval boundary.
+  This remains development-only evidence.
+- Recorded the complete 10-case Kimi K3 run after the write-policy change:
+  10/10 success and verification, zero scope violations, known usage/cost, and
+  `$0.5847462` total cost. The result is directionally similar to the prior
+  diagnostic, so it proves no regression and a safety-boundary improvement,
+  not a material model-quality gain.
+- Recorded a post-isolation real Kimi K3 smoke: the development config-parser
+  case passed with zero scope violations and known `$0.0521442` cost after
+  controller-side validation commands were moved into the isolated environment.
+- Forge eval setup, validation, regression, and post-validation commands now
+  inherit the same isolated runtime environment and `uv` scope wrapper as the
+  headless agent. This closes the boundary that let controller-side checks
+  create `.venv`, `uv.lock`, or cache artifacts inside the observed workspace.
+- Budgeted ordinary evals now enforce the cumulative cost boundary before the
+  next provider call: reaching the cap or encountering unknown cost stops the
+  remaining tasks and records `execution_stopped_at_cost_boundary` instead of
+  publishing a misleading partial success.
+- Recorded a real 10-case Kimi K3 development diagnostic with complete
+  verification, zero scope violations, known usage/cost for every trace, and
+  an auditable `$0.6010896` spend under the fail-closed cost gate; the result is
+  explicitly development-only and does not promote a holdout/frontier claim.
+- Added an explicit `--require-known-cost` threshold gate for ordinary evals;
+  paid or budgeted runs can now fail closed when any provider trace omits a
+  trustworthy cost instead of treating unknown spend as zero.
+- Added a bounded development provider chain: Kimi `k3` can run through its
+  OpenAI-compatible coding endpoint and fall back to a separately isolated
+  DeepSeek runner only on authentication/quota responses. Fallback identity is
+  recorded without raw provider text or credentials, and the chain is now
+  available only through the explicit ordinary-run `--provider-chain` option;
+  its route and fallback contracts have a dedicated acceptance gate; locked
+  H1/H2 and holdout evidence remain single-provider and unchanged.
+- The paid H1 scope-firewall diagnostic now records a runtime-local `uv` shim
+  and exact allowlist boundary reaching 30/30 scope-clean development attempts;
+  the median-round gate remains explicitly unmet and no holdout/frontier claim is
+  made.
+- Forge eval child processes now use a runtime-local `uv` scope shim that adds
+  `--no-project` to unqualified exploratory `uv run` commands, preventing
+  accidental fixture lockfiles while recording the boundary in trace evidence.
+- Forge eval prompts now call out observed helper-file traps (`.cache-*`, repo-local
+  `tools/*`, and generated lockfiles) and require cleanup before final verification;
+  independent workspace snapshots remain the scope authority.
+- Forge eval prompts now carry an explicit twelve-round convergence target and
+  forbid repeating unchanged read-only commands, reducing late-loop waste while
+  preserving the hard model-round cap and independent terminal evidence gates.
+- Baseline report failure-category histograms now resolve the controller-owned
+  typed taxonomy before falling back to legacy artifact categories, keeping
+  canonical reports and paired comparisons consistent for compound failures.
+- Comparison provider-error aggregates now use bounded typed categories instead
+  of copying raw provider response text into canonical evidence, preventing
+  accidental secret leakage while preserving useful failure deltas.
+- Comparison artifacts now carry deterministic SHA-256 fingerprints over each
+  arm's canonical campaign metadata, locks, budget, artifact index, report, and
+  all 30 attempt artifacts, so the compared evidence set is replayable and
+  tamper-evident rather than just a hand-authored aggregate.
+- Tightened the baseline comparison artifact contract: both arm identities and
+  source commit are now required, exactly 30 paired outcomes (10 per
+  repetition) with typed success/failure values and all five deterministic
+  bootstrap intervals whose estimates match the aggregate metrics must be
+  present, finite, and trusted metrics cannot carry blockers. Incomplete
+  hand-authored aggregate comparisons fail before H4 initialization.
+- Bound H4 initialization to explicit development control/candidate campaigns
+  and profiles: the comparison is independently recomputed and must byte-level
+  match the supplied canonical artifact before the holdout campaign is created;
+  development case/lock inputs are now separate from the sealed holdout split.
+- Bound the sealed comparison lock and campaign metadata to the same source
+  commit, so a rewritten comparison cannot be paired with otherwise valid
+  holdout evidence.
+- Tightened Forge integration provenance: route-bound campaign profiles now require submitted execution-identity endpoint family and base URL to match the locked profile before a patch can enter the provenance ledger.
+- Added a unified offline Forge frontier release gate. `python -m app.cli release verify` now re-verifies a sealed holdout campaign's attempts, budget chain, trust evidence, artifact index, and canonical report before combining the frozen holdout decision with matching profile/dataset identity, verified Forge provenance, and clean full-monorepo verification; standalone aggregate reports fail closed and no provider call starts.
+- Tightened the eval execution identity contract: route-bound runs now write
+  the route-specific output limit into the isolated provider profile and Rust
+  rejects a mismatched limit before session creation. Python runner, baseline,
+  and campaign verification also bind the identity to the configured route;
+  ordinary desktop requests remain unchanged.
+- Wired the H3 `semantic_progress_v1` policy into isolated headless execution:
+  eval tasks now carry the policy into Rust, which uses a two-failed-tool-batch
+  stagnation stop while ordinary desktop triggers keep the six-batch default;
+  controller-side typed redirect evidence remains separately auditable.
+- Made paid ForgeBench baseline and holdout controllers environment-only for
+  credentials: they fail closed when the inherited provider key is absent and
+  never fall back to a machine-local Forge config or system Keychain. Desktop
+  product credential storage remains unchanged.
+- Recorded the first real ForgeBench H4 control campaign: all 60 sealed attempts closed with known usage and complete evidence coverage, while the locked gate correctly rejected 0.7000 trusted success, 0.2333 scope violations, and 31.5 median rounds. The result is diagnostic only and does not claim frontier quality.
+- Added a frozen post-publication verification mode for sealed H4 artifacts. Active runs still require the current source and dirty-state digest; `holdout verify --campaign ... --frozen` skips only that live-worktree comparison while retaining sealed identity, trust, usage, ledger, report, artifact-index, and threshold checks without starting a provider call.
+- Eval Forge prompts now include controller-owned allowed/forbidden file scope and a bounded targeted-validation stop instruction before the first edit; independent filesystem snapshots remain the authoritative scope gate.
+- The first post-H4 development probe found and fixed a second cache-isolation false positive: `.uv-cache` could enter the observed fixture despite `UV_CACHE_DIR` isolation, causing a safe candidate stop at 23/30 rather than a false comparison. The observer now explicitly excludes only `.bun-cache` and `.uv-cache`; the interrupted arm is not replayed.
+- A fresh source-pinned 30-attempt H2 arm pair after the cache fix completed with full trust/usage/replay evidence; paired bootstrap selected `no_material_difference` (comparison digest `26e2d36cd5f9c42dd2e6ae8514154e3c6bd3e140b827cb31fb828dfcc2214d65`). The scope prompt guard remains a measured hypothesis, not a frontier-quality claim.
+- Development-arm verification now also supports `baseline verify --campaign ... --frozen`, mirroring H4's publication-safe frozen verifier: strict live-source checks remain for active runs, while sealed artifacts can be rechecked after docs/releases without any provider call.
+- Added a controller-owned task execution contract to Forge eval prompts and traces. Multi-file, no-op, single-file, and shell-heavy tasks now expose bounded inspection/validation/stop facts before editing; optional agent `task_plan` evidence is strictly checked for required inspection, in-scope edits, and verification without weakening the independent workspace/replay gates.
+- Task-contract traces now include advisory observed phase coverage from tool commands, changed files, and controller verification, explicitly separate from the authoritative filesystem/replay evidence.
+- Added separate development-only plan-first profiles for both official DeepSeek routes. Their fingerprints isolate planning/convergence A/B experiments from the existing H1/H2/H3 control profiles; holdout publication remains restricted to the approved holdout profile set.
+- Added fail-closed baseline `policy_ab_v1` comparisons and recorded the first paid planning-policy evidence; both route and policy experiments remain `no_material_difference` and do not change the default or holdout profile.
+
+- Added the sealed ForgeBench H4 campaign runner. A canonical development comparison is required before holdout initialization; each 20-case × 3-repetition call has durable pending, recovery, usage, trust, budget-chain, artifact-index, and canonical-report evidence, with interrupted calls closed as unknown-cost and never replayed. Added the corresponding offline acceptance gate and explicit no-frontier-claim boundary.
+
+- Isolated eval doctor prechecks and every real Forge attempt from desktop runtime state. Attempts now use sibling `workspace` and `runtime-state` roots, preserve only installed Rust toolchain locations, and require a real observer change plus clean-fixture patch replay before the golden harness can be trusted; this is H0 evidence, not a 20-case holdout or frontier claim.
 - Eval CLI execution now uses the shared fail-closed trust orchestrator, emits the same trust result in stdout/artifacts, exits `1` for trust or threshold failures, and supports explicit `--report-only` inspection.
 - Eval reports now publish per-score observed/expected coverage, preserve universal-score denominators across every trace, and reject case files that declare unknown required score names.
 - Eval Forge runs now derive changed-file and scope evidence from independent filesystem snapshots, isolate setup/validation effects, bound and cancel subprocess groups, scrub future repository state, and record fresh-fixture patch replay evidence.
@@ -7,6 +225,17 @@
 
 ## Unreleased
 
+- Hardened paid-attempt interruption evidence: a durable pending marker now records only a bounded, non-secret controller stage (runner, usage accounting, trust evaluation, or artifact publication), and recovery emits that stage in the immutable `baseline_interruption` trace event while still reserving unknown cost and never replaying the call.
+- Fixed bounded eval command execution for documented string commands: non-shell launches now use `shlex.split` into an argv vector while preserving `shell=False`; the regression is covered by a process-control test. A follow-up one-attempt OpenAI Chat Completions smoke completed with trusted workspace evidence, verification, known usage, and `0.05115632` CNY spend; it is diagnostic evidence only, not a complete A/B arm.
+- Paid pending markers now start with a durable `runner` interruption stage, so an external process kill still produces bounded stage evidence instead of an ambiguous unknown stage during recovery.
+- Added the DeepSeek H2 official transport A/B contract. The eval-only harness now pairs the official Anthropic Messages route with the official OpenAI-compatible Chat Completions route for DeepSeek V4 Flash, using a secret-free isolated HOME profile plus typed Rust route attestation; desktop defaults, user settings, and shared session construction remain unchanged. Paid runs fail closed on route identity mismatch, provider schema drift, unknown usage/cost, untrusted workspace evidence, patch replay failure, or interrupted calls and never replay pending paid work. Forge does not implement or claim DeepSeek OpenAI Responses; H2 is development-split transport evidence, not a holdout or frontier result.
+- Added route-bound H3 minimal profiles for both official DeepSeek transports. The profiles fingerprint the minimal prompt/context/tool/stagnation policy, carry explicit official base URLs, preserve only H1's legacy omitted `base_url`, require matching controller policy evidence during baseline verification, and are included in the offline frontier harness gate.
+- Made development A/B winner selection uncertainty-aware. `paired_bootstrap_quality_gated_v1` requires confidence-separated success or efficiency improvement with verification/scope non-inferiority; ambiguous intervals remain `no_material_difference` instead of promoting noise to a winner.
+- Added the H4 frozen holdout release gate. A canonical 60-attempt report verifier locks the 20-case × 3-repetition split, 80% success, 2% scope, 12-round, complete-evidence, and 35 CNY thresholds; the offline contract does not fabricate paid holdout evidence.
+- Holdout summaries are now derived from unique per-case/per-repetition evidence records, including usage, workspace, replay, verification, and terminal-failure facts, instead of trusting hand-authored aggregate metrics.
+- Added the DeepSeek H1 paid baseline controller and acceptance contract. The explicit `baseline init|run|status|recover|report|verify` CLI freezes source/dataset/harness identity, performs a typed zero-provider-call credential preflight before creating pending/attempt/budget records, and preserves explicitly exported provider environment variables while isolating HOME and all Forge runtime state. Local paid runs may source `DEEPSEEK_API_KEY` from a Git-ignored, mode-`600` `.env` instead of using macOS Keychain. Python bytecode and pytest cache output are redirected outside the task workspace so verification-only no-op attempts remain replayable instead of becoming synthetic patches. It reserves budget before real provider calls, records exact canonical DeepSeek usage in CNY, stops on unknown cost or trust drift, recovers without replaying paid attempts, and produces an independently verifiable compact report/index. H1 is development-only and does not claim a frontier or holdout result before paid evidence is published.
+- Added Forge-built monorepo provenance for integration campaigns. A fail-closed CLI now initializes from the locked ForgeBench fixture, accepts only explicitly named trusted Forge trace/report/patch artifacts, commits verified patches, maintains an external append-only hash-chain ledger, recovers crash boundaries, finalizes `FORGE-BUILD-MANIFEST.json`, and independently replays and verifies the complete source chain. Scoring and integration remain separate; the controller-authored baseline is not claimed as Forge output, controller interventions that edit product source invalidate the chain, and H0C used no paid DeepSeek call or holdout success claim.
+- Added the canonical ForgeBench real-coding dataset: one versioned TypeScript/Python product monorepo, 10 development cases, 20 sealed holdout cases, scenario overlays, controller-owned opaque hidden verifiers, atomic content-addressed fixture/dataset locks, unified `app.cli forgebench` inspection, and an 80th acceptance gate. This freezes H0B benchmark evidence but does not claim a paid holdout result or frontier KPI.
 - Refined desktop conversation progress into one continuous status line: a 240ms anti-flash delay, 600ms stage stability, safe high-level labels, restrained dot-and-trace motion, answer-stream continuity, honest completed/stopped/failed footers with turn duration and meaningful operation count, and an inline two-to-four-stage summary. Raw and runtime evidence stay behind separate nested disclosures; the main path exposes no filenames, commands, tool names, chain of thought, Work Panel targets, or next-action controls.
 - Made desktop conversations result-first: each turn now shows at most one live safe-progress row before the final answer, then folds thinking, tools, shell output, diffs, usage, delivery metadata, and resolved confirmations into a compact completed-process disclosure with second-level raw evidence. Unresolved confirmations remain explicit interruptions. The Work Panel launcher now starts with no selected action and the panel uses a flush embedded split with no card frame, outer gap, radius, or shadow.
 - Redesigned the desktop app as the v5 "Console Craft" theme (`data-design-version="v5-console-craft"`): cool graphite dark ladder (`#0A0E14` base) and cool light theme (`#F4F6F8` base), a single cyan accent (`#22D3EE` dark / `#0891B2` light), Geist Mono evidence/label typography, token-driven materials, and updated style-gate, guardrail, and theme-coupled e2e assertions. See `apps/desktop/docs/product/forge-design-language.md`.
@@ -181,3 +410,5 @@
 - Added a global background status bar with expandable task rows for agent work, review items, scheduler tasks, and health alerts.
 - Added richer tool previews for Markdown write/edit operations and compact multi-file diff tree summaries.
 - Added `scripts/acceptance.sh` and browser acceptance coverage for resume, diagnostics, permissions, scheduler, A2A review, and background task UI.
+- Added the first H3 frontier harness contract evidence slice. Forge eval traces now retain a minimal hashed context manifest, bounded typed tool-result envelopes with explicit truncation/digest evidence, and typed progress/stagnation decisions with one recovery redirect before stop. This is an offline harness-readiness gate, not a paid score or holdout claim.
+- Added a repository-wide Forge monorepo evidence index linking desktop, eval-runner, website, acceptance gates, provenance campaign, and the explicit H0-H4 claim boundaries. It makes the “Forge-built” proof path auditable without presenting incomplete paid or holdout evidence as a result.

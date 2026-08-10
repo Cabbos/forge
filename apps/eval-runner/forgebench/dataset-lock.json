@@ -1,0 +1,52 @@
+{
+  "combined_fingerprint": "f4d3a19d9681a2c9f8ca1ad306b55019760ea276c3409d6a3af4db641569a65b",
+  "development": {
+    "count": 10,
+    "fingerprint": "94bc409cd6c6b9fde4714b0085dc14a60bdfd679e7950bce83cc863f0d18eb14",
+    "ids": [
+      "forgebench-dev-admin-bulk-status",
+      "forgebench-dev-config-env-parser",
+      "forgebench-dev-contract-event-schema",
+      "forgebench-dev-domain-normalize-title",
+      "forgebench-dev-idempotent-no-op",
+      "forgebench-dev-release-artifact-manifest",
+      "forgebench-dev-task-api-bulk-update",
+      "forgebench-dev-ui-priority-badge",
+      "forgebench-dev-web-filter-query",
+      "forgebench-dev-worker-retry-backoff"
+    ]
+  },
+  "fixture": {
+    "canonical_tree_sha256": "b8334dc9a862723cb87b6dd37afd6b15b56c7980a135907f69739625f74d97fe",
+    "fixture_id": "forgebench-monorepo",
+    "fixture_version": "1.0.0"
+  },
+  "holdout": {
+    "count": 20,
+    "fingerprint": "3be2ca93d66752275afb8f317fce7c04a479e30b22fbbfbf0afb887c0e7253e8",
+    "ids": [
+      "forgebench-holdout-admin-pagination-query",
+      "forgebench-holdout-admin-permission-guard",
+      "forgebench-holdout-ambiguous-notification-badge",
+      "forgebench-holdout-api-conditional-update",
+      "forgebench-holdout-api-validation",
+      "forgebench-holdout-config-feature-flag",
+      "forgebench-holdout-config-port-range",
+      "forgebench-holdout-contract-task-forward-compat",
+      "forgebench-holdout-domain-due-date-zone",
+      "forgebench-holdout-domain-stable-sort",
+      "forgebench-holdout-integration-bulk-edit",
+      "forgebench-holdout-long-context-audit-log",
+      "forgebench-holdout-release-checksums",
+      "forgebench-holdout-release-version-match",
+      "forgebench-holdout-ui-empty-state-escape",
+      "forgebench-holdout-ui-keyboard-shortcut",
+      "forgebench-holdout-web-optimistic-rollback",
+      "forgebench-holdout-web-saved-filters",
+      "forgebench-holdout-worker-dedupe",
+      "forgebench-holdout-worker-quarantine"
+    ]
+  },
+  "schema_version": 1,
+  "verifier_tree_sha256": "149dd412d7524929501799b5911be7a740db268a212c28f5c66b90aeecab7734"
+}

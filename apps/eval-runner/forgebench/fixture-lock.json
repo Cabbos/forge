@@ -1,0 +1,7 @@
+{
+  "canonical_tree_sha256": "b8334dc9a862723cb87b6dd37afd6b15b56c7980a135907f69739625f74d97fe",
+  "fixture_id": "forgebench-monorepo",
+  "fixture_version": "1.0.0",
+  "schema_version": 1,
+  "verification_command": "python3 tools/release/verify.py"
+}

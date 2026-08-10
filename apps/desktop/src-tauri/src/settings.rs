@@ -110,6 +110,58 @@ impl CredentialResolver {
         })
     }
 
+    pub fn resolve_with_provider_store_fallback(
+        &self,
+        provider: &str,
+        profile: Option<&ForgeProfile>,
+    ) -> Result<Credentials, CredentialResolutionError> {
+        let settings = Settings::load();
+        let claude_config = read_claude_settings();
+        self.resolve_with_provider_store_fallback_from_sources(
+            provider,
+            profile,
+            &settings,
+            &claude_config,
+            |key| std::env::var(key).ok(),
+        )
+    }
+
+    fn resolve_with_provider_store_fallback_from_sources<F>(
+        &self,
+        provider: &str,
+        profile: Option<&ForgeProfile>,
+        settings: &Settings,
+        claude_config: &ClaudeSettings,
+        env: F,
+    ) -> Result<Credentials, CredentialResolutionError>
+    where
+        F: Fn(&str) -> Option<String> + Copy,
+    {
+        let detected =
+            self.resolve_from_sources(provider, profile, settings, claude_config, env)?;
+        if !detected.api_key.trim().is_empty() {
+            return Ok(detected);
+        }
+
+        let reference = CredentialRef::provider(provider);
+        let stored_key = self
+            .store
+            .get(&reference)
+            .map_err(|_| CredentialResolutionError::StoreUnavailable)?
+            .ok_or(CredentialResolutionError::MissingReferencedSecret)?;
+        let credentials = detect_credentials_with_stored_key_from_sources(
+            provider,
+            settings,
+            claude_config,
+            Some(stored_key),
+            env,
+        );
+        if !credentials.api_key.trim().is_empty() {
+            self.redactor.register_secret(&credentials.api_key);
+        }
+        Ok(credentials)
+    }
+
     fn resolve_from_sources<F>(
         &self,
         provider: &str,
@@ -1126,6 +1178,30 @@ mod tests {
             .expect("resolve profile credential");
 
         assert_eq!(credentials.api_key, "profile-secret");
+    }
+
+    #[test]
+    fn provider_store_fallback_resolves_canonical_key_without_settings_reference() {
+        let store = Arc::new(MemoryCredentialStore::default());
+        store
+            .put(
+                &CredentialRef::provider("deepseek"),
+                "stored-deepseek-secret",
+            )
+            .expect("put provider secret");
+        let resolver = CredentialResolver::new(store);
+
+        let credentials = resolver
+            .resolve_with_provider_store_fallback_from_sources(
+                "deepseek",
+                None,
+                &Settings::default(),
+                &ClaudeSettings::default(),
+                |_| None,
+            )
+            .expect("resolve canonical provider credential");
+
+        assert_eq!(credentials.api_key, "stored-deepseek-secret");
     }
 
     #[test]

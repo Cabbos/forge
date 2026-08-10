@@ -532,6 +532,31 @@ fn allowed_script_commands(script_name: &str) -> &'static [&'static str] {
 
 fn is_read_only_shell_command(command: &str) -> bool {
     let normalized = command.trim().to_ascii_lowercase();
+    if is_controller_owned_noop_validation_command(&normalized) {
+        return true;
+    }
+    if normalized.contains('|') {
+        let segments = normalized.split('|').map(str::trim).collect::<Vec<_>>();
+        if segments.len() > 1
+            && segments
+                .iter()
+                .all(|segment| is_read_only_shell_command(segment))
+        {
+            return true;
+        }
+    }
+    if let Some((cwd, nested_command)) = normalized
+        .strip_prefix("cd ")
+        .and_then(|value| value.split_once(" && "))
+    {
+        let cwd = cwd.trim();
+        if !cwd.is_empty()
+            && !cwd.contains([';', '|', '`', '$', '>', '<'])
+            && is_read_only_shell_command(nested_command.trim())
+        {
+            return true;
+        }
+    }
     if normalized.contains("&&")
         || normalized.contains(';')
         || normalized.contains('|')
@@ -542,21 +567,78 @@ fn is_read_only_shell_command(command: &str) -> bool {
     {
         return false;
     }
+    if is_read_only_git_command(&normalized) {
+        return true;
+    }
     [
-        "cat ",
-        "find ",
-        "git diff",
-        "git show",
-        "git status",
-        "grep ",
-        "ls",
-        "pwd",
-        "rg ",
-        "sed -n",
-        "tree",
+        "cat ", "find ", "grep ", "head ", "ls", "pwd", "rg ", "sed -n", "tail ", "tree",
     ]
     .iter()
     .any(|prefix| normalized == *prefix || normalized.starts_with(prefix))
+}
+
+fn is_controller_owned_noop_validation_command(command: &str) -> bool {
+    if let Some((cwd, nested_command)) = command
+        .strip_prefix("cd ")
+        .and_then(|value| value.split_once(" && "))
+    {
+        let cwd = cwd.trim();
+        return !cwd.is_empty()
+            && !cwd.contains([';', '|', '`', '$', '>', '<'])
+            && is_controller_owned_noop_validation_command(nested_command.trim());
+    }
+
+    const PREFIX: &str =
+        "python3 -c \"from pathlib import path; import sys; sys.exit(0 if not any(path(p).exists() for p in (";
+    const SUFFIX: &str = ")) else 1)\"";
+    let Some(paths) = command
+        .strip_prefix(PREFIX)
+        .and_then(|value| value.strip_suffix(SUFFIX))
+    else {
+        return false;
+    };
+    let paths = paths.split(',').map(str::trim).collect::<Vec<_>>();
+    !paths.is_empty()
+        && paths.iter().all(|raw_path| {
+            let Some(path) = raw_path
+                .strip_prefix('\'')
+                .and_then(|value| value.strip_suffix('\''))
+            else {
+                return false;
+            };
+            !path.is_empty()
+                && !path.contains(['\'', '"', ';', '`', '$'])
+                && !is_unsafe_verification_path_value(path)
+        })
+}
+
+fn is_read_only_git_command(command: &str) -> bool {
+    let parts = command.split_whitespace().collect::<Vec<_>>();
+    let Some((first, rest)) = parts.split_first() else {
+        return false;
+    };
+    if *first != "git" {
+        return false;
+    }
+    let Some((subcommand, args)) = rest.split_first() else {
+        return true;
+    };
+
+    match *subcommand {
+        "diff" | "show" | "status" => true,
+        "log" => !args.iter().any(|arg| {
+            matches!(
+                *arg,
+                "--exec" | "--ext-diff" | "--no-ext-diff" | "--output" | "--source"
+            ) || arg.starts_with("--exec=")
+                || arg.starts_with("--output=")
+        }),
+        "remote" => args.is_empty() || matches!(args[0], "-v" | "--verbose" | "show" | "get-url"),
+        "branch" => args.is_empty() || args.iter().all(|arg| arg.starts_with('-')),
+        "tag" => args.is_empty() || args.iter().all(|arg| arg.starts_with('-')),
+        "reflog" => args.is_empty() || args[0] == "show" || args[0].starts_with('-'),
+        _ => false,
+    }
 }
 
 fn is_rust_verification_command(command: &str) -> bool {
@@ -868,6 +950,115 @@ mod tests {
         ));
 
         assert!(!needs_verification(&turn));
+    }
+
+    #[test]
+    fn read_only_git_history_traces_do_not_need_verification() {
+        for command in [
+            "git log --oneline -5",
+            "git remote -v",
+            "git branch --all",
+            "git tag --list",
+            "git reflog -5",
+        ] {
+            let mut turn = sample_turn();
+            turn.record_tool(trace(
+                AgentToolCategory::Shell,
+                AgentToolStatus::Completed,
+                vec![],
+                Some(command),
+                false,
+            ));
+
+            assert!(
+                !needs_verification(&turn),
+                "command should be read-only: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn controller_owned_noop_validation_trace_does_not_need_verification() {
+        for command in [
+            "python3 -c \"from pathlib import Path; import sys; sys.exit(0 if not any(Path(p).exists() for p in ('.env', '.forge/registry.db')) else 1)\"",
+            "cd /tmp/forge-eval/workspace && python3 -c \"from pathlib import Path; import sys; sys.exit(0 if not any(Path(p).exists() for p in ('.env', '.forge/registry.db')) else 1)\"",
+        ] {
+            let mut turn = sample_turn();
+            turn.record_tool(trace(
+                AgentToolCategory::Shell,
+                AgentToolStatus::Completed,
+                vec![],
+                Some(command),
+                false,
+            ));
+
+            assert!(!needs_verification(&turn), "command should be read-only: {command}");
+        }
+    }
+
+    #[test]
+    fn read_only_cd_compound_trace_does_not_need_verification() {
+        for command in [
+            "cd /tmp/forge-eval/workspace && sed -n '1,240p' src/app.py",
+            "cd /tmp/forge-eval/workspace && find . -maxdepth 3 -type f -print",
+        ] {
+            let mut turn = sample_turn();
+            turn.record_tool(trace(
+                AgentToolCategory::Shell,
+                AgentToolStatus::Completed,
+                vec![],
+                Some(command),
+                false,
+            ));
+
+            assert!(
+                !needs_verification(&turn),
+                "command should be read-only: {command}"
+            );
+        }
+    }
+
+    #[test]
+    fn read_only_pipeline_trace_does_not_need_verification() {
+        let mut turn = sample_turn();
+        turn.record_tool(trace(
+            AgentToolCategory::Shell,
+            AgentToolStatus::Completed,
+            vec![],
+            Some("cd /tmp/forge-eval/workspace && ls -laR . | head -50"),
+            false,
+        ));
+
+        assert!(!needs_verification(&turn));
+    }
+
+    #[test]
+    fn mutating_git_commands_still_need_verification() {
+        for command in [
+            "git remote add origin https://example.invalid/repo.git",
+            "git branch release",
+            "git tag release",
+            "git reflog expire --all",
+            "git log --output=history.txt",
+            "python3 -c \"from pathlib import Path; import sys; sys.exit(0 if not any(Path(p).exists() for p in ('../outside')) else 1)\"",
+            "cd /tmp && python3 -c \"from pathlib import Path; import sys; sys.exit(0 if not any(Path(p).exists() for p in ('../outside')) else 1)\"",
+            "cd /tmp && rm -rf .",
+            "ls -laR . | rm -rf .",
+        ] {
+            let mut turn = sample_turn();
+            turn.record_tool(trace(
+                AgentToolCategory::Shell,
+                AgentToolStatus::Completed,
+                vec![],
+                Some(command),
+                false,
+            ));
+
+            assert!(
+                needs_verification(&turn),
+                "command should not be read-only: {command}"
+            );
+        }
     }
 
     #[test]

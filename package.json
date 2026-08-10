@@ -3,7 +3,8 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev:desktop": "npm --prefix apps/desktop run dev",
+    "dev:desktop": "npm --prefix apps/desktop run tauri dev",
+    "dev:desktop:web": "npm --prefix apps/desktop run dev",
     "dev:website": "npm --prefix apps/website run dev",
     "build:desktop": "npm --prefix apps/desktop run build",
     "build:website": "npm --prefix apps/website run build",

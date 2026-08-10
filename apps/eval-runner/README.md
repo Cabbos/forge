@@ -2,7 +2,50 @@
 
 CLI runs share the fail-closed trust orchestrator. Exit code `0` requires trusted evidence and passing thresholds, `1` indicates trust/threshold failure, and argparse/input errors use `2`; `--report-only` preserves report generation while ignoring trust blockers.
 Reports include `score_coverage` entries with `observed`, `expected`, and `coverage` for every universal, emitted, or case-required score; unknown required score names fail case-quality validation.
-Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup and validation are outside the observation window; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
+Forge traces also carry a bounded `harness_contract_evidence` event: a minimal context manifest (hashes and byte/token estimates only), typed/truncation-aware tool-result envelopes, typed progress/stagnation evidence, and an explicit primary failure taxonomy. The `semantic_progress_v1` eval profile is wired through the task payload into Rust's isolated loop guard, which stops after two consecutive failed tool batches; ordinary desktop triggers retain the six-batch default. The controller contract still permits one evidence-driven redirect when typed progress signals are supplied, while missing signals remain explicit rather than being inferred as progress, and generic `runner_error` is never the terminal taxonomy emitted by the contract layer.
+Baseline reports aggregate that evidence into tool-call histograms/repeat rates, context byte/token percentiles and tier totals, stagnation/repair compliance, and deterministic paired-bootstrap intervals for comparison deltas. Comparison artifacts also carry deterministic SHA-256 fingerprints over each arm's canonical campaign metadata, locks, budget, index, report, and 30 attempt artifacts, making the compared evidence set replayable and tamper-evident. Provider-error aggregates use bounded typed codes rather than raw provider response text, so comparison evidence stays secret-free and bounded. Comparison winner selection is quality-gated by those intervals; uncertain deltas stay `no_material_difference`.
+Baseline report failure-category histograms use the same controller-owned typed taxonomy as comparisons, with legacy artifact categories retained only as the compatibility fallback; a published report and its comparison therefore cannot disagree merely because one path ignored `harness_contract_evidence`.
+Measured eval runners can opt into the fingerprinted `HarnessPolicyV1` minimal prompt plus task-local context mode without changing desktop defaults; the current product policy remains the control.
+Forge-provider eval prompts also render each task's controller-owned allowed and forbidden file scope and a bounded targeted-validation stop instruction before the first edit. The independent workspace snapshot and patch replay remain authoritative, so this is an early convergence guard rather than a weaker scope check.
+For development diagnostics, `--harness-context-policy target_files_v1` additionally preloads bounded target and visible validation files into the controller prompt. Inside the isolated eval workspace, the Rust write boundary may auto-approve only a bounded read-only inspection pipeline such as `find ... | head -50`; external paths, redirects, background control, and mutations remain denied. The default product policy is unchanged, and this mode is diagnostic-only.
+The rendered controller prompt is copied into both the request-level `prompt` and `task.prompt`, because the Rust headless resolver intentionally gives the task field precedence; this keeps target context and convergence instructions effective rather than merely recorded.
+When a Forge headless task carries that scope contract, the controller also copies it into an eval-only Rust write policy. File edits outside the exact allowlist, file deletes, and mutating shell confirmations are denied before execution and recorded as typed `eval_write_policy_block` evidence. Ordinary desktop sessions and headless requests without the explicit policy keep their existing permission behavior; the final filesystem snapshot and clean-fixture replay remain the authoritative trust gates.
+The same controller contract now gives every Forge eval a twelve-round convergence target and forbids repeating an unchanged read-only command; this is advisory guidance for the model, while the configured hard round cap and terminal evidence remain authoritative.
+The scope guard also names the observed helper-file traps (`.cache-*`, repo-local `tools/*`, and generated lockfiles) and requires cleanup before final verification; independent snapshots still decide whether the attempt is trusted.
+The isolated Forge child now prepends a runtime-local `uv` shim that injects `--no-project` for unqualified `uv run` exploration, preventing accidental fixture lockfiles while preserving explicit project selection and recording the boundary in trace evidence.
+The first real 30-attempt before/after diagnostic is recorded in [`docs/forgebench-h1-convergence-diagnostic.md`](../../docs/forgebench-h1-convergence-diagnostic.md): typical-loop metrics improved, but scope violations and p95 rounds regressed, so the guard is not promoted as a frontier claim.
+The follow-up scope-firewall sequence is recorded in [`docs/forgebench-h1-scope-firewall-diagnostic.md`](../../docs/forgebench-h1-scope-firewall-diagnostic.md): the runtime `uv` shim plus exact allowlist hard boundary reached 30/30 trusted, verified, scope-clean development attempts, while the locked median-round gate remains open.
+Each Forge task also receives a bounded `TaskExecutionContract` describing its shape (no-op, single-file, multi-file, or shell-heavy), required inspection paths, targeted checks, and stop condition. Adapters may return an eight-step maximum `task_plan`; the contract validates inspection coverage, in-scope edits, and an explicit verification phase, while missing plans stay visible as missing evidence.
+The same raw event records advisory observed phase coverage from tool commands and controller verification; `eval_verification_ladder` now records each bounded stage (target, regression/fix, hidden, and full), the first rejecting stage, and whether target validation passed before controller-owned verification failed. A failed controller-owned full check may receive one bounded same-session repair turn inside the eval-only write boundary; the Python controller then reruns the authoritative check. Rendered convergence guidance is bound to the effective case/CLI model-round budget, so prompt evidence cannot silently advertise a different limit. This makes “target green, full regression red” diagnosable without exposing hidden verifier commands, and it never replaces filesystem snapshots or clean-fixture patch replay.
+
+The eval runner also applies one monotonic task deadline across setup, the
+headless child, hidden/full checks, and all validation phases; per-command
+timeouts cannot multiply into an unbounded case. Universal safety failures
+(scope escape, secret/prompt injection, future-state lookup, or unsafe tool use)
+make trusted execution untrusted, while `--report-only` preserves exploratory
+traces for diagnosis.
+The observer's disposable-cache allowlist is explicit and narrow (`.bun-cache`, `.uv-cache`); an arm that fails patch replay remains terminal and is never replayed into a comparison.
+The checked-in minimal policy profiles are `deepseek-v4-flash-anthropic-minimal-v1` and `deepseek-v4-flash-openai-chat-minimal-v1`; both are canonical, route-bound, carry explicit official base URLs, and keep secrets out of profile bytes. Only the original H1 Anthropic profile retains an omitted `base_url` for byte compatibility; route-bound baseline verification also requires a matching controller-owned policy event.
+The plan-first development profiles are `deepseek-v4-flash-anthropic-planning-v1` and `deepseek-v4-flash-openai-chat-planning-v1`; they are separate fingerprints for A/B measurement and are not holdout profiles.
+Baseline comparison supports the default `transport_ab_v1` route experiment and the fail-closed `policy_ab_v1` same-route minimal-versus-planning experiment; neither mode promotes a profile without complete trusted evidence. A canonical comparison must bind both profile IDs/fingerprints and the source commit, contain exactly 30 paired outcome records (10 per repetition), use the typed success/failure outcome vocabulary, and publish all five deterministic bootstrap intervals with estimates matching the aggregate metrics; incomplete hand-authored aggregate evidence is rejected before holdout initialization.
+Forge-provider traces use independent filesystem snapshots as the changed-file authority. Setup, validation, regression, and post-validation commands run outside the observation window but now inherit the same isolated runtime environment and `uv` scope wrapper as the headless agent; subprocesses are bounded/cancellable, future repository state is scrubbed, and emitted diffs are replayed in a fresh fixture workspace.
+The eval doctor precheck runs with a disposable home and never reads desktop session snapshots. Every real Forge attempt owns sibling `workspace` and `runtime-state` roots: `HOME`, `USERPROFILE`, registry, Continuity, logs, profiles, and snapshots are routed outside the observed product workspace, while `CARGO_HOME` and `RUSTUP_HOME` continue to resolve the installed toolchains. A golden harness is trusted only after a real observer change and clean-fixture patch replay both succeed.
+
+ForgeBench is the canonical executable real-coding dataset: 10 development cases and 20 sealed holdout cases share one versioned product monorepo, run in independent copies with scenario overlays, and are frozen by content fingerprints for the fixture, case splits, and opaque hidden verifiers. This H0B state proves dataset integrity and polarity, not paid holdout success or a frontier KPI.
+
+The offline H3 contract evidence is documented in [`docs/forgebench-h3-harness-contracts.md`](../../docs/forgebench-h3-harness-contracts.md). It is a harness-readiness gate, not a paid model-quality claim.
+The H4 release decision boundary is implemented as a canonical 60-attempt holdout report and verifier in [`docs/forgebench-h4-holdout-gate.md`](../../docs/forgebench-h4-holdout-gate.md); reports are derived from unique case/repetition evidence records, and the offline gate validates the contract without fabricating a holdout result.
+The final claim boundary is also executable: `python -m app.cli release verify --holdout-campaign <sealed-h4-campaign> --campaign <forge-campaign>` re-verifies the sealed H4 attempts, budget chain, trust evidence, artifact index, and canonical report before combining it with matching profile/dataset fingerprints, a verified Forge provenance campaign, and its clean full-monorepo verification. When attempt artifacts are present, the returned decision includes bounded `holdout_diagnostics` (p95 rounds/duration, known-cost tails, typed failure/provider-error concentration, trust blockers, H3 telemetry, and sorted per-case detail); diagnostics are explanatory only and never bypass thresholds. A standalone hand-authored aggregate report cannot satisfy the gate; it never starts a provider call and fails closed when either track is absent.
+The integration campaign acceptance path applies the same route binding: when a locked profile declares an endpoint family or base URL, the submitted `eval_execution_identity` must match both fields before a Forge patch can enter the provenance ledger.
+The sealed campaign runner adds the operational boundary around that report: `holdout init` requires a canonical comparison plus explicit control/candidate campaign and profile paths, separately pinned development cases/lock inputs, then independently recomputes the comparison before unlocking the holdout; the locked comparison source commit is bound to the holdout source commit and rechecked on every verification; `holdout run` persists a pending record before each provider call; `holdout recover` closes interrupted work as unknown-cost evidence without replay; and `holdout report` publishes a canonical report plus artifact index only after all 60 calls are terminal. Campaign state is intended to live outside Git so raw traces and credentials never enter the monorepo; the code, tests, locks, and acceptance gate remain in this monorepo.
+The first real H4 control campaign closed all 60 attempts with known usage and complete evidence coverage, but failed the locked success, scope, and round thresholds. Its diagnostic metrics and failure concentration are recorded in [`docs/forgebench-h4-paid-result.md`](../../docs/forgebench-h4-paid-result.md); no threshold was relaxed and no frontier claim is made.
+For post-publication artifact checks, `holdout verify --campaign ... --frozen` keeps the sealed profile, dataset, attempt, usage, trust, budget-chain, report, artifact-index, and threshold checks while intentionally skipping only the current worktree commit/digest comparison; it never starts a provider call.
+Development arms have the same publication boundary: `baseline verify --campaign ... --frozen` rechecks a sealed arm after documentation or release commits without replaying or starting a provider call; `baseline report --campaign ... --frozen` can publish its canonical report and artifact index under that same frozen-source rule.
+The repository-wide evidence index is [`docs/forge-monorepo-evidence.md`](../../docs/forge-monorepo-evidence.md); it links the desktop, eval-runner, website, acceptance matrix, provenance campaign, and the explicit H0–H4 claim boundaries.
+
+Development-only provider chains are documented in [`docs/forgebench-provider-fallback.md`](../../docs/forgebench-provider-fallback.md). Run the explicit `--provider-chain kimi-k3-deepseek` option only for ordinary development experiments; it keeps Kimi/DeepSeek route identity and credentials separate from the locked DeepSeek comparison and holdout profiles, with a dedicated acceptance contract. The latest real 10-case Kimi diagnostic is [`docs/forgebench-kimi-development-run-2026-08-10.md`](../../docs/forgebench-kimi-development-run-2026-08-10.md); it is development evidence, not a holdout or frontier claim.
+
+The route-pure Kimi/DeepSeek paired diagnostic is documented in [`docs/forgebench-provider-ab.md`](../../docs/forgebench-provider-ab.md). It runs the two approved routes as separate arms, rejects fallback contamination and unknown cost, pairs `(repetition, task_id)`, and publishes deterministic bootstrap intervals plus contract-bound median/p95 tail metrics, controller-owned failure-taxonomy deltas, and bounded provider-error-code deltas. Contract-bound runs require at least two paired attempts before making a capability claim. It is diagnostic-only and cannot unlock the sealed holdout.
 
 Forge Eval Runner is a Python MVP for evaluating coding agents. It focuses on the parts hiring teams usually care about for AI Product Engineer, LLM Application Engineer, and Agent Engineer roles: trace capture, task-level metrics, failure analysis, typed API contracts, tests, and containerized delivery.
 
@@ -54,6 +97,7 @@ forge-eval-runner/
     sandbox.py    Workspace cleanliness and future-state leakage checks
     patches.py    Patch replay and normalized patch helpers
     harness_checks.py  Golden harness self-checks
+    harness_contracts.py  Bounded context/tool/progress evidence contracts
     agent_adapter.py  Stable external-agent trace adapter contract
     trace_import.py  Production trace to eval case promotion
     main.py       FastAPI app and route handlers
@@ -66,7 +110,13 @@ forge-eval-runner/
     storage.py    Memory and SQLite task/run/artifact storage boundary
     config.py     Environment-driven settings
   eval_cases/
-    */case.json   Portable eval case definitions plus disposable fixtures
+    */case.json   Runtime, scorer, red-team, and adapter contract cases
+  forgebench/
+    forgebench-monorepo/  Canonical TypeScript/Python product fixture
+    cases/development/    10 visible real-coding development cases
+    cases/holdout/        20 sealed real-coding holdout cases
+    verifiers/            Controller-owned opaque hidden checks
+    dataset-lock.json     Content-addressed split and verifier lock
   tasks/
     sample_tasks.json
   tests/
@@ -207,11 +257,129 @@ the first check for stuck workers or stale leases.
 
 ## Run Eval Cases With CLI
 
-The repository includes five portable cases under `eval_cases/`. The default mock provider runs fully offline and is intended to validate case loading, trace shaping, scope checks, and report aggregation:
+`eval_cases/` remains the portable Forge runtime and contract regression pack. The default mock provider runs fully offline and is intended to validate case loading, trace shaping, scope checks, and report aggregation:
 
 ```bash
 uv run python -m app.cli --cases eval_cases --provider mock
 ```
+
+### ForgeBench Canonical Real-Coding Catalog
+
+All executable real-coding benchmark tasks target the single
+`forgebench/forgebench-monorepo` product fixture. Each scoring attempt receives
+an independent copy plus its declared scenario overlay. The 10-case development
+split and 20-case holdout split are content-fingerprinted; holdout inspection
+prints only IDs, counts, and hashes:
+
+```bash
+uv run python -m app.cli forgebench verify-catalog
+uv run python -m app.cli forgebench show-lock --split development
+uv run python -m app.cli forgebench show-lock --split holdout
+```
+
+The older `eval_cases/_fixtures/continuity-ts-tooling` tree and standalone
+micro-fixtures are retained while their runtime-contract assertions migrate.
+They are excluded from frontier scoring and cannot satisfy
+`metadata.real_coding=true`.
+
+### Forge-built monorepo provenance
+
+The scoring track and integration track are separate. Scoring attempts remain
+immutable benchmark evidence; only an explicitly selected, trusted Forge patch
+that passes scope, replay, visible, hidden, and full verification may enter the
+integration campaign's product commit chain. The controller-authored canonical
+baseline is benchmark scaffolding, not a Forge-authored patch. See
+[`../../docs/forgebench-provenance.md`](../../docs/forgebench-provenance.md) for
+the `campaign init`, `campaign accept`, `campaign finalize`, and
+`campaign verify` workflow, the `FORGE-BUILD-MANIFEST.json` contract, controller
+interventions, invalidation rules, and proof limits. H0C made no paid DeepSeek
+call and does not claim holdout success.
+
+### DeepSeek H1 paid baseline
+
+The H1 controller pins DeepSeek V4 Flash over the Anthropic-compatible
+transport to the frozen 10-case development split for three repetitions. It
+records a durable pending marker before every provider call, accounts exact CNY
+from canonical provider usage, enforces per-task and campaign caps, never
+reissues an interrupted paid attempt, and emits a compact report plus
+content-addressed artifact index. Before any pending marker or attempt is
+created, `baseline run` sends a typed credential preflight to the exact Forge
+headless command and frozen provider/model. The preflight creates no agent
+session and starts no provider call; paid benchmark commands resolve the
+canonical provider key from the inherited `DEEPSEEK_API_KEY` only and never
+consult the optional system credential-store fallback. For local paid runs,
+keep the value in this
+directory's Git-ignored `.env` with file mode `600`, then explicitly export it
+into the controller process (`set -a; source .env; set +a`). The child HOME
+remains isolated, Python bytecode and pytest caches are routed into the
+out-of-workspace runtime state, and the credential is never serialized into a
+request or artifact. This keeps verification-only no-op attempts free of
+synthetic cache-file patches. If an interruption occurs after the pending marker
+is durable, recovery records only a bounded non-secret interruption stage
+(runner, usage accounting, trust evaluation, or artifact publication) in the
+pending evidence before reserving the unknown cost; it never replays the
+provider call. No attempt or budget entry is published before recovery. All six
+commands require
+explicit
+`--campaign` and `--profile` arguments:
+
+```bash
+uv run python -m app.cli baseline init --campaign <path> --campaign-id <id> --profile <profile>
+uv run python -m app.cli baseline run --campaign <path> --profile <profile> --max-attempts 1
+uv run python -m app.cli baseline status --campaign <path> --profile <profile>
+uv run python -m app.cli baseline recover --campaign <path> --profile <profile>
+uv run python -m app.cli baseline report --campaign <path> --profile <profile>
+uv run python -m app.cli baseline verify --campaign <path> --profile <profile>
+```
+
+See
+[`../../docs/forgebench-h1-baseline.md`](../../docs/forgebench-h1-baseline.md)
+for the frozen official price, 8 CNY allocation, recovery semantics, offline
+gate, and proof boundary. This is a pinned development baseline, not a frontier
+claim; the sealed holdout remains untouched.
+
+### DeepSeek H2 official transport A/B
+
+H2 pairs that Anthropic H1 control with an OpenAI-compatible Chat Completions
+candidate for the same DeepSeek V4 Flash development cases. The only allowed
+route tuples are `deepseek` + `deepseek-v4-flash` +
+`anthropic_messages` + `https://api.deepseek.com/anthropic`, and
+`deepseek` + `deepseek-v4-flash` + `openai_chat_completions` +
+`https://api.deepseek.com`. The controller derives a typed expected route and
+writes a secret-free profile under the child process's isolated HOME; Rust
+attests the effective profile before session creation. This is an eval-only
+isolated route override: desktop defaults, user settings, and the shared session
+builder remain unchanged.
+
+The candidate campaign is fail-closed. It stops on route identity mismatch,
+provider schema drift, unknown usage or cost, untrusted workspace evidence,
+patch replay failure, or an interrupted paid call; pending paid calls are never
+replayed. H2 does not implement or claim OpenAI Responses for DeepSeek. The
+offline contract is:
+
+```bash
+scripts/acceptance.sh --only "DeepSeek H2 official transport A/B contract"
+```
+
+Every route-bound attempt also carries an additive `eval_execution_identity`
+trace event owned by the controller. It binds the exact provider/model/route to
+temperature policy, reasoning policy, output limit, the frozen controller-visible
+tool-name catalog digest (`tool_names_v1`), controller version, and runtime
+versions. The OpenAI candidate's 8,192-token output limit is written into the
+isolated provider profile and checked against the Rust route contract, so this
+is an effective adapter control rather than a report-only claim. The Python
+runner checks that the event matches the request sent to Rust, while
+baseline/campaign verification rejects missing or malformed candidate identity
+evidence. This leaves the frozen H1 profile JSON bytes and fingerprint
+unchanged; legacy H1 artifacts without a candidate route remain verifiable.
+
+The v6 paired comparison is development evidence only; it selected
+`no_material_difference` and is not a holdout or frontier-grade result. See
+[`../../docs/forgebench-h2-transport-ab.md`](../../docs/forgebench-h2-transport-ab.md).
+If a paid arm is interrupted with unknown cost, its bounded recovery evidence is
+reported separately and no comparison is emitted; the verified v6 result is
+recorded in
+[`../../docs/forgebench-h2-paid-diagnostic.md`](../../docs/forgebench-h2-paid-diagnostic.md).
 
 The CLI prints a JSON backtest report:
 
@@ -236,7 +404,8 @@ The CLI prints a JSON backtest report:
 Use the same command shape for the Forge contract once `FORGE_EVAL_FORGE_AGENT_COMMAND` points to the Forge headless binary:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_ROOT=/absolute/path/to/forge \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli --cases eval_cases/small-edit-success --provider forge --model local-forge
 ```
 
@@ -246,7 +415,8 @@ When debugging a real agent run, add `--output` to keep the full trace artifact
 while stdout remains the compact report:
 
 ```bash
-FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
+FORGE_ROOT=/absolute/path/to/forge \
+FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet" \
   uv run python -m app.cli \
     --cases eval_cases/small-edit-success \
     --provider forge \
@@ -275,7 +445,7 @@ uv run python -m app.cli \
   --max-avg-model-rounds 25
 ```
 
-Other useful gates are `--max-total-cost-usd`, `--red-team-only`,
+Other useful gates are `--max-total-cost-usd`, `--require-known-cost`, `--red-team-only`,
 `--include-red-team`, `--max-red-team-failure-rate`, `--trials`,
 `--experiment-name`, `--prompt-mutation`, and `--mutations-only`.
 
@@ -320,6 +490,11 @@ file effects evidence scoring for changed-file and diff alignment,
 tool/shell evidence scoring for replayable tool and shell facts,
 usage unknown conflict scoring so unknown token usage keeps an explicit reason
 and does not carry invented token or cost values,
+development reports also expose `total_input_tokens`, `total_output_tokens`,
+`provider_usage_known_rate`, and `provider_cost_known_rate`; a provider such as
+Kimi K3 now carries a frozen official price snapshot in the trace and prices
+missing cache metadata conservatively as cache-miss input; providers without a
+frozen price profile remain explicitly unknown instead of appearing as free runs,
 provider usage value validation for negative or malformed token/cost facts,
 failure evidence scoring for category/reason alignment,
 continuity lessons scoring for formed lesson metadata,
@@ -398,6 +573,9 @@ For local release confidence:
      --max-scope-violation-rate 0.2 \
      --max-total-cost-usd 1.00
    ```
+
+   For paid provider runs, add `--require-known-cost` so incomplete billing
+   evidence fails closed instead of being treated as zero spend.
 
 3. Run prompt-mutation probes separately when you want user-style wording
    coverage without changing the source cases:
@@ -485,10 +663,10 @@ uv run python -m app.worker --once
 
 | Variable | Required For | Description |
 |---|---|---|
-| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Defaults to `cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet` when run from `apps/desktop/`. |
+| `FORGE_EVAL_FORGE_AGENT_COMMAND` | `provider=forge` | Command to launch the Forge headless agent. Use an absolute manifest path because the controller runs the command from an isolated temporary workspace. |
 | `FORGE_HEADLESS_PROVIDER` | `provider=forge` | LLM provider for the headless agent (e.g. `anthropic`, `openai`, `deepseek`). Defaults to `deepseek`. |
 | `FORGE_HEADLESS_MODEL` | `provider=forge` | Model ID for the headless agent. Defaults to `deepseek-v4-flash`. |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key for the chosen provider. Stored in `~/.forge/config.json` via Forge settings. |
+| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `DEEPSEEK_API_KEY` | `provider=forge` | API key inherited by the eval controller. Paid baseline/holdout commands are env-only and never read `~/.forge/config.json` or a system credential store. |
 | `FORGE_EVAL_RUNNER_PATH` | Optional | Override the default eval-runner directory. Defaults to the sibling `eval-runner` of `apps/desktop/`. |
 | `FORGE_EVAL_API_BIND_HOST` | Exposed API | Declared API bind host. Defaults to `127.0.0.1`; a non-loopback value requires `FORGE_EVAL_API_TOKEN`. |
 | `FORGE_EVAL_API_TOKEN` | Authenticated API | Bearer token for every product endpoint except `/health`. Required for non-loopback binds and Docker Compose. |
@@ -598,7 +776,8 @@ quality warnings while still participating in API and trace-contract checks.
 Set `FORGE_EVAL_FORGE_AGENT_COMMAND` to the Forge headless binary, then create a run with `provider: "forge"`:
 
 ```bash
-export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path ../desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
+export FORGE_ROOT=/absolute/path/to/forge
+export FORGE_EVAL_FORGE_AGENT_COMMAND="cargo run --manifest-path $FORGE_ROOT/apps/desktop/src-tauri/Cargo.toml --bin forge_eval_agent --quiet"
 
 curl -X POST http://localhost:8000/runs \
   -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" \

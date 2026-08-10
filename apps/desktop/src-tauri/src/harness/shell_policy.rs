@@ -606,7 +606,10 @@ fn looks_like_path(token: &str, workspace_root: &Path) -> bool {
 
 fn path_is_within_workspace(candidate: &Path, workspace_root: &Path) -> bool {
     let candidate = normalize_lexically(candidate);
-    if !candidate.starts_with(workspace_root) {
+    let workspace_root = normalize_lexically(workspace_root);
+    let candidate_compare = macos_alias_path(&candidate);
+    let workspace_compare = macos_alias_path(&workspace_root);
+    if !candidate_compare.starts_with(&workspace_compare) {
         return false;
     }
 
@@ -618,8 +621,19 @@ fn path_is_within_workspace(candidate: &Path, workspace_root: &Path) -> bool {
     }
     existing
         .canonicalize()
-        .map(|path| path.starts_with(workspace_root))
+        .map(|path| macos_alias_path(&path).starts_with(&workspace_compare))
         .unwrap_or(false)
+}
+
+#[cfg(target_os = "macos")]
+fn macos_alias_path(path: &Path) -> PathBuf {
+    path.strip_prefix("/private")
+        .map_or_else(|_| path.to_path_buf(), |rest| Path::new("/").join(rest))
+}
+
+#[cfg(not(target_os = "macos"))]
+fn macos_alias_path(path: &Path) -> PathBuf {
+    path.to_path_buf()
 }
 
 fn normalize_lexically(path: &Path) -> PathBuf {
@@ -732,7 +746,7 @@ fn is_localhost_curl_probe(tokens: &[String]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_shell_command_in_workspace, issue_shell_approval,
+        classify_shell_command_in_workspace, issue_shell_approval, path_is_within_workspace,
         validate_shell_command_failsafe_in_workspace, validate_shell_command_for_execution,
         ShellPolicyDecision, ShellPolicyReason, ShellRisk,
     };
@@ -870,6 +884,26 @@ mod tests {
                 "{command}"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn macos_private_var_alias_for_workspace_is_not_external() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let workspace_text = workspace.path().to_string_lossy();
+        let alias = workspace_text
+            .strip_prefix("/private")
+            .unwrap_or(&workspace_text);
+        assert!(path_is_within_workspace(Path::new(alias), workspace.path()));
+        let command = format!("cd {alias} && bun test tests/cases/example.test.ts 2>&1");
+
+        assert_eq!(
+            classify(&command, workspace.path()),
+            ShellPolicyDecision::RequireExplicitConfirmation {
+                risk: ShellRisk::Dangerous,
+                reason: ShellPolicyReason::ShellControl,
+            }
+        );
     }
 
     #[cfg(unix)]

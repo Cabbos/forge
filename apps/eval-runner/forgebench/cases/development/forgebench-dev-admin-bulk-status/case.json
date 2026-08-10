@@ -1,0 +1,26 @@
+{
+  "id": "forgebench-dev-admin-bulk-status",
+  "title": "Make bulk status transitions atomic",
+  "prompt": "Ensure an invalid status transition rejects the whole admin bulk action without mutating any input task.",
+  "fixture_id": "forgebench-monorepo",
+  "fixture_version": "1.0.0",
+  "fixture_path": "../../../forgebench-monorepo",
+  "scenario_path": "./scenario",
+  "dataset_split": "development",
+  "hidden_verifier_id": "dev-admin-bulk-status",
+  "full_verification_command": "python3 tools/release/verify.py",
+  "validation_commands": ["bun test tests/cases/admin-bulk-status.test.ts"],
+  "pass_to_pass_commands": ["bun test tests/baseline/config.test.ts"],
+  "fail_to_pass_commands": ["bun test tests/cases/admin-bulk-status.test.ts"],
+  "expected_files_changed": ["apps/admin-console/src/bulk-actions.ts", "packages/domain/src/task.ts"],
+  "forbidden_files_changed": ["package.json", "pyproject.toml", "tools/release/verify.py", ".forge/**"],
+  "required_scores": ["functional_correctness", "scope_ok"],
+  "max_duration_seconds": 900,
+  "max_model_rounds": 40,
+  "tags": ["forgebench", "development", "typescript", "multi-file"],
+  "metadata": {
+    "real_coding": true,
+    "holdout_unsealed": false,
+    "allowed_source_paths": ["apps/admin-console/src/bulk-actions.ts", "packages/domain/src/task.ts"]
+  }
+}

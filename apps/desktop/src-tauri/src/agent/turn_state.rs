@@ -1099,6 +1099,9 @@ pub(crate) fn is_errorish_tool_result(result: &str) -> bool {
         || result.starts_with("Tool execution blocked")
         || result.starts_with("Tool result missing:")
         || result.starts_with("Unknown MCP tool:")
+        || result.contains("已阻止")
+        || result.contains("被阻止")
+        || result.contains("权限被拒绝")
         || result.to_ascii_lowercase().contains("file not found")
 }
 

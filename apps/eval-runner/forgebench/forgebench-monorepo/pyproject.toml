@@ -1,0 +1,15 @@
+[project]
+name = "forgebench-monorepo"
+version = "1.0.0"
+requires-python = ">=3.11"
+dependencies = []
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "services/task-api",
+  "services/event-worker",
+]
+testpaths = [
+  "tests/baseline",
+  "tests/integration",
+]

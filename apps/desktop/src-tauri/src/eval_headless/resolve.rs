@@ -1,6 +1,24 @@
+use crate::adapters::provider_registry::{
+    find_loaded_provider_profile, LoadedProviderProfile, ProviderTransport,
+};
 use crate::agent::provider_capabilities::{default_model, normalize_provider};
+use crate::settings;
 
-use super::types::EvalHeadlessRequest;
+use super::types::{EvalHeadlessRequest, EvalProviderRoute, EvalProviderTransport};
+
+pub(crate) const DEEPSEEK_ANTHROPIC_BASE_URL: &str = "https://api.deepseek.com/anthropic";
+pub(crate) const DEEPSEEK_OPENAI_BASE_URL: &str = "https://api.deepseek.com";
+pub(crate) const DEEPSEEK_EVAL_MODEL: &str = "deepseek-v4-flash";
+pub(crate) const KIMI_OPENAI_BASE_URL: &str = "https://api.kimi.com/coding/v1";
+pub(crate) const KIMI_EVAL_MODEL: &str = "k3";
+
+pub(crate) fn expected_eval_model(provider: &str) -> Option<&'static str> {
+    match provider.trim() {
+        "deepseek" => Some(DEEPSEEK_EVAL_MODEL),
+        "custom_openai" => Some(KIMI_EVAL_MODEL),
+        _ => None,
+    }
+}
 
 pub(crate) fn resolve_prompt(request: &EvalHeadlessRequest) -> Result<String, String> {
     let prompt = request
@@ -15,6 +33,136 @@ pub(crate) fn resolve_prompt(request: &EvalHeadlessRequest) -> Result<String, St
         return Err("Forge eval request did not include a prompt.".to_string());
     }
     Ok(prompt)
+}
+
+/// Validate the caller-provided route against the closed eval-only contract.
+///
+/// The route is deliberately strict: accepting a new URL here would let a
+/// paid campaign silently drift to a different provider or endpoint.  New
+/// routes must be added as an explicit design change with new evidence.
+pub(crate) fn validate_expected_provider_route(
+    route: &EvalProviderRoute,
+    provider: &str,
+    model: &str,
+) -> Result<(), String> {
+    let expected_model = expected_eval_model(provider).ok_or_else(|| {
+        format!(
+            "eval provider route does not allow provider {}",
+            provider.trim()
+        )
+    })?;
+    if model.trim() != expected_model {
+        return Err(format!(
+            "eval provider route requires model {expected_model} for provider {}, got {model}",
+            provider.trim()
+        ));
+    }
+
+    let expected_base_url = match (provider.trim(), route.transport) {
+        ("deepseek", EvalProviderTransport::AnthropicMessages) => DEEPSEEK_ANTHROPIC_BASE_URL,
+        ("deepseek", EvalProviderTransport::OpenAiChatCompletions) => DEEPSEEK_OPENAI_BASE_URL,
+        ("custom_openai", EvalProviderTransport::OpenAiChatCompletions) => KIMI_OPENAI_BASE_URL,
+        _ => {
+            return Err(format!(
+                "eval provider route transport {} is not approved for provider {}",
+                route.transport.as_str(),
+                provider.trim()
+            ));
+        }
+    };
+    if route.base_url != expected_base_url {
+        return Err(format!(
+            "eval provider route does not match official {} endpoint: {}",
+            route.transport.as_str(),
+            route.base_url
+        ));
+    }
+    Ok(())
+}
+
+/// Validate the effective profile loaded from the isolated eval HOME.
+///
+/// This keeps the typed request and the settings-derived adapter selection in
+/// lockstep.  The helper taking an explicit profile slice is kept small and
+/// deterministic so the route contract can be tested without touching the
+/// user's desktop settings.
+pub(crate) fn validate_configured_provider_route(
+    route: &EvalProviderRoute,
+    provider: &str,
+    model: &str,
+) -> Result<(), String> {
+    let profiles = settings::load_configured_provider_profiles();
+    validate_configured_provider_route_against(route, provider, model, &profiles)
+}
+
+fn validate_configured_provider_route_against(
+    route: &EvalProviderRoute,
+    provider: &str,
+    model: &str,
+    profiles: &[LoadedProviderProfile],
+) -> Result<(), String> {
+    let profile = find_loaded_provider_profile(profiles, provider).ok_or_else(|| {
+        format!("eval provider route could not load configured provider profile {provider}")
+    })?;
+    if profile.id != provider.trim() {
+        return Err(format!(
+            "eval provider route resolved unexpected provider profile {}, expected {}",
+            profile.id,
+            provider.trim()
+        ));
+    }
+
+    let expected_transport = match route.transport {
+        EvalProviderTransport::AnthropicMessages => ProviderTransport::AnthropicMessages,
+        EvalProviderTransport::OpenAiChatCompletions => ProviderTransport::OpenAiChatCompletions,
+    };
+    if profile.transport != expected_transport {
+        return Err(format!(
+            "eval provider route transport mismatch: expected {}, configured {}",
+            route.transport.as_str(),
+            provider_transport_name(profile.transport)
+        ));
+    }
+
+    let expected_base_url = route.base_url.as_str();
+    let configured_base_url = match profile.default_base_url.as_deref() {
+        Some(value) => value,
+        None if profile.id == "deepseek"
+            && profile.transport == ProviderTransport::AnthropicMessages =>
+        {
+            DEEPSEEK_ANTHROPIC_BASE_URL
+        }
+        None => {
+            return Err(format!(
+                "eval provider route configured profile {} has no base URL",
+                profile.id
+            ));
+        }
+    };
+    if configured_base_url != expected_base_url {
+        return Err(format!(
+            "eval provider route base URL mismatch: expected {expected_base_url}, configured {configured_base_url}"
+        ));
+    }
+    if profile.default_model != model {
+        return Err(format!(
+            "eval provider route model mismatch: expected {model}, configured {}",
+            profile.default_model
+        ));
+    }
+    Ok(())
+}
+
+fn provider_transport_name(transport: ProviderTransport) -> &'static str {
+    match transport {
+        ProviderTransport::AnthropicMessages => "anthropic_messages",
+        ProviderTransport::OpenAiChatCompletions => "openai_chat_completions",
+        ProviderTransport::OpenAiResponses => "openai_responses",
+        ProviderTransport::NativeGemini => "native_gemini",
+        ProviderTransport::BedrockConverse => "bedrock_converse",
+        ProviderTransport::CustomOpenAiCompatible => "custom_openai_compatible",
+        ProviderTransport::CustomAnthropicCompatible => "custom_anthropic_compatible",
+    }
 }
 
 pub(crate) fn resolve_agent_provider(display_provider: Option<&str>) -> String {
@@ -115,4 +263,217 @@ pub(crate) fn resolve_profile_defaults(
         .default_model
         .unwrap_or_else(|| default_model.to_string());
     (provider, model)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::adapters::provider_registry::{
+        load_provider_profiles, EnvVarList, ProviderProfileConfig,
+    };
+    fn route(transport: &str, base_url: &str) -> EvalProviderRoute {
+        serde_json::from_value(serde_json::json!({
+            "transport": transport,
+            "base_url": base_url,
+        }))
+        .expect("route should deserialize")
+    }
+
+    fn configured_deepseek(transport: &str, base_url: &str) -> Vec<LoadedProviderProfile> {
+        load_provider_profiles(&[ProviderProfileConfig {
+            id: "deepseek".to_string(),
+            label: Some("DeepSeek eval".to_string()),
+            base_url: Some(base_url.to_string()),
+            api_key_env: Some(EnvVarList::One("DEEPSEEK_API_KEY".to_string())),
+            base_url_env: None,
+            default_model: Some(DEEPSEEK_EVAL_MODEL.to_string()),
+            transport: Some(transport.to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec![],
+        }])
+        .expect("configured profile")
+    }
+
+    fn configured_kimi(base_url: &str) -> Vec<LoadedProviderProfile> {
+        load_provider_profiles(&[ProviderProfileConfig {
+            id: "custom_openai".to_string(),
+            label: Some("Kimi eval".to_string()),
+            base_url: Some(base_url.to_string()),
+            api_key_env: Some(EnvVarList::One("FORGE_CUSTOM_OPENAI_API_KEY".to_string())),
+            base_url_env: Some(EnvVarList::One("FORGE_CUSTOM_OPENAI_BASE_URL".to_string())),
+            default_model: Some("k3".to_string()),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec![],
+        }])
+        .expect("configured Kimi profile")
+    }
+
+    #[test]
+    fn official_eval_routes_deserialize_and_validate() {
+        let anthropic = route("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
+        validate_expected_provider_route(&anthropic, "deepseek", DEEPSEEK_EVAL_MODEL)
+            .expect("anthropic route");
+        let profiles = configured_deepseek("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
+        validate_configured_provider_route_against(
+            &anthropic,
+            "deepseek",
+            DEEPSEEK_EVAL_MODEL,
+            &profiles,
+        )
+        .expect("configured anthropic route");
+
+        let openai = route("openai_chat_completions", DEEPSEEK_OPENAI_BASE_URL);
+        validate_expected_provider_route(&openai, "deepseek", DEEPSEEK_EVAL_MODEL)
+            .expect("openai route");
+        let profiles = configured_deepseek("openai_chat_completions", DEEPSEEK_OPENAI_BASE_URL);
+        validate_configured_provider_route_against(
+            &openai,
+            "deepseek",
+            DEEPSEEK_EVAL_MODEL,
+            &profiles,
+        )
+        .expect("configured openai route");
+    }
+
+    #[test]
+    fn kimi_openai_eval_route_is_explicit_and_configured() {
+        let kimi = route("openai_chat_completions", KIMI_OPENAI_BASE_URL);
+        validate_expected_provider_route(&kimi, "custom_openai", KIMI_EVAL_MODEL)
+            .expect("Kimi route");
+        validate_configured_provider_route_against(
+            &kimi,
+            "custom_openai",
+            KIMI_EVAL_MODEL,
+            &configured_kimi(KIMI_OPENAI_BASE_URL),
+        )
+        .expect("configured Kimi route");
+    }
+
+    #[test]
+    fn invalid_eval_routes_fail_closed() {
+        let unsupported_transport =
+            serde_json::from_value::<EvalProviderRoute>(serde_json::json!({
+                "transport": "openai_responses",
+                "base_url": DEEPSEEK_OPENAI_BASE_URL,
+            }));
+        assert!(unsupported_transport.is_err());
+
+        for base_url in [
+            "http://api.deepseek.com",
+            "https://evil.example.test",
+            "https://api.deepseek.com/v1",
+        ] {
+            let openai = route("openai_chat_completions", base_url);
+            assert!(
+                validate_expected_provider_route(&openai, "deepseek", DEEPSEEK_EVAL_MODEL).is_err()
+            );
+        }
+
+        let openai = route("openai_chat_completions", DEEPSEEK_OPENAI_BASE_URL);
+        assert!(
+            validate_expected_provider_route(&openai, "anthropic", DEEPSEEK_EVAL_MODEL).is_err()
+        );
+        assert!(validate_expected_provider_route(&openai, "deepseek", "deepseek-chat").is_err());
+
+        let kimi = route("openai_chat_completions", KIMI_OPENAI_BASE_URL);
+        validate_expected_provider_route(&kimi, "custom_openai", KIMI_EVAL_MODEL)
+            .expect("approved Kimi route");
+        assert!(validate_expected_provider_route(&kimi, "custom_openai", "kimi-k2").is_err());
+        for base_url in ["https://api.kimi.com", "https://evil.example.test/v1"] {
+            let wrong_kimi = route("openai_chat_completions", base_url);
+            assert!(validate_expected_provider_route(
+                &wrong_kimi,
+                "custom_openai",
+                KIMI_EVAL_MODEL
+            )
+            .is_err());
+        }
+
+        let profiles = configured_deepseek("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
+        assert!(validate_configured_provider_route_against(
+            &openai,
+            "deepseek",
+            DEEPSEEK_EVAL_MODEL,
+            &profiles,
+        )
+        .is_err());
+
+        let missing_base_url = load_provider_profiles(&[ProviderProfileConfig {
+            id: "deepseek".to_string(),
+            label: Some("DeepSeek eval".to_string()),
+            base_url: None,
+            api_key_env: Some(EnvVarList::One("DEEPSEEK_API_KEY".to_string())),
+            base_url_env: None,
+            default_model: Some(DEEPSEEK_EVAL_MODEL.to_string()),
+            transport: Some("openai_chat_completions".to_string()),
+            supports_tools: Some(true),
+            supports_streaming: Some(true),
+            max_output_tokens_default: None,
+            aliases: vec![],
+        }])
+        .expect("configured profile without base URL");
+        assert!(validate_configured_provider_route_against(
+            &openai,
+            "deepseek",
+            DEEPSEEK_EVAL_MODEL,
+            &missing_base_url,
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn ordinary_desktop_deepseek_default_remains_anthropic() {
+        let profiles = load_provider_profiles(&[]).expect("built-in profiles");
+        let profile = find_loaded_provider_profile(&profiles, "deepseek").expect("deepseek");
+        assert_eq!(profile.transport, ProviderTransport::AnthropicMessages);
+        assert_eq!(
+            profile.default_base_url.as_deref(),
+            Some(DEEPSEEK_ANTHROPIC_BASE_URL)
+        );
+    }
+
+    #[test]
+    fn configured_provider_route_reads_the_isolated_settings_profile() {
+        let _guard = crate::eval_headless::tests::ENV_LOCK.blocking_lock();
+        let previous_home = std::env::var("HOME").ok();
+        let home = tempfile::tempdir().expect("home");
+        let forge_dir = home.path().join(".forge");
+        std::fs::create_dir_all(&forge_dir).expect("forge config directory");
+        std::fs::write(
+            forge_dir.join("config.json"),
+            serde_json::json!({
+                "providers": [{
+                    "id": "deepseek",
+                    "base_url": DEEPSEEK_OPENAI_BASE_URL,
+                    "api_key_env": "DEEPSEEK_API_KEY",
+                    "default_model": DEEPSEEK_EVAL_MODEL,
+                    "transport": "openai_chat_completions"
+                }]
+            })
+            .to_string(),
+        )
+        .expect("write isolated settings");
+        std::env::set_var("HOME", home.path());
+
+        let openai = route("openai_chat_completions", DEEPSEEK_OPENAI_BASE_URL);
+        validate_configured_provider_route(&openai, "deepseek", DEEPSEEK_EVAL_MODEL)
+            .expect("isolated candidate profile");
+
+        let wrong_route = route("anthropic_messages", DEEPSEEK_ANTHROPIC_BASE_URL);
+        assert!(
+            validate_configured_provider_route(&wrong_route, "deepseek", DEEPSEEK_EVAL_MODEL)
+                .is_err(),
+            "the typed route must not accept a mismatched isolated profile"
+        );
+
+        match previous_home {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+    }
 }

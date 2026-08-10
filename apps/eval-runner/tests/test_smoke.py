@@ -63,6 +63,44 @@ def test_golden_harness_check_passes_for_expected_success_cases(tmp_path: Path) 
     assert run_golden_harness_check(tasks_path).ok is True
 
 
+def test_golden_harness_check_passes_for_forgebench_development_cases() -> None:
+    from app.harness_checks import run_golden_harness_check
+
+    cases_path = Path(__file__).resolve().parents[1] / "forgebench" / "cases" / "development"
+
+    result = run_golden_harness_check(cases_path)
+
+    assert result.ok is True
+    assert result.modified_files == []
+
+
+def test_forgebench_development_mock_execution_is_trusted() -> None:
+    from app.cases import load_cases
+    from app.execution import ExecutionOptions, execute_evaluation
+    from app.models import EvalProvider
+
+    cases_path = Path(__file__).resolve().parents[1] / "forgebench" / "cases" / "development"
+    tasks = load_cases(cases_path)
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=tasks,
+        options=ExecutionOptions(
+            provider=EvalProvider.MOCK,
+            model="deterministic-agent-v1",
+            forge_command=None,
+            command_timeout_seconds=30,
+            setup_timeout_seconds=30,
+            validation_timeout_seconds=30,
+            require_red_team=False,
+        ),
+    )
+
+    assert execution.report.success_rate == 1.0
+    assert execution.report.scope_violation_rate == 0.0
+    assert execution.trust_result.trusted is True
+
+
 def test_queued_sqlite_forge_run_preserves_execution_identity(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

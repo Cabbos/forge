@@ -31,6 +31,11 @@ class EvalProvider(StrEnum):
     FORGE = "forge"
 
 
+class DatasetSplit(StrEnum):
+    DEVELOPMENT = "development"
+    HOLDOUT = "holdout"
+
+
 class TrustStatus(StrEnum):
     UNKNOWN = "unknown"
     TRUSTED = "trusted"
@@ -124,6 +129,12 @@ class EvaluationTask(EvalModel):
     title: str
     prompt: str
     fixture_path: str | None = None
+    fixture_id: str | None = None
+    fixture_version: str | None = None
+    scenario_path: str | None = None
+    dataset_split: DatasetSplit | None = None
+    hidden_verifier_id: str | None = None
+    full_verification_command: str | None = None
     context_files: list[str] = Field(default_factory=list)
     setup_commands: list[str] = Field(default_factory=list)
     validation_commands: list[str] = Field(default_factory=list)
@@ -328,6 +339,10 @@ class BacktestReport(EvalModel):
     avg_repair_attempts_used: float = 0.0
     avg_validation_attempts: float = 0.0
     total_cost_usd: float = 0.0
+    total_input_tokens: int | None = Field(default=None, ge=0)
+    total_output_tokens: int | None = Field(default=None, ge=0)
+    provider_usage_known_rate: float = Field(default=0.0, ge=0.0, le=1.0)
+    provider_cost_known_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     failure_categories: dict[str, int] = Field(default_factory=dict)
     score_summary: dict[str, float] = Field(default_factory=dict)
     score_coverage: dict[str, ScoreCoverage] = Field(default_factory=dict)

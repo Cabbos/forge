@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -15,23 +15,188 @@ pub const HEADLESS_DEFAULT_REPAIR_ATTEMPTS: usize = 1;
 pub const HEADLESS_MAX_REPAIR_ATTEMPTS: usize = 3;
 pub const HEADLESS_DEFAULT_TIMEOUT_SECS: u64 = 600;
 pub const HEADLESS_DEFAULT_MAX_MODEL_ROUNDS: usize = 80;
+pub const HEADLESS_DEFAULT_MAX_NO_PROGRESS_BATCHES: usize = 6;
+pub const HEADLESS_SEMANTIC_MAX_NO_PROGRESS_BATCHES: usize = 2;
 pub const HEADLESS_VALIDATION_TIMEOUT_SECS: u64 = 120;
 pub const HEADLESS_VALIDATION_OUTPUT_LIMIT: usize = 12_000;
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalHeadlessMode {
+    #[default]
+    Run,
+    CredentialPreflight,
+}
+
+/// The small, closed set of transports that an eval run may attest.
+///
+/// This is intentionally separate from the desktop provider registry.  The
+/// locked DeepSeek H1/H2 campaigns use the two official V4 Flash endpoints;
+/// ordinary development chains may additionally attest an explicitly approved
+/// OpenAI-compatible route such as Kimi coding `k3` without changing desktop
+/// defaults or user settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalProviderTransport {
+    AnthropicMessages,
+    #[serde(rename = "openai_chat_completions")]
+    OpenAiChatCompletions,
+}
+
+impl EvalProviderTransport {
+    pub(crate) const fn as_str(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic_messages",
+            Self::OpenAiChatCompletions => "openai_chat_completions",
+        }
+    }
+
+    pub(crate) const fn endpoint_family(self) -> &'static str {
+        match self {
+            Self::AnthropicMessages => "anthropic",
+            Self::OpenAiChatCompletions => "openai",
+        }
+    }
+
+    pub(crate) const fn max_output_tokens(self) -> u32 {
+        match self {
+            Self::AnthropicMessages => 384_000,
+            Self::OpenAiChatCompletions => 8_192,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+pub struct EvalProviderRoute {
+    pub transport: EvalProviderTransport,
+    pub base_url: String,
+}
+
+/// Eval-only write policy copied from the controller's task contract.
+///
+/// Ordinary desktop requests leave this unset.  When present, the headless
+/// runner rejects file confirmations outside the controller-owned allowlist
+/// and only auto-approves exact, controller-provided validation commands.
+/// The final workspace observer remains the authoritative evidence layer; this
+/// policy is an earlier safety boundary, not a replacement for post-run
+/// observation.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+pub struct EvalWritePolicy {
+    #[serde(default)]
+    pub allowed_files: Vec<String>,
+    #[serde(default)]
+    pub forbidden_files: Vec<String>,
+    #[serde(default)]
+    pub allowed_shell_commands: Vec<String>,
+}
+
+/// Controller-owned request dimensions that must be copied into every paid
+/// eval trace.  This is additive to the route identity and intentionally does
+/// not alter ordinary desktop requests.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct EvalExecutionIdentity {
+    pub temperature_policy: String,
+    #[serde(default)]
+    pub temperature: Option<f64>,
+    pub reasoning_effort: String,
+    pub max_output_tokens: u32,
+    pub tool_catalog_format: String,
+    pub tool_catalog_sha256: String,
+    pub controller_version: String,
+    pub runtime_versions: BTreeMap<String, String>,
+}
+
+impl EvalExecutionIdentity {
+    pub(crate) fn validate_for_transport(
+        &self,
+        transport: EvalProviderTransport,
+    ) -> Result<(), String> {
+        if !matches!(
+            self.temperature_policy.as_str(),
+            "explicit" | "omitted" | "provider_default"
+        ) {
+            return Err("execution_identity_temperature_policy_invalid".to_string());
+        }
+        if self.temperature_policy != "omitted" {
+            return Err("execution_identity_temperature_policy_invalid".to_string());
+        }
+        if self.temperature_policy == "explicit" && self.temperature.is_none() {
+            return Err("execution_identity_temperature_missing".to_string());
+        }
+        if self.temperature_policy != "explicit" && self.temperature.is_some() {
+            return Err("execution_identity_temperature_unexpected".to_string());
+        }
+        if self.reasoning_effort.trim().is_empty() {
+            return Err("execution_identity_reasoning_effort_missing".to_string());
+        }
+        if self.reasoning_effort != "provider_default" {
+            return Err("execution_identity_reasoning_effort_invalid".to_string());
+        }
+        if self.max_output_tokens != transport.max_output_tokens() {
+            return Err("execution_identity_output_limit_invalid".to_string());
+        }
+        if self.tool_catalog_format != "tool_names_v1"
+            || self.tool_catalog_sha256.len() != 64
+            || !self
+                .tool_catalog_sha256
+                .chars()
+                .all(|value| value.is_ascii_digit() || ('a'..='f').contains(&value))
+        {
+            return Err("execution_identity_tool_catalog_invalid".to_string());
+        }
+        if self.controller_version.trim().is_empty() || self.runtime_versions.is_empty() {
+            return Err("execution_identity_runtime_version_missing".to_string());
+        }
+        if self
+            .runtime_versions
+            .iter()
+            .any(|(key, value)| key.trim().is_empty() || value.trim().is_empty())
+        {
+            return Err("execution_identity_runtime_version_invalid".to_string());
+        }
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct EvalHeadlessRequest {
     #[serde(default)]
+    pub mode: EvalHeadlessMode,
+    #[serde(default)]
     pub task: Option<EvalHeadlessTask>,
+    /// Eval-only controller checks that run after the agent's visible checks.
+    /// They are never placed in the task prompt; a bounded repair can receive
+    /// only sanitized failure output before the controller reruns them.
+    #[serde(default)]
+    pub controller_verification_commands: Vec<String>,
     #[serde(default)]
     pub prompt: String,
     #[serde(default)]
     pub provider: Option<String>,
     #[serde(default)]
     pub model: Option<String>,
+    /// Optional eval-only expected provider route.  When present, Rust
+    /// validates it against the isolated provider settings before credential
+    /// resolution or session construction.  When absent, desktop defaults are
+    /// unchanged for backwards compatibility.
+    #[serde(default)]
+    pub provider_route: Option<EvalProviderRoute>,
+    /// Controller-owned execution controls for reproducible eval traces.
+    /// Ordinary desktop callers leave this unset.
+    #[serde(default)]
+    pub execution_identity: Option<EvalExecutionIdentity>,
+    /// Optional eval-only write boundary.  It is intentionally absent from
+    /// ordinary desktop requests so normal permission behavior is unchanged.
+    #[serde(default)]
+    pub write_policy: Option<EvalWritePolicy>,
     /// Optional profile id for future runtime profile selection.
     /// Not yet wired to agent session creation; stored for forward-compat.
     #[serde(default)]
     pub profile_id: Option<String>,
+    /// Explicitly allow an isolated headless run to fall back to the canonical
+    /// provider credential reference in the system credential store.
+    #[serde(default)]
+    pub use_provider_credential_store: bool,
     pub workspace_path: PathBuf,
     /// Optional eval-only root for internal runtime state such as registry.db.
     #[serde(default)]
@@ -57,6 +222,16 @@ pub struct EvalHeadlessTask {
     pub timeout_secs: Option<u64>,
     #[serde(default)]
     pub max_model_rounds: Option<usize>,
+    #[serde(default)]
+    pub stagnation_policy: EvalStagnationPolicy,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EvalStagnationPolicy {
+    #[default]
+    CurrentLoopGuardV1,
+    SemanticProgressV1,
 }
 
 #[derive(Debug, Clone)]

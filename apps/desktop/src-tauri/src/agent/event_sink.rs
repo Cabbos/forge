@@ -5,6 +5,13 @@ use crate::protocol::events::StreamEvent;
 /// [`NoopEventEmitter`] or [`CollectingEventEmitter`].
 pub trait EventEmitter: Send + Sync {
     fn emit(&self, event: StreamEvent);
+
+    /// Eval emitters may request an early stop after a controller-approved
+    /// validation command succeeds following a real file mutation.  Ordinary
+    /// desktop emitters keep the default false behavior.
+    fn should_stop_after_successful_validation(&self) -> bool {
+        false
+    }
 }
 
 /// Production emitter that delegates to `transcript::emit_stream_event`.

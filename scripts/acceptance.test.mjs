@@ -81,6 +81,60 @@ test("acceptance script dry-run lists the final product gates", () => {
       label: "desktop protocol sync",
       command: "npm --prefix apps/desktop run check:protocol",
     },
+    {
+      label: "eval runtime isolation and golden truth",
+      command:
+        "node --test scripts/eval-doctor-precheck.test.mjs && cd apps/eval-runner && uv run pytest tests/test_process_control.py tests/test_runner.py tests/test_workspace_observer.py tests/test_execution.py",
+    },
+    {
+      label: "ForgeBench canonical monorepo and frozen dataset",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_artifact_hashing.py tests/test_forgebench_fixture.py tests/test_forgebench_catalog.py tests/test_hidden_verifiers.py && uv run python -m app.cli forgebench verify-catalog",
+    },
+    {
+      label: "Forge-built monorepo provenance contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_provenance_models.py tests/test_provenance.py tests/test_campaign.py tests/test_campaign_verify.py",
+    },
+    {
+      label: "ForgeBench frozen holdout release gate",
+      command: "cd apps/eval-runner && uv run pytest tests/test_holdout_gate.py tests/test_holdout_cli.py",
+    },
+    {
+      label: "ForgeBench sealed holdout campaign runner",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_holdout_campaign.py tests/test_holdout_gate.py tests/test_holdout_cli.py",
+    },
+    {
+      label: "Forge frontier release aggregation contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_release_gate.py tests/test_holdout_diagnostics.py",
+    },
+    {
+      label: "DeepSeek H1 paid-baseline contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_provider_usage.py tests/test_baseline.py tests/test_baseline_cli.py && uv run pytest tests/test_runner.py -k credential_preflight",
+    },
+    {
+      label: "DeepSeek H2 official transport A/B contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::provider_conformance --lib && cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml adapters::openai_compatible --lib && cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_runner.py tests/test_execution_identity.py tests/test_baseline_comparison.py tests/test_provider_usage.py",
+    },
+    {
+      label: "development Kimi provider-chain contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cd apps/eval-runner && uv run pytest tests/test_provider_fallback.py tests/test_execution.py tests/test_execution_identity.py tests/test_cli.py -q",
+    },
+    {
+      label: "development Kimi/DeepSeek paired diagnostic contract",
+      command:
+        "cd apps/eval-runner && uv run pytest tests/test_provider_ab.py tests/test_provider_fallback.py tests/test_execution.py tests/test_cli.py -q",
+    },
+    {
+      label: "frontier harness contract evidence",
+      command:
+        'cd apps/eval-runner && uv run pytest tests/test_harness_profiles.py tests/test_harness_contracts.py tests/test_harness_telemetry.py tests/test_baseline_comparison.py tests/test_runner.py -k "h3_minimal or h3_planning or harness_contract or failure_taxonomy or harness_telemetry or compare or repair_overrun or minimal_policy or task_plan or task_execution or planning_policy"',
+    },
     { label: "eval runner test suite", command: "npm run test:eval" },
     {
       label: "eval quality suite",
@@ -446,6 +500,50 @@ test("acceptance script dry-run lists the final product gates", () => {
   );
 });
 
+test("Forge-built provenance documentation states the proof boundary", () => {
+  const provenancePath = join(root, "docs", "forgebench-provenance.md");
+  assert.equal(existsSync(provenancePath), true, "docs/forgebench-provenance.md should exist");
+
+  const provenance = readFileSync(provenancePath, "utf8");
+  for (const phrase of [
+    "FORGE-BUILD-MANIFEST.json",
+    "controller interventions",
+    "campaign verify",
+    "scoring track",
+    "integration track",
+    "paid DeepSeek",
+    "holdout success",
+  ]) {
+    assert.match(provenance, new RegExp(phrase), `provenance documentation should include: ${phrase}`);
+  }
+
+  for (const relativePath of ["README.md", "apps/eval-runner/README.md", "CHANGELOG.md"]) {
+    const content = readFileSync(join(root, relativePath), "utf8");
+    assert.match(content, /Forge-built monorepo provenance/, `${relativePath} should link the proof contract`);
+  }
+});
+
+test("DeepSeek H1 baseline documentation states the paid boundary", () => {
+  const baselinePath = join(root, "docs", "forgebench-h1-baseline.md");
+  assert.equal(existsSync(baselinePath), true, "docs/forgebench-h1-baseline.md should exist");
+
+  const baseline = readFileSync(baselinePath, "utf8");
+  for (const phrase of [
+    "0.02 CNY",
+    "interrupted_paid_attempt_unknown_cost",
+    "development only",
+    "baseline verify",
+    "no holdout",
+  ]) {
+    assert.match(baseline, new RegExp(phrase), `baseline documentation should include: ${phrase}`);
+  }
+
+  for (const relativePath of ["README.md", "apps/eval-runner/README.md", "CHANGELOG.md"]) {
+    const content = readFileSync(join(root, relativePath), "utf8");
+    assert.match(content, /DeepSeek H1 paid baseline/, `${relativePath} should link the H1 baseline`);
+  }
+});
+
 test("acceptance script exposes a machine-readable gate list", () => {
   assert.equal(existsSync(scriptPath), true, "scripts/acceptance.sh should exist");
 
@@ -649,6 +747,11 @@ test("acceptance script can dry-run gates by case-insensitive label substring", 
   });
 
   assert.deepEqual(parseDryRunEntries(output), [
+    {
+      label: "development Kimi provider-chain contract",
+      command:
+        "cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml eval_headless::resolve --lib && cd apps/eval-runner && uv run pytest tests/test_provider_fallback.py tests/test_execution.py tests/test_execution_identity.py tests/test_cli.py -q",
+    },
     {
       label: "provider usage known/unknown telemetry",
       command:

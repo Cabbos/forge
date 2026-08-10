@@ -1,0 +1,15 @@
+{
+  "name": "forgebench-monorepo",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "test:ts": "bun test tests/baseline/*.test.ts tests/contract/*.test.ts tests/integration/*.test.ts",
+    "test:py": "uv run pytest tests/baseline/test_*.py tests/integration/test_*.py -q",
+    "typecheck": "out=$(mktemp -d); trap 'rm -rf \"$out\"' EXIT; bun build apps/web-console/src/main.tsx apps/admin-console/src/main.tsx --outdir \"$out\" --external react --external react-dom/client",
+    "verify": "python3 tools/release/verify.py"
+  }
+}

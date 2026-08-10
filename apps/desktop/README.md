@@ -181,6 +181,22 @@ OPENROUTER_API_KEY=...
 
 默认 Provider 是 DeepSeek，默认模型是 `deepseek-v4-flash[1m]`。
 
+### DeepSeek H2 official transport A/B（eval-only）
+
+Forge 的 H2 harness 只在隔离的 headless eval 子进程中比较 DeepSeek V4
+Flash 的两条官方路由：Anthropic Messages
+(`https://api.deepseek.com/anthropic`) 和 OpenAI-compatible Chat Completions
+(`https://api.deepseek.com`)。controller 写入 child `HOME` 下的 secret-free
+临时 profile，Rust 以 typed provider/model/transport/base-url identity 做
+fail-closed 校验；这不是桌面设置覆盖，桌面默认 DeepSeek 仍走 Anthropic，
+共享 session builder 也不变。付费运行在路由身份不匹配、provider schema
+漂移、unknown usage/cost、不可信 workspace、patch replay 失败或中断调用
+时停止并且不重放 pending call。该实验不实现也不声称 DeepSeek OpenAI
+Responses 支持；H2 结果仅是 development split 的 transport/harness 证据，
+不是 holdout 或 frontier 成绩。route-bound attempt 还会把固定的
+Anthropic 384,000 / OpenAI Chat Completions 8,192 输出上限写进隔离 profile，
+由 Rust route contract 和 Python artifact verifier 双重校验。
+
 设置页的 Provider 行提供手动兼容性检测和手动模型目录刷新：只在用户点击后发起最小请求，检查 key、base URL、模型、streaming、工具 schema、`/models`、Anthropic-compatible `/v1/models`、Gemini `/v1beta/models` 或 Ollama `/api/tags` 列表，并显示对应 Provider 的错误或修复建议；启动时不会自动探测付费 API。
 
 ## 开发命令
@@ -207,6 +223,9 @@ node scripts/release-confidence-summary.mjs --markdown
 ```
 
 当前 acceptance smoke 先验证 gate matrix 契约，再覆盖 runtime journal/replay、策略与预算、权限确认、Gateway、恢复、eval 证据、隐藏记忆召回、调度、A2A 与桌面产品流程。对话验收覆盖结果优先主路径、单一实时进度、完成过程折叠、二级原始证据和未处理确认打断；工作面板验收覆盖 launcher-first、无默认选中、无外框嵌入式分屏、五类显式对象的融合去重 Tab、默认 40% 且任务级恢复的 34–62% split 宽度、窄窗口 overlay、light/dark 工作台主题、显式本机预览、文件、当前 Diff 审阅反馈、聚焦子任务、最近输出验证用任务级临时终端、键盘导航和对象不可用隔离；记忆与 continuity 只由 `memory recall and hidden context coverage status` 的后端测试验证，不再作为工作面板入口。`scripts/acceptance.sh --list-json`、`--ci-default`、`--only`、`--grep` 与 `--results-json` 仍由同一份 gate matrix 驱动。
+
+真实 Forge eval 不继承桌面 session 状态：doctor precheck 使用一次性 home，每次 attempt 使用同级 `workspace` 与 `runtime-state`，并把 `HOME`、`USERPROFILE`、registry、Continuity、日志、profile 和 snapshot 放在被观测工作区之外；`CARGO_HOME` / `RUSTUP_HOME` 仅保留已安装工具链解析。`eval runtime isolation and golden truth` gate 还要求真实 observer 文件变化与干净 fixture patch replay 同时成功。这是 H0 harness 证据，不是 20-case holdout 或 frontier KPI 已通过的声明。
+当 eval controller 提供显式 allowed/forbidden 文件 contract 时，headless permission emitter 会在自动确认前 fail-closed：越界写入、删除和 mutating shell confirmation 不会执行，并写入 typed `eval_write_policy_block` 证据。该策略只绑定 eval request；普通桌面触发仍使用原有权限门和共享 session builder。
 
 Eval-runner 现在也包含 prepared-turn evidence scoring，用来检查 prompt/context-source 质量；file effects evidence scoring 会在 ForgeRunEvidence file effects 存在时检查 changed-file 重复、trace/evidence 对齐，以及 file diff 的 path/change-type/diff 完整性；tool/shell evidence scoring 会检查 replay identity、工具/命令事实、exit-code 一致性、trace 对齐和 secret-like 输出泄漏；usage unknown conflict scoring 会检查未知 provider usage 保持 explicit unknown reason 且不携带伪造 token/cost 数字；provider usage value validation 会拒绝负数或畸形 token/cost facts；failure evidence scoring 会检查失败 category/reason 与 trace 对齐；continuity lessons scoring 会检查 formed lesson metadata；memory recall audit scoring 会检查 recall candidate 的 decision reason 和 injected token/budget evidence。
 
@@ -291,6 +310,7 @@ Forge 的可信度来自几个工程约束：
 - Playwright E2E 与 Rust 后端检查共同覆盖关键路径。
 - Gateway runtime、trigger run executor/failure/lease 证据、service facade、diagnostics doctor、session store 和 scheduler 的状态可以在 Settings/CLI 中观测。
 - 子任务、审阅队列、健康告警和后台调度通过工作面板与全局状态栏持续暴露。
+- Eval headless 支持 typed `credential_preflight`：只验证冻结 provider/model 的凭据可用性，不创建 agent session、不触发 provider 调用，也不返回密钥；显式 opt-in 时，隔离 HOME 仍可读取同一 provider 的系统凭据引用。
 - Level 3 runtime 用 append-only loop event journal、可重建 projection、durable human gate、policy/budget preflight、typed completion evidence、Completion Contract V2 eligibility facts、crash/replay regression coverage、gateway runner lease、runtime health snapshot、projected usage ledger、typed recovery state、`recover_loop_task` action family（mark-interrupted、read-only evidence export、orphan abandon、retry-safe waiting-task requeue、clear stale gateway input evidence、`forge_trigger clear-stale-session-input` operator command）、acceptance tier metadata、`forge_session export-eval` ForgeRunEvidence V2 export、release confidence summary、mocked restart runtime smoke、provider usage known/unknown telemetry、memory recall/archive coverage status、memory physical migration dry-run report、persisted A2A lineage、review-to-commit eligibility、gateway/local parity 与 degraded fallback smoke、gated headless ownership policy/coordinator dry run、test-only fake owner executor fixture、A2A child runtime events、parent child capsules、A2A review gate V2/recovery suggestions、A2A child evidence completeness scoring、memory recall quality scoring、memory recall audit scoring、context budget bucket scoring、schema identity scoring、permission decision evidence scoring、verification evidence quality scoring、gateway runtime safety scoring、runtime recovery quality scoring、completion eligibility evidence scoring、A2A child runtime file-ish tool facts、direct ToolExecutor file-ish `file_io` stream、bounded post-shell delta evidence 和真实 Rust `run_worktree_worker` harness 支撑长期 agent 工作；Memory Authority Map V2 已记录 wiki memory、memory fact、continuity experience、saved background、project archive、turn recall audit、future embedding index 的 owner/storage/scope/action/recall 边界，UnifiedMemoryRecord V2 已暴露 visibility/provenance/last-used/archive/forget-policy/recall-policy metadata，Unified Action API V2 已支持 archive/restore/forget/pin/unpin/mark_wrong_project/mark_low_value 与 memory-fact-only edit 的 typed evidence/error，Recall Planner 已在 `turn_prepared` 暴露 body-free candidate decisions、dedupe/filter reasons 和 injection budget，Context Budget Integration V2 已在 `turn_prepared.context_estimate` 暴露 visible input、hidden system、memory、files、project records、compacted transcript、connector context 和 reserved output buckets，`scripts/memory-migration-dry-run.mjs` 已提供 physical store migration dry-run、rollback plan 与 record id/archive-forget/recall/redaction invariants，但真实 physical store migration 仍未开始；Gateway runtime、diagnostics、CLI、dashboard、background loop summary 和 eval trace 会消费 backend projection 中的 usage/recovery 事实，并显式保留 local-default ownership、desktop runtime fallback 与 `forge service restart` degraded recovery command；eval-runner 会在 `ForgeRunEvidence` 存在时评分 confirmation/context/verification/scope/recovery/usage consistency、A2A child evidence completeness、memory recall quality、memory recall audit、context budget buckets、schema identity、permission decision evidence、verification evidence quality、gateway runtime safety、runtime recovery quality 和 completion eligibility consistency，并兼容 explicit V1 evidence、把缺失的 V2 completion eligibility 保持为 `unknown`；Completion Contract V2 当前会把 changed-file scope、permission、eval authority 缺口标记为 unknown；billing-grade usage accounting、usage/pricing unknown 时的精确 cost、shell-internal tracing、syscall/file-descriptor tracing、full non-git workspace enumeration、default gateway autonomous resume、real headless `AgentSession` execution、model/tool/file side effects、Tauri/WebDriver force-quit harness、automatic creation of parent-session context、fuzzy parent/root-task selection 和 auto commit/merge/push 仍未声明覆盖。
 
 当前正在继续加强的方向：

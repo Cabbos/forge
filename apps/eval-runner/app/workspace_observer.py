@@ -17,12 +17,20 @@ class FileState:
 
 WorkspaceSnapshot = dict[str, FileState]
 
+# These are controller-owned disposable paths, never product source. Keep the
+# allowlist narrow and explicit: Forge's Bun/uv verification paths can create
+# caches or a project environment inside a fixture despite isolated cache
+# environment variables being propagated to child processes.
+EPHEMERAL_CACHE_DIRS = frozenset({".bun-cache", ".uv-cache", ".venv"})
+
 
 def snapshot_workspace(workspace: Path) -> WorkspaceSnapshot:
     snapshot: WorkspaceSnapshot = {}
     for path in sorted(workspace.rglob("*")):
         relative = path.relative_to(workspace)
         if ".git" in relative.parts:
+            continue
+        if any(part in EPHEMERAL_CACHE_DIRS for part in relative.parts):
             continue
 
         key = relative.as_posix()

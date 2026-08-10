@@ -1,11 +1,15 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from app.cases import load_cases
 from app.execution import ExecutionOptions, execute_evaluation
-from app.models import EvalProvider, TrustStatus
+from app.harness_contracts import HarnessPolicyV1
+from app.models import EvalProvider, TrustStatus, WorkspaceCheck
+from app.provider_fallback import named_provider_chain
+from app.runner import DeterministicMockRunner
 
 
 def write_executable_case(
@@ -65,6 +69,198 @@ def test_execute_evaluation_returns_trusted_for_complete_mock_evidence(
 
     assert execution.trust_result.status == TrustStatus.TRUSTED
     assert execution.trust_result.trusted is True
+
+
+def test_execute_tasks_wires_named_provider_chain_into_development_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    chain = named_provider_chain("kimi-k3-deepseek")
+    seen: dict[str, object] = {}
+
+    def build_chain(received_chain, **kwargs):
+        seen["chain"] = received_chain
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_fallback_runner", build_chain)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=chain,
+        max_model_rounds=12,
+        harness_policy=HarnessPolicyV1(context_policy="target_files_v1"),
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["chain"] == chain
+    assert seen["command"] == ["forge-headless"]
+    assert seen["max_model_rounds"] == 12
+    assert seen["harness_policy"].context_policy == "target_files_v1"
+
+
+def test_execute_tasks_applies_conservative_stop_line_to_provider_chain_by_default(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    chain = named_provider_chain("kimi-k3-deepseek")
+    seen: dict[str, object] = {}
+
+    def build_chain(received_chain, **kwargs):
+        seen["chain"] = received_chain
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_fallback_runner", build_chain)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=chain,
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["max_model_rounds"] == 32
+
+
+def test_execute_evaluation_stops_provider_chain_at_default_total_cost_boundary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    first = load_cases(cases_path)[0].model_copy(update={"metadata": {"mock": {"cost_usd": 10.0}}})
+    second = first.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    monkeypatch.setattr(
+        "app.execution.build_provider_fallback_runner",
+        lambda *_args, **_kwargs: DeterministicMockRunner(),
+    )
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model="k3",
+        forge_command=["forge-headless"],
+        provider_chain=named_provider_chain("kimi-k3-deepseek"),
+    )
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=options,
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.total_cost_usd == 10.0
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
+def test_execute_tasks_wires_single_provider_route_into_development_runner(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.execution import execute_tasks
+
+    cases_path = write_executable_case(tmp_path)
+    tasks = load_cases(cases_path)
+    route = named_provider_chain("kimi-k3-deepseek").primary
+    seen: dict[str, object] = {}
+
+    def build_route(received_route, **kwargs):
+        seen["route"] = received_route
+        seen.update(kwargs)
+        return DeterministicMockRunner()
+
+    monkeypatch.setattr("app.execution.build_provider_route_runner", build_route)
+    options = replace(
+        mock_options(),
+        provider=EvalProvider.FORGE,
+        model=route.model,
+        forge_command=["forge-headless"],
+        provider_route=route,
+        max_model_rounds=12,
+    )
+
+    traces = execute_tasks(tasks, options, lambda: False)
+
+    assert len(traces) == 1
+    assert seen["route"] == route
+    assert seen["command"] == ["forge-headless"]
+    assert seen["max_model_rounds"] == 12
+
+
+def test_execute_evaluation_stops_before_next_call_at_cost_boundary(
+    tmp_path: Path,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    task = load_cases(cases_path)[0]
+    first = task.model_copy(update={"metadata": {"mock": {"cost_usd": 1.0}}})
+    second = task.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=replace(mock_options(), max_total_cost_usd=1.0),
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.total_cost_usd == 1.0
+    assert execution.trust_result.status == TrustStatus.UNKNOWN
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
+def test_execute_evaluation_stops_after_unknown_cost_when_required(
+    tmp_path: Path,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    task = load_cases(cases_path)[0]
+    first = task
+    second = task.model_copy(update={"id": "case-2", "metadata": {"mock": {"cost_usd": 0.1}}})
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=[first, second],
+        options=replace(mock_options(), require_known_cost=True),
+    )
+
+    assert [trace.task_id for trace in execution.traces] == ["case-1"]
+    assert execution.report.provider_cost_known_rate == 0.0
+    assert execution.trust_result.status == TrustStatus.UNKNOWN
+    assert "execution_stopped_at_cost_boundary" in execution.trust_result.blockers
+
+
+def test_execute_evaluation_is_untrusted_when_observer_replay_self_check_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cases_path = write_executable_case(tmp_path)
+    monkeypatch.setattr(
+        "app.harness_checks.run_observer_patch_replay_self_check",
+        lambda: WorkspaceCheck(ok=False, message="replay mismatch"),
+    )
+
+    execution = execute_evaluation(
+        cases_path=cases_path,
+        tasks=load_cases(cases_path),
+        options=mock_options(),
+    )
+
+    assert execution.trust_result.status == TrustStatus.UNTRUSTED
+    assert "harness_untrusted" in execution.trust_result.blockers
 
 
 def test_execute_evaluation_is_unknown_when_workspace_evidence_is_missing(

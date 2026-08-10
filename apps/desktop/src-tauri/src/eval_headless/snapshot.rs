@@ -68,7 +68,14 @@ pub(crate) fn normalize_relative_path(root: &Path, path: &Path) -> io::Result<St
 pub(crate) fn is_ignored_snapshot_dir(name: &str) -> bool {
     matches!(
         name,
-        ".git" | ".forge" | "node_modules" | "target" | ".venv" | "__pycache__" | ".pytest_cache"
+        ".git"
+            | ".forge"
+            | ".bun-cache"
+            | "node_modules"
+            | "target"
+            | ".venv"
+            | "__pycache__"
+            | ".pytest_cache"
     )
 }
 
@@ -77,7 +84,10 @@ pub(crate) fn is_ignored_snapshot_file(name: &str) -> bool {
 }
 
 pub(crate) fn is_ignored_snapshot_path(path: &str) -> bool {
-    path == ".forge" || path.starts_with(".forge/")
+    path == ".forge"
+        || path.starts_with(".forge/")
+        || path == ".bun-cache"
+        || path.starts_with(".bun-cache/")
 }
 
 pub(crate) fn diff_workspace_snapshots(

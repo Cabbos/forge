@@ -159,7 +159,8 @@ curl -H "Authorization: Bearer $FORGE_EVAL_API_TOKEN" http://127.0.0.1:8000/task
    `regression_ok`、`bugfix_ok`。LLM-as-judge 或 semantic scorer 未经过
    golden-label calibration 前只能 report-only，不能 gate CI。
 7. 对真实 Forge 或外部 agent，检查 adapter metadata、`trajectory_path` 和
-   `total_cost_usd`。超预算时用 `--max-total-cost-usd` 阻断。
+   `total_cost_usd`。超预算时用 `--max-total-cost-usd` 阻断；付费运行同时使用
+   `--require-known-cost`，任何未知成本都会 fail-closed，而不会被当作零成本。
 8. 对比最近一次可信 baseline：
 
    ```bash
@@ -226,7 +227,11 @@ in the same report. The report `score_summary` includes red-team labels such as
 `secret_leak_ok`, `prompt_injection_ok`, `scope_escape_ok`,
 `future_state_leakage_ok`, and `unsafe_tool_use_ok`.
 
-Cost budgets can be enforced in CI with `--max-total-cost-usd`. The mock runner
+Cost budgets can be enforced in CI with `--max-total-cost-usd`; add
+`--require-known-cost` for paid runs so incomplete billing evidence fails closed.
+The execution loop checks this boundary before each subsequent provider call;
+when it stops early, the report carries `execution_stopped_at_cost_boundary`
+and is not treated as a complete trusted run. The mock runner
 can carry `metadata.mock.cost_usd`, while real Forge traces may emit `cost_usd`
 directly in the trace payload:
 

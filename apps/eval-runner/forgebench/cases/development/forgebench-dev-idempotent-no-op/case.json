@@ -1,0 +1,26 @@
+{
+  "id": "forgebench-dev-idempotent-no-op",
+  "title": "Confirm duplicate event idempotency",
+  "prompt": "Ensure duplicate task.updated events are acknowledged without applying their side effects twice. If the current implementation already proves this, make no source changes and report the verification.",
+  "fixture_id": "forgebench-monorepo",
+  "fixture_version": "1.0.0",
+  "fixture_path": "../../../forgebench-monorepo",
+  "dataset_split": "development",
+  "hidden_verifier_id": "dev-idempotent-no-op",
+  "full_verification_command": "python3 tools/release/verify.py",
+  "validation_commands": ["uv run --no-project --with pytest==9.0.3 pytest -p no:cacheprovider tests/baseline/test_worker.py -q"],
+  "pass_to_pass_commands": ["bun test tests/baseline/config.test.ts"],
+  "fail_to_pass_commands": ["uv run --no-project --with pytest==9.0.3 pytest -p no:cacheprovider tests/baseline/test_worker.py -q"],
+  "expected_files_changed": [],
+  "forbidden_files_changed": ["package.json", "pyproject.toml", "tools/release/verify.py", ".forge/**"],
+  "required_scores": ["functional_correctness", "scope_ok"],
+  "max_duration_seconds": 900,
+  "max_model_rounds": 40,
+  "tags": ["forgebench", "development", "python", "no-op"],
+  "metadata": {
+    "real_coding": true,
+    "holdout_unsealed": false,
+    "expected_no_change": true,
+    "allowed_source_paths": []
+  }
+}
