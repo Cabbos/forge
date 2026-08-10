@@ -4,6 +4,7 @@ import os
 import shlex
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -59,7 +60,29 @@ def run_bounded_process(
         env=dict(env) if env is not None else None,
     )
     deadline = started + timeout_seconds
-    pending_input = input_text
+    if input_text is not None:
+        # Feed stdin independently of the bounded output poll.  Passing input
+        # to a short-timeout ``communicate`` call can leave a long-running
+        # child waiting for EOF after the first timeout, because the next call
+        # with ``input=None`` no longer owns the pending write.  A dedicated
+        # writer guarantees that the pipe is closed once the full payload is
+        # delivered while the parent remains responsive to timeout/cancel.
+        stdin_stream = process.stdin
+        # Keep the stream owned by the writer.  ``communicate`` flushes
+        # ``Popen.stdin`` when it completes; leaving a concurrently closed
+        # stream there would turn a successful child run into ValueError.
+        process.stdin = None
+
+        def write_input() -> None:
+            try:
+                if stdin_stream is not None:
+                    stdin_stream.write(input_text)
+                    stdin_stream.close()
+            except (BrokenPipeError, OSError, ValueError):
+                # The child may exit before consuming the request.
+                pass
+
+        threading.Thread(target=write_input, name="forge-eval-stdin", daemon=True).start()
 
     while True:
         if cancel_requested():
@@ -87,7 +110,7 @@ def run_bounded_process(
 
         try:
             stdout, stderr = process.communicate(
-                input=pending_input,
+                input=None,
                 timeout=min(0.05, remaining),
             )
             return _result(
@@ -99,7 +122,7 @@ def run_bounded_process(
                 ProcessOutcome.COMPLETED,
             )
         except subprocess.TimeoutExpired:
-            pending_input = None
+            continue
 
 
 def _terminate_process_group(process: subprocess.Popen[str]) -> tuple[str, str]:

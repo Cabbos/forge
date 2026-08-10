@@ -50,6 +50,27 @@ def test_bounded_process_returns_completed_output(tmp_path: Path) -> None:
     assert result.stdout == "ok\n"
 
 
+def test_bounded_process_closes_stdin_before_polling_long_running_child(tmp_path: Path) -> None:
+    result = run_bounded_process(
+        [
+            sys.executable,
+            "-u",
+            "-c",
+            (
+                "import sys,time; time.sleep(0.2); payload=sys.stdin.read(); "
+                "print(len(payload), flush=True)"
+            ),
+        ],
+        cwd=tmp_path,
+        timeout_seconds=2.0,
+        input_text="x" * 20_000,
+    )
+
+    assert result.outcome == ProcessOutcome.COMPLETED
+    assert result.returncode == 0
+    assert result.stdout == "20000\n"
+
+
 def test_bounded_process_timeout_preserves_partial_output(tmp_path: Path) -> None:
     result = run_bounded_process(
         [sys.executable, "-u", "-c", "import time; print('started'); time.sleep(10)"],
