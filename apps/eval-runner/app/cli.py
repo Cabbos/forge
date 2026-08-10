@@ -10,6 +10,7 @@ from app.config import get_settings
 from app.execution import EvaluationExecution, ExecutionOptions, execute_evaluation
 from app.experiments import experiment_artifact_metadata
 from app.forgebench import main as forgebench_main
+from app.harness_contracts import HarnessPolicyV1
 from app.holdout_cli import holdout_main
 from app.models import AgentTrace, BacktestReport, EvalProvider, EvaluationTask, TrustStatus
 from app.provider_ab import provider_ab_main, provider_ab_verify_main
@@ -34,6 +35,7 @@ def run_backtest_with_traces(
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
     execution = run_backtest_execution(
         cases_path,
@@ -49,6 +51,7 @@ def run_backtest_with_traces(
         max_total_cost_usd=max_total_cost_usd,
         require_known_cost=require_known_cost,
         max_model_rounds=max_model_rounds,
+        harness_policy=harness_policy,
     )
     return execution.report, execution.traces
 
@@ -69,6 +72,7 @@ def run_backtest_execution(
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> EvaluationExecution:
     tasks = load_backtest_tasks(
         cases_path,
@@ -94,6 +98,7 @@ def run_backtest_execution(
             max_total_cost_usd=max_total_cost_usd,
             require_known_cost=require_known_cost,
             max_model_rounds=max_model_rounds,
+            harness_policy=harness_policy,
         ),
     )
 
@@ -113,6 +118,7 @@ def run_backtest(
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -128,6 +134,7 @@ def run_backtest(
         max_total_cost_usd=max_total_cost_usd,
         require_known_cost=require_known_cost,
         max_model_rounds=max_model_rounds,
+        harness_policy=harness_policy,
     )
     return report
 
@@ -296,6 +303,12 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional controller cap forwarded to each Forge task (development diagnostics).",
     )
+    parser.add_argument(
+        "--harness-context-policy",
+        choices=["current_product_v1", "task_local_v1", "target_files_v1"],
+        default=None,
+        help="Optional development context strategy; target_files_v1 prefills allowed files.",
+    )
     parser.add_argument("--max-total-cost-usd", type=float, default=None)
     parser.add_argument(
         "--require-known-cost",
@@ -321,6 +334,12 @@ def main(argv: list[str] | None = None) -> int:
         parser.error("--trials must be at least 1")
     if args.max_model_rounds is not None and args.max_model_rounds < 1:
         parser.error("--max-model-rounds must be at least 1")
+
+    harness_policy = (
+        HarnessPolicyV1(context_policy=args.harness_context_policy)
+        if args.harness_context_policy is not None
+        else None
+    )
 
     provider_chain = named_provider_chain(args.provider_chain) if args.provider_chain else None
     if provider_chain is not None and args.provider != "forge":
@@ -349,6 +368,7 @@ def main(argv: list[str] | None = None) -> int:
             max_total_cost_usd=args.max_total_cost_usd,
             require_known_cost=args.require_known_cost,
             max_model_rounds=args.max_model_rounds,
+            harness_policy=harness_policy,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)

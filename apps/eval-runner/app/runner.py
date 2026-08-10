@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shlex
 import shutil
 import sqlite3
@@ -737,7 +738,17 @@ class ForgeAgentRunner:
             elif self.harness_policy.prompt_mode in {"minimal_v1", "planning_v1"}:
                 task_dict["max_repair_attempts"] = self.harness_policy.repair_attempt_limit
             task_dict["stagnation_policy"] = self.harness_policy.stagnation_policy
-            prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+            context_candidates = (
+                _target_context_candidates(task, workspace)
+                if self.harness_policy.context_policy == "target_files_v1"
+                else task.context_files
+            )
+            prepared_context_files = self.harness_policy.selected_context_files(context_candidates)
+            context_snapshot = _read_target_context_snapshot(
+                workspace,
+                prepared_context_files,
+                enabled=self.harness_policy.context_policy == "target_files_v1",
+            )
             task_dict["context_files"] = prepared_context_files
             context_manifest = build_context_manifest(
                 prepared_context_files,
@@ -760,6 +771,7 @@ class ForgeAgentRunner:
                     task,
                     prepared_context_files,
                     task_contract,
+                    context_snapshot=context_snapshot,
                 ),
                 "harness_policy": self.harness_policy.model_dump(mode="json"),
                 "harness_policy_fingerprint": self.harness_policy.fingerprint(),
@@ -1061,7 +1073,12 @@ class ForgeAgentRunner:
                 duration_ms=last_validation.duration_ms,
             )
         changed_files = workspace_observation.changed_files
-        prepared_context_files = self.harness_policy.selected_context_files(task.context_files)
+        context_candidates = (
+            _target_context_candidates(task, workspace)
+            if self.harness_policy.context_policy == "target_files_v1"
+            else task.context_files
+        )
+        prepared_context_files = self.harness_policy.selected_context_files(context_candidates)
         task_contract = build_task_execution_contract(
             expected_files_changed=task.expected_files_changed,
             forbidden_files_changed=task.forbidden_files_changed,
@@ -1395,6 +1412,7 @@ def create_runner(
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> EvalRunner:
     try:
         normalized_provider = EvalProvider(provider)
@@ -1411,6 +1429,7 @@ def create_runner(
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
             max_model_rounds=max_model_rounds,
+            harness_policy=harness_policy,
         )
     raise ValueError(f"Unsupported eval provider: {provider}")
 
@@ -1974,6 +1993,8 @@ def _render_eval_prompt(
     task: EvaluationTask,
     context_files: Sequence[str],
     task_contract: Any | None = None,
+    *,
+    context_snapshot: Mapping[str, str] | None = None,
 ) -> str:
     """Add controller-owned scope and convergence facts to the agent prompt.
 
@@ -1983,7 +2004,11 @@ def _render_eval_prompt(
     edit, rather than discovering an out-of-scope patch only after the run.
     """
 
-    prompt = policy.render_prompt(task.prompt, context_files)
+    prompt = policy.render_prompt(
+        task.prompt,
+        context_files,
+        context_snapshot=context_snapshot,
+    )
     if task_contract is None:
         task_contract = build_task_execution_contract(
             expected_files_changed=task.expected_files_changed,
@@ -2033,3 +2058,74 @@ def _render_eval_prompt(
         "- A no_change task must not contain an edit step."
     )
     return prompt + scope_contract + planning_contract
+
+
+def _read_target_context_snapshot(
+    workspace: Path,
+    paths: Sequence[str],
+    *,
+    enabled: bool,
+) -> dict[str, str]:
+    """Read only controller-selected in-workspace files for target context."""
+
+    if not enabled:
+        return {}
+    workspace_root = workspace.resolve()
+    snapshot: dict[str, str] = {}
+    for raw_path in paths:
+        relative = Path(raw_path)
+        if relative.is_absolute() or ".." in relative.parts:
+            continue
+        candidate = (workspace_root / relative).resolve()
+        if candidate != workspace_root and workspace_root not in candidate.parents:
+            continue
+        try:
+            with candidate.open("r", encoding="utf-8", errors="replace") as handle:
+                snapshot[raw_path] = handle.read(4_001)
+        except (OSError, UnicodeError):
+            continue
+    return snapshot
+
+
+_VALIDATION_CONTEXT_PATH = re.compile(
+    r"(?<![A-Za-z0-9_./-])([A-Za-z0-9_.-]+(?:/[A-Za-z0-9_.-]+)*\.(?:py|ts|tsx|js|jsx|json|md))"
+)
+
+
+def _target_context_candidates(task: EvaluationTask, workspace: Path) -> list[str]:
+    """Select allowed targets plus visible validation files for target context."""
+
+    candidates: list[str] = []
+    forbidden = task.forbidden_files_changed
+
+    def add(path: str, *, require_file: bool) -> None:
+        normalized = path.strip()
+        relative = Path(normalized)
+        if (
+            not normalized
+            or relative.is_absolute()
+            or ".." in relative.parts
+            or any(fnmatchcase(normalized, pattern) for pattern in forbidden)
+            or normalized in candidates
+        ):
+            return
+        candidate = (workspace.resolve() / relative).resolve()
+        root = workspace.resolve()
+        if candidate != root and root not in candidate.parents:
+            return
+        if require_file and not candidate.is_file():
+            return
+        candidates.append(normalized)
+
+    for path in [*task.context_files, *task.expected_files_changed]:
+        add(path, require_file=False)
+    commands = [
+        *task.validation_commands,
+        *task.pass_to_pass_commands,
+        *task.fail_to_pass_commands,
+        task.verification_command or "",
+    ]
+    for command in commands:
+        for path in _VALIDATION_CONTEXT_PATH.findall(command):
+            add(path, require_file=True)
+    return candidates

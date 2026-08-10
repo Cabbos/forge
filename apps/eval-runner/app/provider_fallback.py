@@ -2,6 +2,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.execution_identity import default_execution_identity
+from app.harness_contracts import HarnessPolicyV1
 from app.models import AgentTrace, EvalProvider, EvaluationTask, FailureCategory
 from app.process_control import CancelRequested, never_cancelled
 from app.runner import (
@@ -77,6 +78,7 @@ def build_provider_fallback_runner(
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> "ProviderFallbackRunner":
     return ProviderFallbackRunner(
         build_provider_route_runner(
@@ -86,6 +88,7 @@ def build_provider_fallback_runner(
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
             max_model_rounds=max_model_rounds,
+            harness_policy=harness_policy,
         ),
         build_provider_route_runner(
             chain.fallback,
@@ -94,6 +97,7 @@ def build_provider_fallback_runner(
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
             max_model_rounds=max_model_rounds,
+            harness_policy=harness_policy,
         ),
     )
 
@@ -106,6 +110,7 @@ def build_provider_route_runner(
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
     max_model_rounds: int | None = None,
+    harness_policy: HarnessPolicyV1 | None = None,
 ) -> ForgeAgentRunner:
     """Build one route-pinned runner without adding a fallback edge."""
 
@@ -117,6 +122,7 @@ def build_provider_route_runner(
         setup_timeout_seconds=setup_timeout_seconds,
         validation_timeout_seconds=validation_timeout_seconds,
         max_model_rounds=max_model_rounds,
+        harness_policy=harness_policy,
         agent_provider=spec.provider,
         agent_model=spec.model,
         agent_transport=spec.transport,

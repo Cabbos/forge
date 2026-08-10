@@ -380,6 +380,45 @@ def test_forge_runner_sends_minimal_policy_and_task_local_context(tmp_path: Path
     assert len(policy_event["prepared_context_files"]) == 16
 
 
+def test_forge_runner_prefills_controller_allowed_target_files(tmp_path: Path) -> None:
+    fixture = tmp_path / "fixture"
+    (fixture / "src").mkdir(parents=True)
+    (fixture / "tests" / "cases").mkdir(parents=True)
+    (fixture / "src" / "env.ts").write_text(
+        "export function parsePort(value: string) { return 0; }\n", encoding="utf-8"
+    )
+    (fixture / "tests" / "cases" / "env.test.py").write_text(
+        "assert 'parsePort' in open('src/env.ts').read()\n", encoding="utf-8"
+    )
+    agent = tmp_path / "target_context_agent.py"
+    agent.write_text(
+        "import json, sys\n"
+        "payload = json.load(sys.stdin)\n"
+        "assert payload['harness_policy']['context_policy'] == 'target_files_v1'\n"
+        "assert payload['task']['context_files'] == ['src/env.ts', 'tests/cases/env.test.py']\n"
+        "assert 'Controller-provided target context (read-only):' in payload['prompt']\n"
+        "assert 'parsePort' in payload['prompt']\n"
+        "assert \"assert 'parsePort'\" in payload['prompt']\n"
+        "json.dump({'final_answer': 'done'}, sys.stdout)\n",
+        encoding="utf-8",
+    )
+    task = EvaluationTask(
+        id="target-context",
+        title="Target context",
+        prompt="Fix the parser.",
+        fixture_path=str(fixture),
+        expected_files_changed=["src/env.ts"],
+        validation_commands=["python tests/cases/env.test.py"],
+    )
+
+    trace = ForgeAgentRunner(
+        command=[sys.executable, str(agent)],
+        harness_policy=HarnessPolicyV1(context_policy="target_files_v1"),
+    ).run_task(task)
+
+    assert trace.error is None
+
+
 def test_uv_scope_wrapper_forces_run_without_project_lockfile(tmp_path: Path) -> None:
     fake_uv = tmp_path / "uv"
     args_file = tmp_path / "uv-args.txt"

@@ -6,6 +6,7 @@ from pathlib import Path
 from app.cases import validate_case_quality
 from app.datasets import dataset_fingerprint
 from app.harness_checks import run_golden_harness_check
+from app.harness_contracts import HarnessPolicyV1
 from app.judge_calibration import score_can_gate_ci
 from app.models import (
     AgentTrace,
@@ -43,6 +44,7 @@ class ExecutionOptions:
     max_total_cost_usd: float | None = None
     require_known_cost: bool = False
     max_model_rounds: int | None = None
+    harness_policy: HarnessPolicyV1 | None = None
 
 
 @dataclass(frozen=True)
@@ -63,35 +65,69 @@ def execute_tasks(
     if options.provider_route is not None:
         if options.provider != EvalProvider.FORGE:
             raise ValueError("provider routes require provider=forge")
-        runner = build_provider_route_runner(
-            options.provider_route,
-            command=options.forge_command,
-            command_timeout_seconds=options.command_timeout_seconds,
-            setup_timeout_seconds=options.setup_timeout_seconds,
-            validation_timeout_seconds=options.validation_timeout_seconds,
-            max_model_rounds=options.max_model_rounds,
-        )
+        if options.harness_policy is not None:
+            runner = build_provider_route_runner(
+                options.provider_route,
+                command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+                harness_policy=options.harness_policy,
+            )
+        else:
+            runner = build_provider_route_runner(
+                options.provider_route,
+                command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+            )
     elif options.provider_chain is not None:
         if options.provider != EvalProvider.FORGE:
             raise ValueError("provider chains require provider=forge")
-        runner = build_provider_fallback_runner(
-            options.provider_chain,
-            command=options.forge_command,
-            command_timeout_seconds=options.command_timeout_seconds,
-            setup_timeout_seconds=options.setup_timeout_seconds,
-            validation_timeout_seconds=options.validation_timeout_seconds,
-            max_model_rounds=options.max_model_rounds,
-        )
+        if options.harness_policy is not None:
+            runner = build_provider_fallback_runner(
+                options.provider_chain,
+                command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+                harness_policy=options.harness_policy,
+            )
+        else:
+            runner = build_provider_fallback_runner(
+                options.provider_chain,
+                command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+            )
     else:
-        runner = create_runner(
-            provider=options.provider,
-            model=options.model,
-            forge_command=options.forge_command,
-            command_timeout_seconds=options.command_timeout_seconds,
-            setup_timeout_seconds=options.setup_timeout_seconds,
-            validation_timeout_seconds=options.validation_timeout_seconds,
-            max_model_rounds=options.max_model_rounds,
-        )
+        if options.harness_policy is not None:
+            runner = create_runner(
+                provider=options.provider,
+                model=options.model,
+                forge_command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+                harness_policy=options.harness_policy,
+            )
+        else:
+            runner = create_runner(
+                provider=options.provider,
+                model=options.model,
+                forge_command=options.forge_command,
+                command_timeout_seconds=options.command_timeout_seconds,
+                setup_timeout_seconds=options.setup_timeout_seconds,
+                validation_timeout_seconds=options.validation_timeout_seconds,
+                max_model_rounds=options.max_model_rounds,
+            )
     traces: list[AgentTrace] = []
     for task in tasks:
         if cancel_requested():

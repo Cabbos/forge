@@ -164,9 +164,17 @@ fn strip_workspace_cd<'a>(command: &'a str, workspace: &Path) -> Option<&'a str>
     let after_cd = command.strip_prefix("cd ")?;
     let (directory, remainder) = after_cd.split_once(" && ")?;
     let directory = directory.trim().trim_matches(['\'', '"']);
-    let directory = Path::new(directory)
-        .canonicalize()
-        .unwrap_or_else(|_| PathBuf::from(directory));
+    if matches!(directory, "." | "$PWD" | "$(pwd)") {
+        return Some(remainder.trim());
+    }
+    let directory_path = Path::new(directory);
+    let directory = if directory_path.is_absolute() {
+        directory_path.to_path_buf()
+    } else {
+        workspace.join(directory_path)
+    }
+    .canonicalize()
+    .unwrap_or_else(|_| PathBuf::from(directory));
     path_equivalent(&directory, workspace).then_some(remainder.trim())
 }
 
@@ -566,6 +574,19 @@ mod tests {
             "dangerous_cmd",
         );
         assert_eq!(policy.denial_reason("dangerous_cmd", Some(&prefixed)), None);
+
+        let pwd_prefixed = crate::harness::write_boundary::build_write_boundary(
+            "run_shell",
+            &serde_json::json!({
+                "command": "cd \"$PWD\" && bun test tests/cases/example.test.ts"
+            }),
+            &workspace,
+            "dangerous_cmd",
+        );
+        assert_eq!(
+            policy.denial_reason("dangerous_cmd", Some(&pwd_prefixed)),
+            None
+        );
 
         let combined = crate::harness::write_boundary::build_write_boundary(
             "run_shell",

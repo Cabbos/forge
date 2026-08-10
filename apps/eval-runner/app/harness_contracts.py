@@ -10,7 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from enum import StrEnum
 from pathlib import Path
 from typing import Any, Literal
@@ -23,6 +23,8 @@ MAX_TOOL_CONTENT_CHARS = 2_000
 MAX_NEXT_EVIDENCE_CHARS = 240
 MAX_CONTEXT_ITEMS = 64
 MAX_MINIMAL_PROMPT_CHARS = 3_600
+MAX_TARGET_CONTEXT_CHARS = 12_000
+MAX_TARGET_FILE_CHARS = 4_000
 MAX_TASK_PLAN_STEPS = 8
 MAX_TASK_PLAN_FILES = 64
 MAX_TASK_PLAN_COMMANDS = 16
@@ -37,7 +39,9 @@ class HarnessPolicyV1(HarnessContractModel):
 
     schema_version: Literal[1] = 1
     prompt_mode: Literal["current_product_v1", "minimal_v1", "planning_v1"] = "current_product_v1"
-    context_policy: Literal["current_product_v1", "task_local_v1"] = "current_product_v1"
+    context_policy: Literal[
+        "current_product_v1", "task_local_v1", "target_files_v1"
+    ] = "current_product_v1"
     tool_result_policy: Literal["current_product_v1", "bounded_structured_v1"] = (
         "current_product_v1"
     )
@@ -52,16 +56,22 @@ class HarnessPolicyV1(HarnessContractModel):
 
     def selected_context_files(self, paths: Iterable[str]) -> list[str]:
         values = list(dict.fromkeys(str(path) for path in paths))
-        if self.context_policy == "task_local_v1":
+        if self.context_policy in {"task_local_v1", "target_files_v1"}:
             return values[:16]
         return values
 
-    def render_prompt(self, prompt: str, context_files: Iterable[str]) -> str:
-        if self.prompt_mode == "current_product_v1":
-            return prompt
+    def render_prompt(
+        self,
+        prompt: str,
+        context_files: Iterable[str],
+        *,
+        context_snapshot: Mapping[str, str] | None = None,
+    ) -> str:
         selected = self.selected_context_files(context_files)
         context_line = ", ".join(selected) if selected else "(none declared)"
-        if self.prompt_mode == "planning_v1":
+        if self.prompt_mode == "current_product_v1":
+            rendered = prompt
+        elif self.prompt_mode == "planning_v1":
             rendered = (
                 "Outcome: " + prompt.strip() + "\n\n"
                 "Scope: inspect the declared task-local context before editing; change only "
@@ -82,7 +92,31 @@ class HarnessPolicyV1(HarnessContractModel):
                 "verification, and use at most one evidence-driven repair before reporting "
                 "changed files and verification."
             )
-        return rendered[:MAX_MINIMAL_PROMPT_CHARS]
+        if self.context_policy == "target_files_v1":
+            selected = self.selected_context_files(context_files)
+            snapshot = context_snapshot or {}
+            sections: list[str] = []
+            remaining = MAX_TARGET_CONTEXT_CHARS
+            for path in selected:
+                content = snapshot.get(path)
+                if content is None or remaining <= 0:
+                    continue
+                bounded = content[: min(MAX_TARGET_FILE_CHARS, remaining)]
+                sections.append(f"--- {path} ---\n{bounded}")
+                remaining -= len(bounded)
+            if sections:
+                rendered += "\n\nController-provided target context (read-only):\n"
+                rendered += "\n".join(sections)
+                rendered += (
+                    "\nTreat this as initial evidence: avoid rediscovering the file tree; "
+                    "make the smallest edit and run the declared validation. "
+                    "For convergence, make the first mutation by round 3."
+                )
+        return (
+            rendered[:MAX_MINIMAL_PROMPT_CHARS]
+            if self.prompt_mode != "current_product_v1"
+            else rendered
+        )
 
     def fingerprint(self) -> str:
         payload = json.dumps(

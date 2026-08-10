@@ -73,6 +73,23 @@ def test_planning_harness_policy_renders_structured_plan_contract() -> None:
     assert len(rendered) <= 3_600
 
 
+def test_target_files_context_policy_renders_bounded_controller_snapshot() -> None:
+    policy = HarnessPolicyV1(context_policy="target_files_v1")
+    assert len(policy.selected_context_files([f"src/{index}.ts" for index in range(20)])) == 16
+
+    rendered = policy.render_prompt(
+        "Fix the parser.",
+        ["src/env.ts"],
+        context_snapshot={"src/env.ts": "export function parsePort(value: string) { return 0; }"},
+    )
+
+    assert rendered.startswith("Fix the parser.")
+    assert "Controller-provided target context (read-only):" in rendered
+    assert "--- src/env.ts ---" in rendered
+    assert "parsePort" in rendered
+    assert "first mutation by round 3" in rendered
+
+
 def test_truncated_tool_result_without_artifact_digest_is_rejected() -> None:
     with pytest.raises(ValidationError, match="artifact_digest"):
         ToolResultEnvelope(

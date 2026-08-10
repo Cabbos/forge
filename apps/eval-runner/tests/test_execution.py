@@ -6,6 +6,7 @@ import pytest
 
 from app.cases import load_cases
 from app.execution import ExecutionOptions, execute_evaluation
+from app.harness_contracts import HarnessPolicyV1
 from app.models import EvalProvider, TrustStatus, WorkspaceCheck
 from app.provider_fallback import named_provider_chain
 from app.runner import DeterministicMockRunner
@@ -94,6 +95,7 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
         forge_command=["forge-headless"],
         provider_chain=chain,
         max_model_rounds=12,
+        harness_policy=HarnessPolicyV1(context_policy="target_files_v1"),
     )
 
     traces = execute_tasks(tasks, options, lambda: False)
@@ -102,6 +104,7 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
     assert seen["chain"] == chain
     assert seen["command"] == ["forge-headless"]
     assert seen["max_model_rounds"] == 12
+    assert seen["harness_policy"].context_policy == "target_files_v1"
 
 
 def test_execute_tasks_wires_single_provider_route_into_development_runner(
