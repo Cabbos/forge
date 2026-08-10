@@ -411,6 +411,10 @@ json.dump(
         "status": "paused",
         "terminal_attempts": 1,
     }
+    attempt_artifact = next((campaign / "attempts").glob("*.json"))
+    assert json.loads(attempt_artifact.read_text(encoding="utf-8"))["trace"]["model"] == (
+        "deepseek-v4-flash"
+    )
 
     head_before = subprocess.run(
         ["git", "rev-parse", "HEAD"],

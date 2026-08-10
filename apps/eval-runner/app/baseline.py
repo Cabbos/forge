@@ -831,7 +831,9 @@ def _interrupted_attempt_artifact(
     trace = AgentTrace(
         task_id=pending.task_id,
         user_prompt="Interrupted paid baseline attempt.",
-        model=profile.profile_id,
+        # Interrupted traces still carry the exact model identity.  The
+        # profile id remains in the typed profile artifact, not in model.
+        model=profile.model,
         provider=EvalProvider.FORGE,
         final_answer="",
         error=_INTERRUPTED_BLOCKER,

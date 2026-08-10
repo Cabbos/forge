@@ -138,7 +138,9 @@ def holdout_main(argv: list[str]) -> int:
                 raise ValueError("holdout_run_command_missing")
             runner = ForgeAgentRunner(
                 provider=EvalProvider.FORGE,
-                model=profile.profile_id,
+                # The trace model is the exact provider model; profile_id is
+                # a separate harness identity bound by the campaign locks.
+                model=profile.model,
                 command=command,
                 command_timeout_seconds=settings.command_timeout_seconds,
                 setup_timeout_seconds=settings.setup_timeout_seconds,

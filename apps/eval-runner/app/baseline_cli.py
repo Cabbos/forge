@@ -151,7 +151,10 @@ def _run(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     profile = load_harness_profile(args.profile)
     runner = ForgeAgentRunner(
         provider=EvalProvider.FORGE,
-        model=profile.profile_id,
+        # Keep AgentTrace.model as the provider's exact model identity.  The
+        # versioned profile id is already carried separately in the artifact
+        # and must not masquerade as a model name in provenance traces.
+        model=profile.model,
         command=command,
         command_timeout_seconds=settings.command_timeout_seconds,
         setup_timeout_seconds=settings.setup_timeout_seconds,
