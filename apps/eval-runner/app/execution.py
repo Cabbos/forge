@@ -42,6 +42,7 @@ class ExecutionOptions:
     provider_route: ProviderRouteSpec | None = None
     max_total_cost_usd: float | None = None
     require_known_cost: bool = False
+    max_model_rounds: int | None = None
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ def execute_tasks(
             command_timeout_seconds=options.command_timeout_seconds,
             setup_timeout_seconds=options.setup_timeout_seconds,
             validation_timeout_seconds=options.validation_timeout_seconds,
+            max_model_rounds=options.max_model_rounds,
         )
     elif options.provider_chain is not None:
         if options.provider != EvalProvider.FORGE:
@@ -78,6 +80,7 @@ def execute_tasks(
             command_timeout_seconds=options.command_timeout_seconds,
             setup_timeout_seconds=options.setup_timeout_seconds,
             validation_timeout_seconds=options.validation_timeout_seconds,
+            max_model_rounds=options.max_model_rounds,
         )
     else:
         runner = create_runner(
@@ -87,6 +90,7 @@ def execute_tasks(
             command_timeout_seconds=options.command_timeout_seconds,
             setup_timeout_seconds=options.setup_timeout_seconds,
             validation_timeout_seconds=options.validation_timeout_seconds,
+            max_model_rounds=options.max_model_rounds,
         )
     traces: list[AgentTrace] = []
     for task in tasks:

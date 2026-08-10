@@ -76,6 +76,7 @@ def build_provider_fallback_runner(
     command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+    max_model_rounds: int | None = None,
 ) -> "ProviderFallbackRunner":
     return ProviderFallbackRunner(
         build_provider_route_runner(
@@ -84,6 +85,7 @@ def build_provider_fallback_runner(
             command_timeout_seconds=command_timeout_seconds,
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
+            max_model_rounds=max_model_rounds,
         ),
         build_provider_route_runner(
             chain.fallback,
@@ -91,6 +93,7 @@ def build_provider_fallback_runner(
             command_timeout_seconds=command_timeout_seconds,
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
+            max_model_rounds=max_model_rounds,
         ),
     )
 
@@ -102,6 +105,7 @@ def build_provider_route_runner(
     command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+    max_model_rounds: int | None = None,
 ) -> ForgeAgentRunner:
     """Build one route-pinned runner without adding a fallback edge."""
 
@@ -112,6 +116,7 @@ def build_provider_route_runner(
         command_timeout_seconds=command_timeout_seconds,
         setup_timeout_seconds=setup_timeout_seconds,
         validation_timeout_seconds=validation_timeout_seconds,
+        max_model_rounds=max_model_rounds,
         agent_provider=spec.provider,
         agent_model=spec.model,
         agent_transport=spec.transport,

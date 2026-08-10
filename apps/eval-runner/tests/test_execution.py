@@ -93,6 +93,7 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
         model="k3",
         forge_command=["forge-headless"],
         provider_chain=chain,
+        max_model_rounds=12,
     )
 
     traces = execute_tasks(tasks, options, lambda: False)
@@ -100,6 +101,7 @@ def test_execute_tasks_wires_named_provider_chain_into_development_runner(
     assert len(traces) == 1
     assert seen["chain"] == chain
     assert seen["command"] == ["forge-headless"]
+    assert seen["max_model_rounds"] == 12
 
 
 def test_execute_tasks_wires_single_provider_route_into_development_runner(
@@ -125,6 +127,7 @@ def test_execute_tasks_wires_single_provider_route_into_development_runner(
         model=route.model,
         forge_command=["forge-headless"],
         provider_route=route,
+        max_model_rounds=12,
     )
 
     traces = execute_tasks(tasks, options, lambda: False)
@@ -132,6 +135,7 @@ def test_execute_tasks_wires_single_provider_route_into_development_runner(
     assert len(traces) == 1
     assert seen["route"] == route
     assert seen["command"] == ["forge-headless"]
+    assert seen["max_model_rounds"] == 12
 
 
 def test_execute_evaluation_stops_before_next_call_at_cost_boundary(

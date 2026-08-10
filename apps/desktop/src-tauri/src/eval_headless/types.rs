@@ -75,16 +75,19 @@ pub struct EvalProviderRoute {
 /// Eval-only write policy copied from the controller's task contract.
 ///
 /// Ordinary desktop requests leave this unset.  When present, the headless
-/// runner rejects file/shell confirmations that could mutate a path outside
-/// the controller-owned allowlist.  The final workspace observer remains the
-/// authoritative evidence layer; this policy is an earlier safety boundary,
-/// not a replacement for post-run observation.
+/// runner rejects file confirmations outside the controller-owned allowlist
+/// and only auto-approves exact, controller-provided validation commands.
+/// The final workspace observer remains the authoritative evidence layer; this
+/// policy is an earlier safety boundary, not a replacement for post-run
+/// observation.
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct EvalWritePolicy {
     #[serde(default)]
     pub allowed_files: Vec<String>,
     #[serde(default)]
     pub forbidden_files: Vec<String>,
+    #[serde(default)]
+    pub allowed_shell_commands: Vec<String>,
 }
 
 /// Controller-owned request dimensions that must be copied into every paid

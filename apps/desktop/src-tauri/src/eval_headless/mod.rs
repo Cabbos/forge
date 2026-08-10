@@ -462,6 +462,13 @@ pub async fn run_request(request: EvalHeadlessRequest) -> Result<serde_json::Val
                         .collect(),
                 ),
             );
+            object.insert(
+                "eval_validation_stop".to_string(),
+                serde_json::json!({
+                    "requested": emitter.validation_stop_requested(),
+                    "reason": "controller_allowed_validation_after_mutation",
+                }),
+            );
         }
     }
     if let Some(error) = snapshot_error {
@@ -1922,6 +1929,7 @@ deleted file mode 100644\n\
             &types::EvalWritePolicy {
                 allowed_files: vec!["src/allowed.txt".to_string()],
                 forbidden_files: vec![".forge/**".to_string()],
+                allowed_shell_commands: Vec::new(),
             },
         );
         let emitter = Arc::new(runner::HeadlessEventEmitter::new_with_write_policy(

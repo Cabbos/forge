@@ -776,6 +776,7 @@ class ForgeAgentRunner:
                 "write_policy": {
                     "allowed_files": list(task.expected_files_changed),
                     "forbidden_files": list(task.forbidden_files_changed),
+                    "allowed_shell_commands": allowed_eval_shell_commands(task),
                 },
             }
             provider_route = self._provider_route_payload()
@@ -990,6 +991,14 @@ class ForgeAgentRunner:
             if not _is_ephemeral_cache_path(diff.path)
         ]
         raw_events = list(payload.get("raw_events", []))
+        validation_stop = payload.get("eval_validation_stop")
+        if isinstance(validation_stop, dict):
+            raw_events.append(
+                {
+                    "event_type": "eval_validation_stop",
+                    **validation_stop,
+                }
+            )
         write_policy_blocks = payload.get("eval_write_policy_blocks", [])
         if isinstance(write_policy_blocks, list):
             raw_events.extend(
@@ -1385,6 +1394,7 @@ def create_runner(
     command_timeout_seconds: float = DEFAULT_FORGE_TIMEOUT_SECONDS,
     setup_timeout_seconds: float = DEFAULT_SETUP_TIMEOUT_SECONDS,
     validation_timeout_seconds: float = DEFAULT_VALIDATION_TIMEOUT_SECONDS,
+    max_model_rounds: int | None = None,
 ) -> EvalRunner:
     try:
         normalized_provider = EvalProvider(provider)
@@ -1400,6 +1410,7 @@ def create_runner(
             command_timeout_seconds=command_timeout_seconds,
             setup_timeout_seconds=setup_timeout_seconds,
             validation_timeout_seconds=validation_timeout_seconds,
+            max_model_rounds=max_model_rounds,
         )
     raise ValueError(f"Unsupported eval provider: {provider}")
 
@@ -1898,6 +1909,25 @@ def run_shell_commands(
         if completed.outcome != ProcessOutcome.COMPLETED or completed.returncode != 0:
             break
     return outputs
+
+
+def allowed_eval_shell_commands(task: EvaluationTask) -> list[str]:
+    """Return controller-approved commands the agent may run during an eval.
+
+    Headless evals auto-resolve confirmations, but the write boundary must not
+    turn that into unrestricted shell access.  Exact task-owned validation and
+    regression commands are the narrowest useful allowlist: they let the agent
+    verify its patch while keeping every other shell confirmation fail-closed.
+    """
+
+    commands = [
+        *task.validation_commands,
+        *task.pass_to_pass_commands,
+        *task.fail_to_pass_commands,
+    ]
+    if not task.validation_commands and task.verification_command is not None:
+        commands.append(task.verification_command)
+    return list(dict.fromkeys(command.strip() for command in commands if command.strip()))
 
 
 def command_failure(

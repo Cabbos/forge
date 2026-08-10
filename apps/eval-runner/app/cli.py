@@ -33,6 +33,7 @@ def run_backtest_with_traces(
     provider_chain: ProviderChainSpec | None = None,
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
+    max_model_rounds: int | None = None,
 ) -> tuple[BacktestReport, list[AgentTrace]]:
     execution = run_backtest_execution(
         cases_path,
@@ -47,6 +48,7 @@ def run_backtest_with_traces(
         provider_chain=provider_chain,
         max_total_cost_usd=max_total_cost_usd,
         require_known_cost=require_known_cost,
+        max_model_rounds=max_model_rounds,
     )
     return execution.report, execution.traces
 
@@ -66,6 +68,7 @@ def run_backtest_execution(
     provider_chain: ProviderChainSpec | None = None,
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
+    max_model_rounds: int | None = None,
 ) -> EvaluationExecution:
     tasks = load_backtest_tasks(
         cases_path,
@@ -90,6 +93,7 @@ def run_backtest_execution(
             provider_chain=provider_chain,
             max_total_cost_usd=max_total_cost_usd,
             require_known_cost=require_known_cost,
+            max_model_rounds=max_model_rounds,
         ),
     )
 
@@ -108,6 +112,7 @@ def run_backtest(
     provider_chain: ProviderChainSpec | None = None,
     max_total_cost_usd: float | None = None,
     require_known_cost: bool = False,
+    max_model_rounds: int | None = None,
 ) -> BacktestReport:
     report, _ = run_backtest_with_traces(
         cases_path,
@@ -122,6 +127,7 @@ def run_backtest(
         provider_chain=provider_chain,
         max_total_cost_usd=max_total_cost_usd,
         require_known_cost=require_known_cost,
+        max_model_rounds=max_model_rounds,
     )
     return report
 
@@ -284,6 +290,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--min-success-rate", type=float, default=None)
     parser.add_argument("--max-scope-violation-rate", type=float, default=None)
     parser.add_argument("--max-avg-model-rounds", type=float, default=None)
+    parser.add_argument(
+        "--max-model-rounds",
+        type=int,
+        default=None,
+        help="Optional controller cap forwarded to each Forge task (development diagnostics).",
+    )
     parser.add_argument("--max-total-cost-usd", type=float, default=None)
     parser.add_argument(
         "--require-known-cost",
@@ -307,6 +319,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.trials < 1:
         parser.error("--trials must be at least 1")
+    if args.max_model_rounds is not None and args.max_model_rounds < 1:
+        parser.error("--max-model-rounds must be at least 1")
 
     provider_chain = named_provider_chain(args.provider_chain) if args.provider_chain else None
     if provider_chain is not None and args.provider != "forge":
@@ -334,6 +348,7 @@ def main(argv: list[str] | None = None) -> int:
             provider_chain=provider_chain,
             max_total_cost_usd=args.max_total_cost_usd,
             require_known_cost=args.require_known_cost,
+            max_model_rounds=args.max_model_rounds,
         )
     except CaseLoadError as exc:
         print(f"error: {exc}", file=sys.stderr)
