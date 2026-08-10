@@ -7,7 +7,10 @@
   control, and mutating commands. A follow-up Kimi K3 10-case diagnostic
   improved success from `0.20` to `0.30` and reduced average rounds from
   `11.5` to `11.0`, while verification was `0.70`; this is diagnostic evidence
-  only and does not make a frontier claim.
+  only and does not make a frontier claim. The controller now mirrors the
+  rendered policy prompt into the headless task prompt field as well, so Rust's
+  task-first prompt resolution cannot silently bypass target context or
+  convergence instructions.
 
 - Added secret-free H4 release diagnostics to the frontier decision artifact:
   deterministic p95 rounds/duration and known-cost tails, typed failure and

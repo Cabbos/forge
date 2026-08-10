@@ -108,6 +108,7 @@ class HarnessPolicyV1(HarnessContractModel):
                 rendered += "\n\nController-provided target context (read-only):\n"
                 rendered += "\n".join(sections)
                 rendered += (
+                    "\nFast path: use the supplied snapshot, mutate the allowed file, then verify. "
                     "\nController directive: Do not perform repository-wide discovery; use the "
                     "supplied target context as the initial source of truth. "
                     "Treat this as initial evidence: avoid rediscovering the file tree; "

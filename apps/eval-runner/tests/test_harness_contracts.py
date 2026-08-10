@@ -89,6 +89,7 @@ def test_target_files_context_policy_renders_bounded_controller_snapshot() -> No
     assert "parsePort" in rendered
     assert "first mutation by round 3" in rendered
     assert "Do not perform repository-wide discovery" in rendered
+    assert "Fast path: use the supplied snapshot, mutate the allowed file, then verify" in rendered
 
 
 def test_truncated_tool_result_without_artifact_digest_is_rejected() -> None:

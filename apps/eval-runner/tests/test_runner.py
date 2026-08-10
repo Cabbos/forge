@@ -398,6 +398,7 @@ def test_forge_runner_prefills_controller_allowed_target_files(tmp_path: Path) -
         "payload = json.load(sys.stdin)\n"
         "assert payload['harness_policy']['context_policy'] == 'target_files_v1'\n"
         "assert payload['task']['context_files'] == ['src/env.ts', 'tests/cases/env.test.py']\n"
+        "assert payload['task']['prompt'] == payload['prompt']\n"
         "assert 'Controller-provided target context (read-only):' in payload['prompt']\n"
         "assert 'parsePort' in payload['prompt']\n"
         "assert \"assert 'parsePort'\" in payload['prompt']\n"

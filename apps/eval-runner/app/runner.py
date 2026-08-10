@@ -764,15 +764,20 @@ class ForgeAgentRunner:
                 tags=task.tags,
             )
             task_dict["task_execution_contract"] = task_contract.model_dump(mode="json")
+            rendered_prompt = _render_eval_prompt(
+                self.harness_policy,
+                task,
+                prepared_context_files,
+                task_contract,
+                context_snapshot=context_snapshot,
+            )
+            # Rust resolves the task prompt before the top-level request prompt.
+            # Keep both controller-owned fields identical so eval-only policy and
+            # bounded target context cannot be silently bypassed by that precedence.
+            task_dict["prompt"] = rendered_prompt
             payload = {
                 "task": task_dict,
-                "prompt": _render_eval_prompt(
-                    self.harness_policy,
-                    task,
-                    prepared_context_files,
-                    task_contract,
-                    context_snapshot=context_snapshot,
-                ),
+                "prompt": rendered_prompt,
                 "harness_policy": self.harness_policy.model_dump(mode="json"),
                 "harness_policy_fingerprint": self.harness_policy.fingerprint(),
                 "context_mode": self.harness_policy.context_policy,
