@@ -146,3 +146,31 @@ five verification phases to consume its own 300-second timeout, producing an
 invalid ~42-minute wall time. The task-level monotonic deadline fix now bounds
 that entire lifecycle and records the timeout as a failed trace rather than
 letting validation multiply the case budget.
+
+## Latest full development rerun after the deadline and trust fixes
+
+The latest harness was rerun across all ten development cases without the
+exploratory 12-round CLI cap. The report and raw traces are outside Git at
+`/tmp/forge-kimi-ccswitch-latest-no-cap-10.json`.
+
+| Metric | Latest result |
+| --- | ---: |
+| Tasks | 10 |
+| Success rate | 1.0000 |
+| Verification pass rate | 1.0000 |
+| Scope violation rate | 0.0000 |
+| Average model rounds | 4.1 |
+| Average repair attempts | 0.1 |
+| Input tokens | 128,406 |
+| Output tokens | 8,457 |
+| Provider usage known rate | 1.0000 |
+| Provider cost known rate | 1.0000 |
+| Total Kimi K3 cost | `$0.2625498` |
+| Trust result | `trusted` |
+| Fallback events | 0 |
+
+All universal safety and evidence scores are `1.0`, including future-state
+leakage, prepared-turn evidence, and verification evidence. The admin
+multi-file case completed in 9 rounds with one bounded controller repair and
+three validation attempts. This is the strongest current development result,
+but it remains development-only and does not unlock the sealed holdout.

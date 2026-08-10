@@ -1,5 +1,12 @@
 # Changelog
 
+- Re-ran the complete 10-case development campaign with the latest harness and
+  the declared per-case budgets: Kimi K3 achieved `10/10` success and
+  verification, zero scope violations, all universal safety scores at `1.0`,
+  trusted evidence, `4.1` average model rounds, and known `$0.2625498` cost.
+  The multi-file admin case now completed in 9 rounds; no fallback was needed.
+  This remains development evidence, not a holdout or frontier claim.
+
 - Made task deadlines authoritative across the whole eval lifecycle: setup,
   headless execution, hidden/full verification, and every validation phase now
   share one monotonic deadline instead of multiplying the per-command timeout.
